@@ -867,6 +867,23 @@ test('drafted after a closing: our side said something new, a file, a quote of a
   assert.equal(store.getDraft(7).closing, false, 'a thanks with a file closes nothing')
 })
 
+test('the customer writing something new on the other addressing form, or before a restart, reopens a closed chat (skip-safety-r3-1)', async t => {
+  const LID = '123456789012345@lid'
+  for (const where of ['same form', 'other form', 'restart']) {
+    for (const second of ['/no 2', 'pending']) {
+      const { transport, store, say, command, skipped } = chatSetup(t)
+      await say(ALICE, 'jam berapa buka kak?', { chatIdAlt: LID })
+      await say(ALICE, 'makasih kak', { chatIdAlt: LID })
+      await command('/no 1')
+      await say(where === 'other form' ? LID : ALICE, 'kak kuenya kurang satu ya, tolong dicek', { chatIdAlt: where === 'other form' ? ALICE : LID })
+      if (second !== 'pending') await command(second)
+      if (where === 'restart') transport.history.clear()
+      await say(ALICE, 'makasih kak 🙏', { chatIdAlt: LID })
+      assert.deepEqual([skipped(), store.pendingDrafts().map(draft => draft.excerpt).at(-1)], [[], 'makasih kak 🙏'], `${where}, ${second}`)
+    }
+  }
+})
+
 test('live /ok or /edit after a photo, voice note or pin came in while the thanks draft waited: the next thanks is drafted (skip-safety-r2-1)', async t => {
   for (const approve of ['/ok 1', '/edit 1 Sama-sama kak, sehat selalu 🙏']) {
     for (const attachment of ['image', 'audio', 'location', 'other']) {

@@ -17,6 +17,8 @@ const HOUR_MS = 60 * 60 * 1000
  *   closing reply, sent later, must not hide a photo that came while the draft waited (the draft never showed it)
  * - so is `lastUntriagedAt` from that thanks on: content that is never triaged (a photo without a caption, a pin, a
  *   message that could not be decrypted) on either form, or before a restart, which the history does not show
+ * - and so is `lastOpenedAt` from that thanks on: a triaged message that was not a file-free thanks, on either form,
+ *   or before a restart (skip-safety-r3-1)
  * - the customer's own thanks since are passed over
  * - our message sent as that closing (`closing`: the owner's /ok or /edit of the thanks draft, when it is itself only a
  *   thanks-back) is the last word: closed
@@ -30,15 +32,17 @@ const HOUR_MS = 60 * 60 * 1000
  *   new thanks that agrees to nothing: what it could agree to is unknown
  * @param {{fromMe: boolean, text?: string, attachment?: string, timestamp?: number, closing?: boolean}[]} history
  *   oldest first; timestamps in epoch seconds
- * @param {{lastClosingAt?: number, sessionStart?: number, lastOursAt?: number, lastUntriagedAt?: number, agrees?: boolean}} [options]
+ * @param {{lastClosingAt?: number, sessionStart?: number, lastOursAt?: number, lastUntriagedAt?: number, lastOpenedAt?: number, agrees?: boolean}} [options]
  *   epoch ms; `lastOursAt`: when our side last wrote to this contact on either form, closings left out;
  *   `lastUntriagedAt`: when the customer last sent content that is never triaged, on either form (assistant.js);
+ *   `lastOpenedAt`: when the customer's newest triaged burst that was not a file-free thanks arrived, on either form;
  *   `agrees`: the new thanks comes with an acknowledgement or an agreeing emoji (guards.thanksAgrees; unset: it does)
  */
-export function closedThisSession (history = [], { lastClosingAt = 0, sessionStart = 0, lastOursAt = 0, lastUntriagedAt = 0, agrees = true } = {}) {
+export function closedThisSession (history = [], { lastClosingAt = 0, sessionStart = 0, lastOursAt = 0, lastUntriagedAt = 0, lastOpenedAt = 0, agrees = true } = {}) {
   if (!(lastClosingAt > sessionStart)) return false
   if (lastOursAt >= lastClosingAt) return false
   if (lastUntriagedAt >= lastClosingAt) return false
+  if (lastOpenedAt >= lastClosingAt) return false
   // A file never joins a triaged burst, so one from the thanks' own second may still be newer; a text from that second
   // belongs to the burst the owner dealt with. Unknown age is new.
   const newerFile = item => !(item.timestamp * 1000 < lastClosingAt)
@@ -69,8 +73,9 @@ const flatText = text => normalizeText(text).replace(/\s+/g, ' ').trim()
  *   quotes): their ids where known, and their texts ('' for a photo, a voice note or a pin)
  * @param {object[]} [ctx.history]  earlier messages of the chat, oldest first (see closedThisSession)
  * @param {boolean} ctx.paused
- * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, lastClosingAt?: number, lastOursAt?: number, lastUntriagedAt?: number}} ctx.chat
- *   `lastClosingAt`: when the last thanks the owner dealt with arrived; `lastOursAt`, `lastUntriagedAt`: see closedThisSession
+ * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, lastClosingAt?: number, lastOursAt?: number, lastUntriagedAt?: number, lastOpenedAt?: number}} ctx.chat
+ *   `lastClosingAt`: when the last thanks the owner dealt with arrived; `lastOursAt`, `lastUntriagedAt`, `lastOpenedAt`:
+ *   see closedThisSession
  * @param {number} ctx.now  epoch ms
  * @param {number} ctx.chatAutoSendsLastHour
  * @param {number} ctx.autoSendsLastDay
@@ -101,6 +106,7 @@ export function decide (result, ctx) {
       sessionStart: ctx.now - sessionMs,
       lastOursAt: chat.lastOursAt,
       lastUntriagedAt: chat.lastUntriagedAt,
+      lastOpenedAt: chat.lastOpenedAt,
       agrees: thanksAgrees(ctx.incomingText)
     })) {
     return { action: 'skip', reasons: [`decision:${decision}`, 'closing_already_sent'] }

@@ -43,6 +43,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   // Our side's last word on either form, kept across restarts: the owner on the phone, or any send but a closing.
   const lastOursAt = chatId => Math.max(0, ...linkedChats(chatId).flatMap(chat => [chat.ownerRepliedAt ?? 0, chat.lastSentAt ?? 0]))
   const lastUntriagedAt = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.lastUntriagedAt ?? 0))
+  const lastOpenedAt = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.lastOpenedAt ?? 0))
   // Our send comes after every customer message already received, whatever the local clock says: policy.js compares
   // it with WhatsApp's time of a thanks, and this machine's clock may run behind WhatsApp's.
   const sendTime = chatId => Math.max(now(), ...linkedChats(chatId).map(chat => chat.lastReceivedAt ?? 0))
@@ -404,6 +405,9 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     // A thanks without a file: discarding its draft, or sending one that is itself only a thanks-back, closes the chat
     // for the session; a sent reply that asks or offers anything is our newest word instead (sendToCustomer, owner.js).
     const closing = attachments.length === 0 && isThanks(incomingText)
+    // Anything else is new from the customer, and the history that shows it holds one addressing form since the last
+    // start: its time is kept on the record, so a thanks after it is not skipped past it (skip-safety-r3-1).
+    if (!closing) store.updateChat(chatId, { lastOpenedAt: Math.max(store.chat(chatId).lastOpenedAt ?? 0, lastMessageAt(batch)) })
     const guard = guardTriage(triage, { knowledge, config, incomingText })
     const decision = decide(result, {
       config,
@@ -421,7 +425,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
         takeoverUntil: takeoverUntil(chatId),
         lastClosingAt: lastClosingAt(chatId),
         lastOursAt: lastOursAt(chatId),
-        lastUntriagedAt: lastUntriagedAt(chatId)
+        lastUntriagedAt: lastUntriagedAt(chatId),
+        lastOpenedAt: lastOpenedAt(chatId)
       },
       now: now(),
       chatAutoSendsLastHour: chatAutoSendsLastHour(chatId),

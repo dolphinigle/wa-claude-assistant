@@ -214,7 +214,8 @@ cancelled.
   our last word is kept in `data/state.json`, never older than the newest customer message already received, so a
   local clock behind WhatsApp's cannot date a reply before the thanks it followed), anything but a thanks from the
   customer since that thanks (an `iya`, a question, a photo, a location pin, a message that could not be decrypted, a
-  sticker, a reaction, an edit), a thanks with a file or one that quotes
+  sticker, a reaction, an edit; on either addressing form and from before a restart too, since its time is kept in
+  `data/state.json`), a thanks with a file or one that quotes
   any message but the thanks-back your `/ok` or `/edit` sent (our question before a thanks you discarded, or a photo,
   voice note or pin of ours, which has no text: quotes are matched by message id), a closing from an earlier session
   (`disclosure.sessionGapHours`) and a failed triage are never skipped. Every other thanks is a

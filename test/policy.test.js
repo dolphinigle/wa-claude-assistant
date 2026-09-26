@@ -167,6 +167,16 @@ test('closedThisSession: untriaged content on either form or before a restart is
   assert.equal(decide(triageResult(THANKS), thanksContext([], { lastUntriagedAt: at(10) * 1000 })).action, 'escalate', 'decide passes it on')
 })
 
+test('closedThisSession: a customer message that was no thanks, on either form or before a restart, is new from the closed thanks on (skip-safety-r3-1)', () => {
+  const closedWith = (history, lastOpenedAt) => closedThisSession(history, { lastClosingAt: CLOSED_AT, sessionStart: SESSION_START, lastOpenedAt, agrees: false })
+  for (const history of [THANKED, [...THANKED, ours('Sama-sama, Kak 🙏', 20, { closing: true })], []]) {
+    assert.equal(closedWith(history, at(10) * 1000), false, 'a question after the thanks, which this history does not show')
+    assert.equal(closedWith(history, CLOSED_AT), false, 'in the same second: unknown order, so new')
+    assert.equal(closedWith(history, at(41) * 1000), true, 'the question before the thanks: the closing stands')
+  }
+  assert.equal(decide(triageResult(THANKS), thanksContext([], { lastOpenedAt: at(10) * 1000 })).action, 'escalate', 'decide passes it on')
+})
+
 test('a thanks that agrees closes only after our closing reply: after a /no, a shadow /ok or a restart it may be a yes (skip-safety-r3-2)', () => {
   const question = ours('Bisa kak, mau diantar jam 5 sore?', 40)
   const asked = [customer('kak brownies bisa diantar besok?', 41), question, customer('makasih kak', 30)]
