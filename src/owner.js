@@ -75,6 +75,8 @@ const percent = value => (typeof value === 'number' ? `${Math.round(value * 100)
 export function createOwnerCommands ({ config, store, gate, now = () => Date.now() }) {
   const ttlMs = (config.draftTtlHours ?? 24) * HOUR_MS
   const chatName = chatId => store.chat(chatId).name ?? chatId
+  // Drafts whose send is in flight: two self-chat commands run concurrently (Baileys does not await listeners).
+  const sending = new Set()
 
   function pendingDraft (id, commandTimestampMs) {
     const draft = store.getDraft(id)
@@ -83,11 +85,18 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
     if (commandTimestampMs && draft.createdAt > commandTimestampMs + REPLAY_SLACK_MS) return { error: `Draft #${id} is newer than this command; ignored.` }
     if (draft.status === 'pending' && now() - draft.createdAt >= ttlMs) store.resolveDraft(id, 'expired')
     if (draft.status !== 'pending') return { error: `Draft #${id} is already ${draft.status}.` }
+    if (sending.has(draft.id)) return { error: `Draft #${id} is being sent right now.` }
     return { draft }
   }
 
   async function sendDraft (draft, text, status) {
-    const outcome = await gate.sendToCustomer(draft.chatId, text, { source: status, draftId: draft.id })
+    sending.add(draft.id) // claimed before the first await
+    let outcome
+    try {
+      outcome = await gate.sendToCustomer(draft.chatId, text, { source: status, draftId: draft.id })
+    } finally {
+      sending.delete(draft.id)
+    }
     if (outcome.shadow) {
       store.resolveDraft(draft.id, `${status}_shadow`, { sentText: text })
       return `${BOT_PREFIX} [SHADOW] Draft #${draft.id} approved. Would send to ${draft.contactName}:\n${text}`

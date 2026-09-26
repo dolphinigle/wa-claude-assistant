@@ -133,11 +133,21 @@ export class Store {
     return (exact.length > 0 ? exact : all.filter(([, chat]) => chat.name.toLowerCase().includes(needle))).map(([chatId]) => chatId)
   }
 
+  /** Returns the recorded time, which releaseAutoSend() takes to give the slot back when the send fails. */
   recordAutoSend (chatId) {
     const at = this.now()
     const chat = this.chat(chatId)
     chat.autoSendTimes = [...chat.autoSendTimes.filter(ts => at - ts < DAY_MS), at]
     this.state.autoSendLog = [...this.state.autoSendLog.filter(ts => at - ts < DAY_MS), at].slice(-MAX_AUTO_SEND_LOG)
+    this.save()
+    return at
+  }
+
+  releaseAutoSend (chatId, at) {
+    const withoutOne = list => { const index = list.lastIndexOf(at); return index === -1 ? list : list.toSpliced(index, 1) }
+    const chat = this.chat(chatId)
+    chat.autoSendTimes = withoutOne(chat.autoSendTimes)
+    this.state.autoSendLog = withoutOne(this.state.autoSendLog)
     this.save()
   }
 

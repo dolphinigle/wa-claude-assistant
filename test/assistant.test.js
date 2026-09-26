@@ -262,6 +262,29 @@ test('per-chat and per-day rate limits downgrade to drafts', async t => {
   assert.ok(store.pendingDrafts().some(draft => draft.policyReasons.includes('daily_rate_limit')))
 })
 
+test('the daily cap holds when two chats finish triage while a send is still in flight', async t => {
+  const respond = async input => {
+    if (input.chat.name.startsWith('6283')) await sleep(30) // BOB finishes while ALICE's send is waiting
+    return triageResult(SIMPLE_HOURS)
+  }
+  const { transport, assistant, store } = setup(t, { config: { autoSend: { maxPerDay: 1 } }, respond })
+  transport.sendDelayMs = 100
+  await assistant.handleMessage(incoming(ALICE, 'jam buka kapan ya?'))
+  await assistant.handleMessage(incoming(BOB, 'jam buka kapan ya?'))
+  await assistant.idle()
+  assert.deepEqual(transport.toCustomer().map(item => item.chatId), [ALICE])
+  assert.equal(store.countAutoSends(24 * 3_600_000), 1)
+  assert.ok(store.pendingDrafts().some(draft => draft.chatId === BOB && draft.policyReasons.includes('daily_rate_limit')))
+})
+
+test('a failed auto-send gives its rate-limit slot back', async t => {
+  const { transport, deliver, store } = setup(t)
+  transport.down = true
+  await deliver(incoming(ALICE, 'jam buka?'))
+  assert.equal(store.countAutoSends(24 * 3_600_000), 0)
+  assert.equal(store.countChatAutoSends(ALICE, 3_600_000), 0)
+})
+
 test('backlog: old appends are skipped, recent ones are drafted, never auto-sent', async t => {
   const { transport, deliver, store, brain, now } = setup(t)
   store.seedHistoryFloor(Math.floor(now() / 1000) - 3 * 3600)

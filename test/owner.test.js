@@ -18,7 +18,7 @@ test('parseCommand', () => {
   assert.equal(parseCommand('/frobnicate').name, 'unknown')
 })
 
-function setup (t, { mode = 'live', sendResult } = {}) {
+function setup (t, { mode = 'live', sendResult, sendDelayMs = 0 } = {}) {
   let clock = Date.UTC(2026, 8, 26, 3, 0)
   const now = () => clock
   const store = new Store(tempDir(t), { now })
@@ -27,6 +27,7 @@ function setup (t, { mode = 'live', sendResult } = {}) {
   const gate = {
     async sendToCustomer (chatId, text, meta) {
       sends.push({ chatId, text, meta })
+      if (sendDelayMs) await new Promise(resolve => setTimeout(resolve, sendDelayMs))
       if (sendResult) return sendResult
       return mode === 'live' ? { sent: true, id: 'X' } : { sent: false, shadow: true }
     }
@@ -57,6 +58,16 @@ test('/edit sends the owner text; /no discards without sending', async t => {
   assert.match(await owner.handle(`/no ${second.id}`), /Discarded/)
   assert.equal(store.getDraft(second.id).status, 'rejected')
   assert.equal(sends.length, 1)
+})
+
+test('two commands for the same draft while its send is in flight send it once', async t => {
+  const { store, owner, sends, draft } = setup(t, { sendDelayMs: 30 })
+  const replies = await Promise.all([owner.handle(`/ok ${draft.id}`), owner.handle(`/edit ${draft.id} teks lain`), owner.handle(`/no ${draft.id}`)])
+  assert.equal(sends.length, 1)
+  assert.match(replies[0], /Sent to/)
+  assert.match(replies[1], /being sent/)
+  assert.match(replies[2], /being sent/)
+  assert.equal(store.getDraft(draft.id).status, 'approved')
 })
 
 test('shadow mode: /ok is recorded but the gate reports nothing sent', async t => {

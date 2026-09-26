@@ -286,12 +286,15 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const text = needsDisclosure ? `${config.disclosure.text}\n\n${triage.reply}` : triage.reply
     const last = batch[batch.length - 1]
 
+    // Counted before the first await, so another chat's triage finishing during this send sees the slot as taken.
+    // Counted in shadow too, so shadow mode shows what the rate limits would do.
+    const slot = store.recordAutoSend(chatId)
     const outcome = await sendToCustomer(chatId, text, { quotedRaw: last.raw, source: 'auto_send' })
     if (!outcome.sent && !outcome.shadow) {
+      store.releaseAutoSend(chatId, slot)
       return postDraft(chatId, batch, { ok: true, triage }, { action: 'escalate', reasons: [...decision.reasons, `send_failed:${outcome.error}`] })
     }
     if (needsDisclosure) store.updateChat(chatId, { [disclosureKey]: now() })
-    store.recordAutoSend(chatId) // counted in shadow too, so shadow mode shows what the rate limits would do
     if (outcome.sent) {
       try { await transport.markRead?.(batch) } catch (error) { logger.warn(`[assistant] markRead failed: ${error.message}`) }
     }
