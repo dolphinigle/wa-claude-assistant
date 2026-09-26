@@ -29,8 +29,9 @@ sent to anyone except your own "Message yourself" chat.
   address**. A manipulated reply could try to copy them out. Put that email in `guards.ownerIdentifiers`: a reply
   that mentions it (also as `name [at] domain`), your username, HOME or the app's paths is never auto-sent, and a
   draft that does is flagged.
-- **Fragile upstream.** Baileys `7.0.0-rc14` is pinned exactly; new-device pairing is reported broken since
-  2026-07-28 (#2737). `npm run pair` is the go/no-go test.
+- **Fragile upstream.** Baileys `7.0.0-rc14` is pinned exactly and its maintainers have been inactive since August.
+  New-device pairing is reported broken since 2026-07-28 (#2737), but it worked here on 2026-09-26 (unpatched rc14,
+  default preset). `npm run pair` is the go/no-go test.
 
 The evidence, sources and the official alternative (WhatsApp Business app + coexistence Cloud API) are in
 [docs/research.md](docs/research.md). The verified library and CLI details are in
@@ -147,11 +148,12 @@ Remove the key (or set `"allowChats": []`) and restart to handle every chat agai
 
 ### Pairing fallback (PR #2765)
 
-If the phone accepts the scan but linking never completes, or the socket closes right after the scan, you are
-probably hitting Baileys #2737 (unhandled `companion_reg_refresh`). The unmerged fix is
-[PR #2765](https://github.com/WhiskeySockets/Baileys/pull/2765). **Review its diff first** (it is a supply-chain
-risk), then pin the PR's head commit by full SHA as a git dependency in `package.json`
-(`"baileys": "github:<fork-owner>/Baileys#<full-commit-sha>"`, taken from the PR's Commits tab), `rm -rf auth`,
+Pairing passed on unpatched rc14 on 2026-09-26, so this is only for a future re-pair that fails. If the phone
+accepts the scan but linking never completes, or the socket closes right after the scan, you are probably hitting
+Baileys #2737 (unhandled `companion_reg_refresh`). The unmerged fix is
+[PR #2765](https://github.com/WhiskeySockets/Baileys/pull/2765). Its diff was reviewed on 2026-09-26 (safe to pin;
+details in the implementation notes); re-check that the head is unchanged, then pin it by full SHA in `package.json`
+(`"baileys": "github:WhiskeySockets/Baileys#4f263f0e365c2e74dd1b824031d1c5910f518c26"`), `rm -rf auth`,
 `npm install` (npm builds the TypeScript on install) and run `npm run pair` again. If that fails too, the notes say
 switch to whatsapp-web.js 1.34.7 with local patches.
 
@@ -402,8 +404,8 @@ scripts/selftest.js, scripts/eval.js, eval/fixtures.json, test/ (node:test, no n
 From [docs/implementation-notes.md](docs/implementation-notes.md) (still unresolved: they need a live pairing or
 more work):
 
-- **Pairing is unproven** on rc14 with the default Mac OS/Chrome preset; `npm run pair` decides (#2737, fallback
-  #2765 above). `sock.requestPairingCode` may also be broken (#2832); only QR is implemented.
+- **Pairing** passed once on rc14 with the default Mac OS/Chrome preset (2026-09-26) despite #2737; a re-pair may
+  still hit it (fallback #2765 above). `sock.requestPairingCode` may also be broken (#2832); only QR is implemented.
 - **Self-chat JID form** under LID addressing is unverified (own PN or own LID). The transport sends notices to the
   own PN first and switches to whatever JID your own `/command` in "Message yourself" arrives on;
   `whatsapp.selfChatJid` overrides. Self-chat is decided by the chat JID alone (never by its alt, which on your

@@ -28,6 +28,10 @@ Why:
 
 Go/no-go gate: the user performs one manual pairing on rc14.
 
+**Result (2026-09-26, 23:31 WIB): PASS on unpatched rc14** with the default `Mac OS / Chrome` preset, QR, Node 22.15.0
+(`auth/creds.json` written and the history floor seeded, which happens only on `connection: 'open'`). PR #2765 was not
+needed. It stays the reviewed fallback for a future re-pair (see PAIRING FALLBACK).
+
 Switch to whatsapp-web.js (pinned 1.34.7 plus the #201901/#201840 local patches) if any of these happen:
 1. Pairing fails on rc14 AND on rc14 + PR #2765 pinned by commit SHA.
 2. After pairing, messages.upsert repeatedly stops firing (#2810), or 405/408 loops persist with no upstream release.
@@ -102,10 +106,20 @@ LID/PN
 
 PAIRING FALLBACK
 - If the unpatched pairing fails, use a git dependency on PR #2765 pinned by commit SHA. Review the diff first; it is a supply-chain risk.
+- Reviewed 2026-09-26 (research agent + skeptic, read-only): verdict **safe to pin**. PR open, no maintainer review; author
+  `doryani-ai` (an AI-agent account created 2026-07-12), 4 unsigned commits of 2026-08-10, no force-push. Head
+  `4f263f0e365c2e74dd1b824031d1c5910f518c26` = upstream master `0af2386` (rc14 + 2 small commits) + a 4-file diff
+  (+474/-9) confined to the QR pairing path: re-read `creds.advSecretKey` on every QR render and handle
+  `CB:notification,type:companion_reg_refresh` by rotating the adv secret (`crypto.randomBytes` only; no network, fs,
+  eval or spawn). package.json is byte-identical to rc14's; install runs upstream's `preinstall` (Node version check)
+  and `prepare` (a `tsc` build that pulls ~790 devDependencies from npm). Dependency line:
+  `"baileys": "github:WhiskeySockets/Baileys#4f263f0e365c2e74dd1b824031d1c5910f518c26"` (same SHA via upstream's
+  `refs/pull/2765/head`, so it survives the fork being deleted). Evidence it works: 2 independent success reports, 0
+  failures. Relies on `creds.update` → `saveCreds`, which the transport wires. No newer alternative (no rc15 on npm).
 
 REUSABLE FILES
-- ~/copilot/research/wa-claude-assistant/exp-baileys/probe.mjs: stops at QR and deletes auth; never renders the QR.
-- ~/copilot/research/wa-claude-assistant/exp-baileys/helpers-check.mjs
+- (2026-09-27) The research experiments (exp-baileys/probe.mjs, helpers-check.mjs and the rest) were deleted; the repo's
+  own transport, pair script and tests replace them.
 
 
 ## Locked `claude -p` invocation
@@ -149,7 +163,7 @@ Verified 4 of 4 by the synthesizer on 2026-09-26 with v2.1.283. Inputs: ~/copilo
 
 ## Unresolved (need live pairing or later work)
 
-- Go/no-go: does QR pairing complete on unpatched Baileys rc14 with the default Mac OS/Chrome preset? If not, does it complete with PR #2765? This needs one user-performed pairing; the research was not allowed to pair.
+- ~~Go/no-go: does QR pairing complete on unpatched Baileys rc14 with the default Mac OS/Chrome preset?~~ Yes (2026-09-26, see above).
 - Self-chat id form under LID addressing: is key.remoteJid the own PN or the own LID, and does sendMessage to jidNormalizedUser(sock.user.id) land in 'Message yourself'?
 - Does a message posted by the linked device to self-chat trigger a push notification on the phone? If not, escalations are silent.
 - Does sock.readMessages() from the linked device clear the unread badge on the phone?
@@ -162,5 +176,5 @@ Verified 4 of 4 by the synthesizer on 2026-09-26 with v2.1.283. Inputs: ~/copilo
 - Do contacts with WhatsApp usernames (@lid with no PN alt, #2742) reach messages.upsert at all?
 - Is Business App Terms restriction (g) new in the 2026-09-23 revision? Is Meta Business Agent officially available in Indonesia? Only press sources say so. What are the PP 33/2026 effective dates? Sources give 15 vs 16 Jan 2027.
 - Two Meta pricing pages conflict on what happens without a payment method. The non-template doc (2026-08-25) says delivery stops from 10-01. The pricing doc (2026-09-10) says the 1,000/month free tier is still delivered.
-- Leftover artifacts not deleted: ~/copilot/research/wa-claude-assistant/{exp-baileys 59M, exp-wwebjs 86M, claude-exp, claude-skeptic, synth-claude, synth-meta, terms-risk 14M, risk-skeptic, skeptic-baileys 11M, claude-leaktest/.claude}, plus ~/.claude/projects/-home-irvan-copilot-research-wa-claude-assistant-claude-leaktest/ (a canary MEMORY.md and a session transcript; the earlier rm was permission-denied). No processes left; checked with ps.
+- (2026-09-27: all of the following were deleted.) Leftover artifacts not deleted: ~/copilot/research/wa-claude-assistant/{exp-baileys 59M, exp-wwebjs 86M, claude-exp, claude-skeptic, synth-claude, synth-meta, terms-risk 14M, risk-skeptic, skeptic-baileys 11M, claude-leaktest/.claude}, plus ~/.claude/projects/-home-irvan-copilot-research-wa-claude-assistant-claude-leaktest/ (a canary MEMORY.md and a session transcript; the earlier rm was permission-denied). No processes left; checked with ps.
 - The new repo ~/copilot/wa-claude-assistant (remote github.com/dolphinigle/wa-claude-assistant, no commits yet) now has an untracked docs/research.md. It was not committed, per instructions.
