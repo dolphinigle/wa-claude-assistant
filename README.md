@@ -216,8 +216,9 @@ more work):
 - **Pairing is unproven** on rc14 with the default Mac OS/Chrome preset; `npm run pair` decides (#2737, fallback
   #2765 above). `sock.requestPairingCode` may also be broken (#2832); only QR is implemented.
 - **Self-chat JID form** under LID addressing is unverified (own PN or own LID). The transport sends notices to the
-  own PN first and switches to whatever JID your own typing in "Message yourself" arrives on;
-  `whatsapp.selfChatJid` overrides.
+  own PN first and switches to whatever JID your own `/command` in "Message yourself" arrives on;
+  `whatsapp.selfChatJid` overrides. Your own prompts to Meta AI also arrive on your own JID (#2822); the transport
+  drops them by the stanza's `@bot` recipient, which is unverified on a live link.
 - **Silent escalations?** Whether a message a linked device posts to "Message yourself" notifies your phone is
   unknown. Check right after pairing.
 - Whether `readMessages()` from the linked device clears the unread badge on the phone is unknown.
@@ -234,7 +235,9 @@ more work):
 
 Prototype limits of this code:
 
-- Text only: media without a caption, edits and deletions (`messages.update`) are ignored; no typing indicator.
+- Text only: incoming media without a caption, edits and deletions (`messages.update`) are ignored; no typing
+  indicator. Your own replies from the phone start the human takeover whatever they are (voice note, sticker,
+  photo, reaction).
 - Drafts can still over-promise or invent details (e.g. "we don't have sugar-free options"): that is why complex
   and important replies always wait for you.
 - The guards check concrete details, not meaning: a wrong statement without numbers ("we deliver to Jakarta") can

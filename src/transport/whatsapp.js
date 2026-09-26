@@ -5,12 +5,19 @@ import makeWASocket, {
 } from 'baileys'
 import pino from 'pino'
 import qrcode from 'qrcode-terminal'
+import { parseCommand } from '../owner.js'
 import { backoffMs, classifyDisconnect, extractText, getMeIds, normalizeUpsert, toEpochSeconds } from './wa-normalize.js'
 
 const HISTORY_PER_CHAT = 50
+const MAX_META_AI_IDS = 500
 
 export function createBaileysLogger () {
   return pino({ level: process.env.BAILEYS_LOG_LEVEL ?? 'warn' }, pino.destination(2))
+}
+
+const isKnownCommand = text => {
+  const command = parseCommand(text)
+  return Boolean(command) && command.name !== 'unknown'
 }
 
 export function renderQr (qr) {
@@ -45,6 +52,7 @@ export async function createBaileysSocket ({ authDir, logger, getMessage }) {
 export function createWhatsAppTransport ({ config, store, onMessage, onReady, onFatal, logger = console, createSocket = createBaileysSocket }) {
   const baileysLogger = createBaileysLogger()
   const history = new Map() // chatId → [{id, fromMe, text, timestamp, raw}]
+  const metaAiIds = new Set() // ids of the owner's own Meta AI prompts (see connect())
   let sock
   let meIds = []
   let selfChatJid = config.whatsapp?.selfChatJid ?? null
@@ -59,7 +67,12 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
     const chatId = raw?.key?.remoteJid
     if (!chatId || !raw.key.id) return
     const list = history.get(chatId) ?? []
-    if (list.some(item => item.id === raw.key.id)) return
+    const known = list.findIndex(item => item.id === raw.key.id)
+    if (known !== -1) {
+      // A ciphertext stub is stored first; the decrypted resend with the same id replaces it.
+      if (list[known].raw?.message || !raw.message) return
+      list.splice(known, 1)
+    }
     const { text } = extractText(raw.message)
     list.push({ id: raw.key.id, fromMe: Boolean(raw.key.fromMe), text, timestamp: toEpochSeconds(raw.messageTimestamp), raw })
     list.sort((a, b) => a.timestamp - b.timestamp)
@@ -110,6 +123,7 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
 
   const handleUpsert = async ({ messages, type }) => {
     for (const raw of messages) {
+      if (metaAiIds.has(raw?.key?.id)) continue
       remember(raw)
       const normalized = normalizeUpsert(raw, { type, meIds })
       if (normalized.skip === 'ciphertext') {
@@ -117,8 +131,10 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
         continue
       }
       if (normalized.skip) continue
-      // The phone's own form of the self-chat JID (PN vs LID is unverified) is the best target for notices.
-      if (normalized.message.isSelfChat && !config.whatsapp?.selfChatJid) selfChatJid = normalized.message.chatId
+      // The phone's own form of the self-chat JID (PN vs LID is unverified) is the best target for notices. Only a
+      // real command counts, so other traffic on an own JID cannot re-point the notices.
+      const { message } = normalized
+      if (message.isSelfChat && message.fromMe && !config.whatsapp?.selfChatJid && isKnownCommand(message.text)) selfChatJid = message.chatId
       try {
         await onMessage(normalized.message)
       } catch (error) {
@@ -137,6 +153,13 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       reconnectTimer = setTimeout(connect, backoffMs(attempts))
       return
     }
+    // The owner's own prompts to Meta AI arrive with the own JID as remoteJid and look exactly like self-chat
+    // (#2822); only the stanza's @bot recipient tells them apart, and Baileys drops it from the key.
+    sock.ws?.on?.('CB:message', node => {
+      if (!isJidMetaAI(node?.attrs?.recipient) || !node.attrs.id) return
+      metaAiIds.add(node.attrs.id)
+      if (metaAiIds.size > MAX_META_AI_IDS) metaAiIds.delete(metaAiIds.values().next().value)
+    })
     sock.ev.on('connection.update', handleConnection)
     sock.ev.on('messages.upsert', handleUpsert)
     sock.ev.on('messaging-history.set', ({ messages = [] }) => { for (const raw of messages) remember(raw) })

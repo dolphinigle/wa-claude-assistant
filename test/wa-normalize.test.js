@@ -97,6 +97,23 @@ test('a fromMe message in a customer chat is kept (human takeover signal)', () =
   assert.equal(message.isSelfChat, false)
 })
 
+test('owner replies of any content type in a customer chat are kept as takeover signals', () => {
+  const owner = (message, extra = {}) => normalizeUpsert(wa(message, { fromMe: true }, extra), { type: 'notify', meIds })
+  for (const [content, contentType] of [
+    [{ audioMessage: { ptt: true, seconds: 4 } }, 'audioMessage'],
+    [{ stickerMessage: {} }, 'stickerMessage'],
+    [{ imageMessage: { mimetype: 'image/jpeg' } }, 'imageMessage'],
+    [{ reactionMessage: { text: '👍', key: { id: 'X' } } }, 'reactionMessage']
+  ]) {
+    const { message, skip } = owner(content)
+    assert.equal(skip, undefined, contentType)
+    assert.deepEqual([message.fromMe, message.isSelfChat, message.text, message.contentType], [true, false, '', contentType])
+  }
+  assert.equal(owner(null, { messageStubType: WAMessageStubType.CIPHERTEXT }).message.fromMe, true, 'even when it failed to decrypt')
+  const selfVoice = normalizeUpsert(wa({ audioMessage: { ptt: true } }, { remoteJid: '6281111111111@s.whatsapp.net', fromMe: true }), { type: 'notify', meIds })
+  assert.equal(selfVoice.skip, 'no_text', 'a voice note to yourself is not a command')
+})
+
 test('timestamps: number, Long-like and string', () => {
   assert.equal(toEpochSeconds(5), 5)
   assert.equal(toEpochSeconds({ toNumber: () => 7 }), 7)

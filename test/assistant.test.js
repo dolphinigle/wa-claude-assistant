@@ -159,6 +159,24 @@ test('takeover during an in-flight triage drops its result', async t => {
   assert.equal(transport.toCustomer().length, 0)
 })
 
+test('an owner voice note (no text) cancels the in-flight triage and the chat drafts', async t => {
+  const { brain, assistant, transport, store, now } = setup(t)
+  await assistant.handleMessage(incoming(ALICE, 'bisa kue custom unicorn?'))
+  await assistant.idle()
+  assert.equal(store.getDraft(1).status, 'pending')
+  const release = brain.hold()
+  await assistant.handleMessage(incoming(ALICE, 'jam buka?'))
+  await waitFor(() => brain.calls.length === 2)
+  const meIds = getMeIds({ id: '6281111111111:7@s.whatsapp.net' })
+  const voice = normalizeUpsert({ key: { remoteJid: ALICE, id: 'VOICE1', fromMe: true }, message: { audioMessage: { ptt: true } }, messageTimestamp: Math.floor(now() / 1000) }, { type: 'notify', meIds })
+  await assistant.handleMessage(voice.message)
+  release()
+  await assistant.idle()
+  assert.equal(transport.toCustomer().length, 0, 'nothing is auto-sent on top of the owner\'s reply')
+  assert.equal(store.getDraft(1).status, 'cancelled')
+  assert.ok(store.chat(ALICE).takeoverUntil > now())
+})
+
 test('per-chat and per-day rate limits downgrade to drafts', async t => {
   const { transport, deliver, store } = setup(t, { config: { autoSend: { maxPerChatPerHour: 2, maxPerDay: 3 } } })
   for (let index = 0; index < 3; index++) await deliver(incoming(ALICE, `jam buka? ${index}`))

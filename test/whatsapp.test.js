@@ -19,6 +19,7 @@ function fakeSockets () {
     const ev = new EventEmitter()
     const sock = {
       ev,
+      ws: new EventEmitter(),
       user: { id: '6281111111111:7@s.whatsapp.net', lid: '99887766554433:7@lid' },
       sent: [],
       read: [],
@@ -158,4 +159,38 @@ test('receivedPendingNotifications disarms the watchdog', async t => {
   emit('connection.update', { receivedPendingNotifications: true })
   await sleep(60)
   assert.equal(sockets[0].ended.length, 0)
+})
+
+test('an owner voice note in a customer chat reaches the assistant as a takeover', async t => {
+  const { transport, received, emit } = setup(t)
+  await transport.start()
+  open(emit)
+  emit('messages.upsert', { type: 'notify', messages: [raw(CUSTOMER, { audioMessage: { ptt: true } }, { key: { remoteJid: CUSTOMER, id: 'VOICE', fromMe: true } })] })
+  await sleep(5)
+  assert.deepEqual(received.map(message => [message.id, message.fromMe, message.isSelfChat]), [['VOICE', true, false]])
+})
+
+test('the owner\'s own Meta AI prompts are dropped and never re-point the self-chat target', async t => {
+  const { transport, sockets, received, emit } = setup(t)
+  await transport.start()
+  open(emit)
+  sockets[0].ws.emit('CB:message', { tag: 'message', attrs: { id: 'MA1', from: OWNER_LID, recipient: '867051314767696@bot' } })
+  emit('messages.upsert', { type: 'notify', messages: [raw(OWNER_LID, { conversation: '/help' }, { key: { remoteJid: OWNER_LID, id: 'MA1', fromMe: true } })] })
+  emit('messages.upsert', { type: 'notify', messages: [raw(OWNER_LID, { conversation: '/imagine kucing' }, { key: { remoteJid: OWNER_LID, id: 'MA2', fromMe: true } })] })
+  await sleep(5)
+  assert.deepEqual(received.map(message => message.id), ['MA2'], 'only the stanza with an @bot recipient is known to be Meta AI')
+  await transport.sendToSelf('🤖 hi', { messageId: 'N1' })
+  assert.equal(sockets[0].sent[0].jid, OWNER_PN, 'an unknown /command does not move the notices')
+})
+
+test('a decrypted resend replaces its ciphertext stub in the history', async t => {
+  const { transport, received, emit } = setup(t)
+  await transport.start()
+  open(emit)
+  const stub = { key: { remoteJid: CUSTOMER, id: 'X1', fromMe: false }, message: null, messageStubType: 2, messageTimestamp: nowSeconds() }
+  emit('messages.upsert', { type: 'notify', messages: [stub] })
+  emit('messages.upsert', { type: 'notify', messages: [raw(CUSTOMER, { conversation: 'ada stok beras 5kg?' }, { key: { remoteJid: CUSTOMER, id: 'X1', fromMe: false } })] })
+  await sleep(5)
+  assert.deepEqual(received.map(message => message.text), ['ada stok beras 5kg?'])
+  assert.deepEqual(transport.getHistory(CUSTOMER, 10).map(item => item.text), ['ada stok beras 5kg?'])
 })

@@ -54,27 +54,30 @@ export function normalizeUpsert (raw, { type, meIds }) {
   if (!key?.remoteJid || !key.id) return { skip: 'no_key' }
   const jidKind = classifyJid(key.remoteJid)
   if (jidKind !== 'direct') return { skip: jidKind, id: key.id }
-  if (!raw.message && raw.messageStubType === WAMessageStubType.CIPHERTEXT) return { skip: 'ciphertext', id: key.id }
-  if (!isRealMessage(raw)) return { skip: 'not_real', id: key.id }
+  const isSelfChat = isSelfChatJid(key.remoteJid, meIds) || isSelfChatJid(key.remoteJidAlt, meIds)
+  const isCiphertext = !raw.message && raw.messageStubType === WAMessageStubType.CIPHERTEXT
   const { text, contentType, quotedText } = extractText(raw.message)
-  if (!text?.trim()) return { skip: 'no_text', id: key.id, contentType }
-
-  return {
-    message: {
-      id: key.id,
-      chatId: key.remoteJid,
-      chatIdAlt: key.remoteJidAlt ?? undefined,
-      fromMe: Boolean(key.fromMe),
-      isSelfChat: isSelfChatJid(key.remoteJid, meIds) || isSelfChatJid(key.remoteJidAlt, meIds),
-      senderName: raw.pushName ?? undefined,
-      text,
-      timestamp: toEpochSeconds(raw.messageTimestamp),
-      kind: type === 'notify' ? 'notify' : 'append',
-      quotedText,
-      contentType,
-      raw
-    }
+  const message = {
+    id: key.id,
+    chatId: key.remoteJid,
+    chatIdAlt: key.remoteJidAlt ?? undefined,
+    fromMe: Boolean(key.fromMe),
+    isSelfChat,
+    senderName: raw.pushName ?? undefined,
+    text: text ?? '',
+    timestamp: toEpochSeconds(raw.messageTimestamp),
+    kind: type === 'notify' ? 'notify' : 'append',
+    quotedText,
+    contentType,
+    raw
   }
+  // Anything the owner sends in a customer chat (voice note, sticker, reaction, even one we cannot decrypt) is a
+  // human reply and must start the takeover, so it is kept before the text-only filters below.
+  if (key.fromMe && !isSelfChat && (contentType || isCiphertext)) return { message }
+  if (isCiphertext) return { skip: 'ciphertext', id: key.id }
+  if (!isRealMessage(raw)) return { skip: 'not_real', id: key.id }
+  if (!text?.trim()) return { skip: 'no_text', id: key.id, contentType }
+  return { message }
 }
 
 /**
