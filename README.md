@@ -186,10 +186,11 @@ triaged, and drafts made from them are cancelled.
 
 ## Model and latency
 
-The brain runs Sonnet (`claude.model: "sonnet"`) with thinking off (`MAX_THINKING_TOKENS=0`). Each triage is one
-`claude -p` process: research measured about 11 s from spawn to exit for Sonnet 5 with thinking off (2–5 s of that is
-CLI start-up), against 4.5–7.8 s for Haiku. An auto-reply therefore lands roughly half a minute after the customer's
-last message: the 15 s debounce, then the triage. `timeoutMs` is 90 s, several times a typical call, so a
+The brain runs Sonnet (`claude.model: "sonnet"`, `claude-sonnet-5` on 2026-09-26) with thinking off
+(`MAX_THINKING_TOKENS=0`). Each triage is one `claude -p` process: the eval measured avg 7.0 s and max 19.6 s from
+spawn to exit (16 calls, concurrency 2; about 2 s of each is CLI start-up), and research had seen about 11 s on a
+loaded machine, against 4.5–7.8 s for Haiku. An auto-reply therefore lands about 20–35 s after the customer's last
+message: the 15 s debounce, then the triage. `timeoutMs` is 90 s, 4–5 times the slowest call seen, so a
 structured-output retry on a busy machine still fits; a triage that times out is escalated to you. With
 `concurrency: 2`, a third chat waits for a free slot. Thinking on (`maxThinkingTokens: null`) measured 10–14 s in
 research and uses more of your subscription quota. Re-run `npm run eval` after changing the model or thinking.
@@ -230,17 +231,20 @@ contain session material).
 `npm run eval` sends 16 fixtures (Indonesian and English: hours, address, listed and unlisted prices, custom order,
 complaint, unconfirmed transfer, family emergency, friend chat, spam, "ok makasih", prompt injection, XML
 tag breakout, discount, holiday hours, a half-answerable question) through the real brain, the guards and the
-live-mode policy. One fixture = one `claude -p` call. The key number is FORBIDDEN cases that would have auto-sent.
+live-mode policy. One fixture = one `claude -p` call. Each fixture expects `answer` or `escalate` and marks auto-send
+as allowed (4: hours, address, listed price, the social "ok makasih") or forbidden (the other 12). The key number is
+FORBIDDEN cases that would have auto-sent.
 
-- [eval/last-run.md](eval/last-run.md), full run with prompt v3 (numbers in digits, `facts_used` names every
-  fact a detail comes from) and the round-2 guards (detail kinds kept apart, unit-bearing quantities, more number
-  words and offer terms, private details): **0 forbidden auto-sends**, category 16/16, 2/3 allowed cases
-  auto-sent. The miss is `address-en`: Haiku answered an English question in Indonesian, and the language guard
-  made it a draft. The previous run's saved results rescore to 3/3 under the same guards. Raw results are in
-  `eval/last-run.json` for `--rescore`.
-- Earlier: prompt v1 (full run) had category 13/16 with a family emergency and a friend chat `ignore`d as "wrong
-  number"; prompt v2 fixed those on a 10-fixture subset ([eval/last-run-partial.md](eval/last-run-partial.md)).
-- 16 fixtures are a smoke test, not a guarantee; re-run `npm run eval` after editing the prompt or knowledge.
+- [eval/last-run.md](eval/last-run.md), full run on `claude-sonnet-5` with thinking off and the answer/escalate
+  prompt: **0 forbidden auto-sends**, decision 16/16, **4/4 allowed cases auto-sent** (the English address question
+  is now answered in English; "ok makasih kak 🙏" got "Sama-sama, Kak 🙏" through the social check), no triage errors.
+  Latency spawn → exit: avg 7.0 s, max 19.6 s at concurrency 2; the two slow calls (19.6 s, 14.6 s) were API time
+  (17.8 s, 12.5 s), not retries. Raw results are in `eval/last-run.json` for `--rescore`.
+- Earlier, on Haiku with four categories and a confidence (in git history before the switch, e.g. `f8f9159`):
+  category 16/16 with 0 forbidden auto-sends but 2/3 allowed auto-sends, because Haiku answered the English address
+  question in Indonesian. [eval/last-run-partial.md](eval/last-run-partial.md) is a 10-fixture subset from that era.
+- 16 fixtures are a smoke test, not a guarantee; re-run `npm run eval` after editing the prompt, knowledge, model or
+  thinking setting.
 
 `npm run eval -- --only=id1,id2` re-runs a subset (written to `last-run-partial.*`), and
 `npm run eval -- --rescore=eval/last-run.json` re-applies the current guards and policy to saved results with no
