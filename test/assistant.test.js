@@ -200,6 +200,85 @@ test('an owner reply in a LID chat carrying the own PN as alt starts a takeover 
   assert.equal(store.paused, false, 'a /command typed in a customer chat is not an owner command')
 })
 
+test('an owner reply older than the takeover window still answers the backlog before it', async t => {
+  const { brain, assistant, deliver, transport, store, now, audit } = setup(t, { config: { debounceMs: 300, backlog: { autoSend: true } } })
+  const nowSeconds = Math.floor(now() / 1000)
+  store.seedHistoryFloor(nowSeconds - 3 * 3600)
+  const owner = (id, ageMinutes, chatId = ALICE) => ({ id, chatId, fromMe: true, isSelfChat: false, text: 'masih ada kak', timestamp: nowSeconds - ageMinutes * 60, kind: 'append' })
+  // The bot was down 40 min: the question and the owner's phone answer arrive in one backlog flush, in either order.
+  for (const message of [
+    incoming(ALICE, 'Kak, jam buka masih sama?', { kind: 'append', timestamp: nowSeconds - 40 * 60 }),
+    owner('OWN1', 35),
+    owner('OWN2', 35, BOB),
+    incoming(BOB, 'Kak, jam buka masih sama?', { kind: 'append', timestamp: nowSeconds - 40 * 60 })
+  ]) await assistant.handleMessage(message)
+  await assistant.idle()
+  assert.equal(brain.calls.length, 0, 'neither question is triaged')
+  assert.deepEqual([transport.toCustomer(), transport.toSelf(), store.pendingDrafts()], [[], [], []])
+  assert.deepEqual([store.chat(ALICE).takeoverUntil, store.chat(BOB).takeoverUntil], [0, 0], 'an old reply starts no takeover')
+  assert.ok(audit().some(entry => entry.event === 'skip_answered_by_owner' && entry.chatId === BOB))
+  assert.deepEqual(store.inboxMessages(), [])
+
+  // A later question is still triaged.
+  await deliver(incoming(ALICE, 'jam buka hari sabtu?', { kind: 'append', timestamp: nowSeconds - 20 * 60 }))
+  assert.equal(brain.calls.length, 1)
+})
+
+test('an old owner reply cancels drafts it answered and re-triages only what came after it', async t => {
+  const { brain, assistant, deliver, transport, store, now } = setup(t)
+  const nowSeconds = Math.floor(now() / 1000)
+  store.seedHistoryFloor(nowSeconds - 3 * 3600)
+  await deliver(incoming(ALICE, 'bisa kue custom?', { kind: 'append', timestamp: nowSeconds - 50 * 60 }))
+  assert.equal(store.getDraft(1).status, 'pending')
+  await deliver({ id: 'OWN1', chatId: ALICE, fromMe: true, isSelfChat: false, text: 'bisa kak', timestamp: nowSeconds - 45 * 60, kind: 'append' })
+  assert.equal(store.getDraft(1).status, 'cancelled')
+  assert.match(transport.toSelf().at(-1), /You had already replied to .* at \d\d:\d\d: cancelled draft #1\./)
+
+  const release = brain.hold()
+  await assistant.handleMessage(incoming(ALICE, 'bisa kue custom unicorn?', { kind: 'append', timestamp: nowSeconds - 44 * 60 }))
+  await assistant.handleMessage(incoming(ALICE, 'kalau warna pink?', { kind: 'append', timestamp: nowSeconds - 30 * 60 }))
+  await waitFor(() => brain.calls.length === 2)
+  await assistant.handleMessage({ id: 'OWN2', chatId: ALICE, fromMe: true, isSelfChat: false, text: 'bisa kak', timestamp: nowSeconds - 40 * 60, kind: 'append' })
+  release()
+  await assistant.idle()
+  assert.deepEqual(brain.calls.at(-1).messages.map(message => message.text), ['kalau warna pink?'], 'the in-flight batch is re-triaged without the answered message')
+  assert.deepEqual(store.pendingDrafts().map(draft => draft.excerpt), ['kalau warna pink?'])
+})
+
+test('messages recovered after a restart that the owner answered meanwhile are not triaged', async t => {
+  const { assistant, store, brain, now } = setup(t)
+  const nowSeconds = Math.floor(now() / 1000)
+  store.addToInbox(incoming(ALICE, 'bisa kue custom?', { timestamp: nowSeconds - 10 * 60 }))
+  store.updateChat(ALICE, { ownerRepliedAt: (nowSeconds - 5 * 60) * 1000 })
+  assistant.recoverInbox()
+  await assistant.idle()
+  assert.equal(brain.calls.length, 0)
+  assert.deepEqual(store.inboxMessages(), [])
+})
+
+test('an owner reply on the PN form of a LID chat silences the LID chat and cancels its drafts', async t => {
+  const { transport, deliver, store, brain, now } = setup(t)
+  const LID = '123456789012345@lid'
+  const PN = '6282222222222@s.whatsapp.net'
+  const live = () => ({ timestamp: Math.floor(now() / 1000) })
+  await deliver(incoming(LID, 'bisa kue custom unicorn?', { chatIdAlt: PN, ...live() }))
+  assert.equal(store.getDraft(1).status, 'pending')
+  // No alt on the owner's copy: the LID record's saved alt links the two.
+  await deliver({ id: 'OWN1', chatId: PN, fromMe: true, isSelfChat: false, text: 'bisa kak', ...live(), kind: 'notify' })
+  assert.equal(store.getDraft(1).status, 'cancelled')
+  await deliver(incoming(LID, 'jam berapa buka?', { chatIdAlt: PN, ...live() }))
+  assert.equal(brain.calls.length, 1, 'no triage during the takeover')
+  assert.equal(transport.toCustomer().length, 0)
+
+  // The other order: the owner's reply (PN, LID alt) comes before the contact's first LID message.
+  const LID2 = '999999999999999@lid'
+  const PN2 = '6283333333333@s.whatsapp.net'
+  await deliver({ id: 'OWN2', chatId: PN2, chatIdAlt: LID2, fromMe: true, isSelfChat: false, text: 'halo kak', ...live(), kind: 'notify' })
+  await deliver(incoming(LID2, 'jam berapa buka?', { ...live() }))
+  assert.equal(brain.calls.length, 1)
+  assert.equal(transport.toCustomer().length, 0)
+})
+
 test('notices that fail while WhatsApp reconnects are queued and re-sent, never dropped', async t => {
   const { transport, deliver, store, assistant } = setup(t)
   transport.down = true

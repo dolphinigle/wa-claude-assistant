@@ -138,6 +138,22 @@ export class Store {
     return this.chat(chatId)
   }
 
+  /**
+   * One person can reach the assistant under both addressing forms (PN and LID), as two chat records linked only
+   * by the alt JID each has seen: returns the given ids, their saved alts, and every record whose alt is one of them.
+   */
+  linkedChatIds (chatId, chatIdAlt) {
+    const ids = new Set([chatId, chatIdAlt].filter(Boolean))
+    for (const id of [...ids]) {
+      const alt = this.existingChat(id)?.chatIdAlt
+      if (alt) ids.add(alt)
+    }
+    for (const [id, chat] of Object.entries(this.state.chats)) {
+      if (chat.chatIdAlt && ids.has(chat.chatIdAlt)) ids.add(id)
+    }
+    return [...ids]
+  }
+
   /** Chats whose saved name contains the query (case-insensitive); an exact name gets no preference. */
   findChatsByName (query) {
     const needle = query.trim().toLowerCase()
@@ -226,8 +242,11 @@ export class Store {
     return draft
   }
 
-  cancelChatDrafts (chatId, reason) {
-    const cancelled = this.pendingDrafts().filter(draft => draft.chatId === chatId)
+  /** With `answeredAt` (epoch ms), only drafts whose newest message is not newer than it. */
+  cancelChatDrafts (chatId, reason, { answeredAt } = {}) {
+    // Drafts saved before lastMessageAt existed were created after all of their messages.
+    const answered = draft => answeredAt === undefined || (draft.lastMessageAt ?? draft.createdAt) <= answeredAt
+    const cancelled = this.pendingDrafts().filter(draft => draft.chatId === chatId && answered(draft))
     for (const draft of cancelled) Object.assign(draft, { status: 'cancelled', resolvedAt: this.now(), cancelReason: reason })
     if (cancelled.length > 0) this.save()
     return cancelled

@@ -133,7 +133,11 @@ start with 🤖 and are ignored.
 
 A draft notice shows the id, the contact, what they wrote, the draft, why it was not auto-sent, and the hints.
 Pending drafts expire after 24 h. Replying yourself in a customer's chat cancels that chat's pending drafts and
-keeps the bot out of that chat for `humanTakeoverMinutes`: it does not even call Claude for it.
+keeps the bot out of that chat for `humanTakeoverMinutes`: it does not even call Claude for it. This covers both
+addressing forms of the chat (phone number and LID), which WhatsApp can mix within one conversation. A reply of yours
+that the assistant only sees late (it was down, or the reply is older than `humanTakeoverMinutes`) starts no
+takeover, but it still counts as the answer to everything the customer wrote before it: those messages are not
+triaged, and drafts made from them are cancelled.
 
 ## Safety defaults
 

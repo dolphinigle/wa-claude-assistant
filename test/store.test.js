@@ -123,6 +123,26 @@ test('drafts: cancel per chat, expire by age', t => {
   assert.equal(store.pendingDrafts().length, 0)
 })
 
+test('drafts: an owner reply at a given time cancels only the drafts it answered', t => {
+  let clock = 5000
+  const store = new Store(tempDir(t), { now: () => clock })
+  const answered = store.createDraft({ chatId: 'a', lastMessageAt: 1000 })
+  const newer = store.createDraft({ chatId: 'a', lastMessageAt: 3000 })
+  const legacy = store.createDraft({ chatId: 'a' }) // no lastMessageAt: createdAt (5000) bounds its messages
+  assert.deepEqual(store.cancelChatDrafts('a', 'owner_replied', { answeredAt: 2000 }).map(draft => draft.id), [answered.id])
+  assert.deepEqual(store.cancelChatDrafts('a', 'owner_replied', { answeredAt: 5000 }).map(draft => draft.id), [newer.id, legacy.id])
+})
+
+test('linked chats: a PN and a LID record are linked through the alt either one saved', t => {
+  const store = new Store(tempDir(t))
+  store.updateChat('111@lid', { chatIdAlt: '62811@s.whatsapp.net' })
+  store.updateChat('222@lid', {})
+  assert.deepEqual(store.linkedChatIds('62811@s.whatsapp.net').sort(), ['111@lid', '62811@s.whatsapp.net'])
+  assert.deepEqual(store.linkedChatIds('111@lid').sort(), ['111@lid', '62811@s.whatsapp.net'])
+  assert.deepEqual(store.linkedChatIds('62822@s.whatsapp.net', '222@lid').sort(), ['222@lid', '62822@s.whatsapp.net'])
+  assert.deepEqual(store.linkedChatIds('333@lid'), ['333@lid'])
+})
+
 test('audit log is append-only JSON lines', t => {
   const store = new Store(tempDir(t))
   store.audit('one', { a: 1 })

@@ -31,6 +31,11 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   }
   const contactName = chatId => store.chat(chatId).name ?? chatId.split('@')[0] // what Claude sees
   const contactLabel = chatId => formatContact(chatId, store.existingChat(chatId)) // what the owner sees
+  // The owner's reply can arrive on the other addressing form of the customer's chat (PN vs LID), so takeover state
+  // is read across both records.
+  const linkedChats = (chatId, chatIdAlt) => store.linkedChatIds(chatId, chatIdAlt).map(id => store.existingChat(id)).filter(Boolean)
+  const takeoverUntil = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.takeoverUntil ?? 0))
+  const ownerRepliedAt = (chatId, chatIdAlt) => Math.max(0, ...linkedChats(chatId, chatIdAlt).map(chat => chat.ownerRepliedAt ?? 0))
 
   // Entries are JIDs or phone numbers (08…, 62…, +62…); pushNames are not accepted because senders choose them.
   // A LID chat's phone number is known only from its messages' alt JID, which is kept on the chat record.
@@ -137,6 +142,11 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       store.audit('skip_before_history_floor', { chatId: message.chatId, id: message.id })
       return
     }
+    // Backlog can deliver the owner's answer before the question it answers.
+    if (message.timestamp * 1000 <= ownerRepliedAt(message.chatId, message.chatIdAlt)) {
+      store.audit('skip_answered_by_owner', { chatId: message.chatId, id: message.id })
+      return
+    }
     if (ageMs > config.backlog.maxAgeMinutes * MINUTE_MS) {
       store.audit('skip_backlog_too_old', { chatId: message.chatId, id: message.id, kind: message.kind, ageMinutes: Math.round(ageMs / MINUTE_MS) })
       return
@@ -156,40 +166,66 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     if (reply) await sendToOwner(reply)
   }
 
+  /**
+   * An owner reply answers everything the customer wrote before it, however old the reply is (backlog after the bot
+   * was down); only the takeover window, which silences the bot for newer messages too, depends on its age.
+   */
   async function startTakeover (message) {
-    const until = message.timestamp * 1000 + config.humanTakeoverMinutes * MINUTE_MS
-    if (until <= now()) return // an old reply of the owner's (backlog), nothing to take over
-    const chat = store.chat(message.chatId)
-    store.updateChat(message.chatId, { takeoverUntil: Math.max(chat.takeoverUntil ?? 0, until) })
-    const state = runtime(message.chatId)
-    state.generation++ // discards any in-flight triage for this chat
-    store.removeFromInbox(state.pending.map(pending => pending.id))
-    state.pending = []
+    const repliedAt = message.timestamp * 1000
+    const until = repliedAt + config.humanTakeoverMinutes * MINUTE_MS
+    const active = until > now()
+    const chatIds = store.linkedChatIds(message.chatId, message.chatIdAlt)
+    const cancelled = []
+    for (const chatId of chatIds) {
+      const chat = store.chat(chatId)
+      store.updateChat(chatId, {
+        ownerRepliedAt: Math.max(chat.ownerRepliedAt ?? 0, repliedAt),
+        ...(active && { takeoverUntil: Math.max(chat.takeoverUntil ?? 0, until) })
+      })
+      dropAnswered(chatId, active ? Infinity : repliedAt)
+      cancelled.push(...store.cancelChatDrafts(chatId, 'owner_replied', active ? {} : { answeredAt: repliedAt }))
+    }
+    store.audit('human_takeover', { chatId: message.chatId, chatIds, repliedAt, until: active ? until : null, cancelledDrafts: cancelled.map(draft => draft.id) })
+    if (cancelled.length === 0) return
+    const drafts = `draft ${cancelled.map(draft => `#${draft.id}`).join(', ')}`
+    await sendToOwner(active
+      ? `${BOT_PREFIX} You replied to ${contactLabel(message.chatId)} yourself: cancelled ${drafts}. The bot stays out of that chat for ${config.humanTakeoverMinutes} min.`
+      : `${BOT_PREFIX} You had already replied to ${contactLabel(message.chatId)} at ${formatClock(repliedAt, config.timezone)}: cancelled ${drafts}.`)
+  }
+
+  /** Drops queued messages sent up to `answeredAt` and discards an in-flight triage; newer ones are re-triaged. */
+  function dropAnswered (chatId, answeredAt) {
+    const state = runtime(chatId)
+    const answered = state.pending.filter(pending => pending.timestamp * 1000 <= answeredAt)
+    if (answered.length === 0) return
+    state.generation++
+    store.removeFromInbox(answered.map(pending => pending.id))
+    state.pending = state.pending.filter(pending => !answered.includes(pending))
     clearTimeout(state.timer)
     state.timer = null
-    const cancelled = store.cancelChatDrafts(message.chatId, 'owner_replied')
-    store.audit('human_takeover', { chatId: message.chatId, until, cancelledDrafts: cancelled.map(draft => draft.id) })
-    if (cancelled.length > 0) {
-      await sendToOwner(`${BOT_PREFIX} You replied to ${contactLabel(message.chatId)} yourself: cancelled draft ${cancelled.map(draft => `#${draft.id}`).join(', ')}. The bot stays out of that chat for ${config.humanTakeoverMinutes} min.`)
-    }
+    if (state.pending.length > 0) scheduleTriage(chatId)
   }
 
   function enqueue (message) {
     const state = runtime(message.chatId)
     state.pending.push(message)
     state.generation++ // a triage already in flight for this chat is now stale
+    scheduleTriage(message.chatId)
+  }
+
+  function scheduleTriage (chatId) {
+    const state = runtime(chatId)
     clearTimeout(state.timer)
     state.timer = setTimeout(() => {
       state.timer = null
-      track(triageChat(message.chatId))
+      track(triageChat(chatId))
     }, config.debounceMs)
   }
 
   async function triageChat (chatId) {
     const state = runtime(chatId)
     if (stopped || state.pending.length === 0) return
-    const chat = store.chat(chatId)
-    if (chat.takeoverUntil > now()) {
+    if (takeoverUntil(chatId) > now()) {
       store.audit('skip_during_takeover', { chatId, ids: state.pending.map(message => message.id) })
       store.removeFromInbox(state.pending.map(message => message.id))
       state.pending = []
@@ -243,12 +279,14 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     if (unfinished.length === 0) return
     const maxAgeMs = config.backlog.maxAgeMinutes * MINUTE_MS
     const blocked = unfinished.filter(message => isBlocked(message.chatId, message.chatIdAlt)) // blocklist changed
-    const tooOld = unfinished.filter(message => !blocked.includes(message) && now() - message.timestamp * 1000 > maxAgeMs)
-    const retry = unfinished.filter(message => !blocked.includes(message) && !tooOld.includes(message))
-    store.removeFromInbox([...blocked, ...tooOld].map(message => message.id))
+    const answered = unfinished.filter(message => !blocked.includes(message) && message.timestamp * 1000 <= ownerRepliedAt(message.chatId, message.chatIdAlt))
+    const done = [...blocked, ...answered]
+    const tooOld = unfinished.filter(message => !done.includes(message) && now() - message.timestamp * 1000 > maxAgeMs)
+    const retry = unfinished.filter(message => !done.includes(message) && !tooOld.includes(message))
+    store.removeFromInbox([...done, ...tooOld].map(message => message.id))
     for (const message of retry) enqueue({ ...message, isBacklog: true })
     const ids = list => list.map(message => message.id)
-    store.audit('inbox_recovered', { retried: ids(retry), tooOld: ids(tooOld), blocked: ids(blocked) })
+    store.audit('inbox_recovered', { retried: ids(retry), tooOld: ids(tooOld), blocked: ids(blocked), answeredByOwner: ids(answered) })
     if (tooOld.length === 0) return
     const lines = tooOld.map(message => `• ${contactLabel(message.chatId)}: "${excerpt(message.text, 120)}"`)
     track(sendToOwner(`${BOT_PREFIX} ⚠️ ${tooOld.length} message(s) arrived before the assistant stopped and were never triaged. Please answer them yourself:\n${lines.join('\n')}`))
@@ -262,7 +300,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       config,
       guard,
       paused: store.paused,
-      chat: { muted: chat.muted, blocked: isBlocked(chatId), takeoverUntil: chat.takeoverUntil },
+      chat: { muted: chat.muted, blocked: isBlocked(chatId), takeoverUntil: takeoverUntil(chatId) },
       now: now(),
       chatAutoSendsLastHour: store.countChatAutoSends(chatId, HOUR_MS),
       autoSendsLastDay: store.countAutoSends(DAY_MS),
@@ -334,7 +372,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       reason: triage?.reason ?? `Triage failed (${result.error}); nothing was sent.`,
       summary: triage?.summary,
       policyReasons: decision.reasons,
-      messageIds: batch.map(message => message.id)
+      messageIds: batch.map(message => message.id),
+      lastMessageAt: Math.max(...batch.map(message => message.timestamp)) * 1000 // an owner reply after it answers it
     })
     const notice = await sendToOwner(formatDraftNotice(draft))
     if (!notice.sent) logger.error(`[assistant] draft #${draft.id} could not be posted to self-chat yet; queued for when WhatsApp is back`)
