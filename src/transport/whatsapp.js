@@ -1,7 +1,8 @@
 // Baileys adapter (baileys@7.0.0-rc14). Every Baileys-specific call lives here; see docs/implementation-notes.md.
 import { chmodSync, mkdirSync } from 'node:fs'
 import makeWASocket, {
-  generateMessageIDV2, isJidBroadcast, isJidMetaAI, isJidNewsletter, makeCacheableSignalKeyStore, useMultiFileAuthState
+  generateMessageIDV2, isJidBroadcast, isJidMetaAI, isJidNewsletter, isLidUser, isPnUser, jidNormalizedUser,
+  makeCacheableSignalKeyStore, useMultiFileAuthState
 } from 'baileys'
 import pino from 'pino'
 import qrcode from 'qrcode-terminal'
@@ -84,6 +85,30 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
     history.set(chatId, list.slice(-HISTORY_PER_CHAT))
   }
   const findRaw = key => history.get(key.remoteJid)?.find(item => item.id === key.id)?.raw
+
+  // Contacts with a username arrive as LID without a PN alt (#2742), yet the blocklist matches phone numbers; Baileys'
+  // mapping store may still know the number. getPNForLID is a local lookup (getLIDForPN can query WhatsApp: unused).
+  // A mapping to an own JID is Baileys mislearning from the owner's replies, never the contact's number.
+  async function resolvePhoneJid (chatId) {
+    if (!isLidUser(chatId)) return undefined
+    try {
+      const pn = await sock.signalRepository?.lidMapping?.getPNForLID?.(chatId)
+      const jid = pn ? jidNormalizedUser(pn) : ''
+      return isPnUser(jid) && !isSelfChatJid(jid, meIds) ? jid : undefined
+    } catch (error) {
+      logger.warn(`[whatsapp] LID→PN lookup failed: ${error.message}`)
+      return undefined
+    }
+  }
+
+  const learnMapping = ({ lid, pn } = {}) => {
+    const pair = [lid, pn].filter(Boolean).map(jidNormalizedUser)
+    const lidJid = pair.find(isLidUser)
+    const pnJid = pair.find(isPnUser)
+    if (!lidJid || !pnJid || pair.some(jid => isSelfChatJid(jid, meIds))) return
+    store.linkAlt(lidJid, pnJid)
+    store.linkAlt(pnJid, lidJid)
+  }
 
   const setIdentity = user => {
     const ids = getMeIds(user)
@@ -174,6 +199,7 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       // The phone's own form of the self-chat JID (PN vs LID is unverified) is the best target for notices. Only a
       // real command counts, so other traffic on an own JID cannot re-point the notices.
       const { message } = normalized
+      message.chatIdAlt ??= await resolvePhoneJid(message.chatId)
       if (message.fromMe && !message.isForwarded && isSelfChatJid(message.chatId, meIds) && !config.whatsapp?.selfChatJid && isKnownCommand(message.text)) selfChatJid = message.chatId
       try {
         await onMessage(normalized.message)
@@ -205,7 +231,11 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
     })
     sock.ev.on('connection.update', handleConnection(sock, { caughtUp: false, opened: false, stable: false, stableTimer: undefined }))
     sock.ev.on('messages.upsert', handleUpsert)
-    sock.ev.on('messaging-history.set', ({ messages = [] }) => { for (const raw of messages) remember(raw) })
+    sock.ev.on('messaging-history.set', ({ messages = [], lidPnMappings = [] }) => {
+      for (const raw of messages) remember(raw)
+      for (const mapping of lidPnMappings) learnMapping(mapping)
+    })
+    sock.ev.on('lid-mapping.update', learnMapping)
   }
 
   async function send (chatId, text, { quotedRaw, messageId } = {}) {

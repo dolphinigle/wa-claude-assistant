@@ -44,6 +44,7 @@ const blockers = [
   ['paused', ctx => { ctx.paused = true }],
   ['muted', ctx => { ctx.chat.muted = true }],
   ['blocked', ctx => { ctx.chat.blocked = true }],
+  ['blocklist_unchecked', ctx => { ctx.chat.blocklistUnchecked = true }],
   ['human_takeover', ctx => { ctx.chat.takeoverUntil = NOW + 60_000 }],
   ['chat_rate_limit', ctx => { ctx.chatAutoSendsLastHour = 3 }],
   ['daily_rate_limit', ctx => { ctx.autoSendsLastDay = 30 }],

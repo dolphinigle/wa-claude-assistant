@@ -154,6 +154,14 @@ export class Store {
     return [...ids]
   }
 
+  /** Saves the other addressing form of a known chat that has none yet (from WhatsApp's LID↔PN mapping). */
+  linkAlt (chatId, chatIdAlt) {
+    const chat = this.existingChat(chatId)
+    if (!chat || chat.chatIdAlt || !chatIdAlt || chatIdAlt === chatId) return
+    chat.chatIdAlt = chatIdAlt
+    this.save()
+  }
+
   /** Chats whose saved name contains the query (case-insensitive); an exact name gets no preference. */
   findChatsByName (query) {
     const needle = query.trim().toLowerCase()

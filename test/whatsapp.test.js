@@ -13,13 +13,14 @@ const CUSTOMER = '6282222222222@s.whatsapp.net'
 const silent = { log () {}, warn () {}, error () {} }
 const nowSeconds = () => Math.floor(Date.now() / 1000)
 
-function fakeSockets () {
+function fakeSockets (lidToPn = {}) {
   const sockets = []
   async function createSocket () {
     const ev = new EventEmitter()
     const sock = {
       ev,
       ws: new EventEmitter(),
+      signalRepository: { lidMapping: { async getPNForLID (lid) { return lidToPn[lid] ?? null } } },
       user: { id: '6281111111111:7@s.whatsapp.net', lid: '99887766554433:7@lid' },
       sent: [],
       read: [],
@@ -42,11 +43,11 @@ function fakeSockets () {
   return { sockets, createSocket }
 }
 
-function setup (t, whatsapp = {}) {
+function setup (t, whatsapp = {}, { lidToPn } = {}) {
   const dir = tempDir(t)
   const config = makeConfig({ whatsapp: { caughtUpWatchdogMs: 60_000, ...whatsapp } }, dir)
   const store = new Store(dir)
-  const { sockets, createSocket } = fakeSockets()
+  const { sockets, createSocket } = fakeSockets(lidToPn)
   const received = []
   const fatal = []
   let ready = 0
@@ -160,6 +161,31 @@ test('sendToSelf refuses a target that is not an own JID', async t => {
   open(emit)
   assert.throws(() => transport.sendToSelf('🤖 notice', { messageId: 'N1' }), /not one of the own JIDs/)
   assert.deepEqual(sockets[0].sent, [])
+})
+
+test('a LID chat without a PN alt gets its number from the local LID mapping, never an own number', async t => {
+  const lidToPn = { '123456789012345@lid': '6281234567890:0@s.whatsapp.net', '555555555555555@lid': '6281111111111:0@s.whatsapp.net' }
+  const { store, transport, received, emit } = setup(t, {}, { lidToPn })
+  await transport.start()
+  open(emit)
+  emit('messages.upsert', {
+    type: 'notify',
+    messages: [
+      raw('123456789012345@lid', { conversation: 'jam buka?' }),
+      raw('555555555555555@lid', { conversation: 'halo' }),
+      raw('777777777777777@lid', { conversation: 'halo' })
+    ]
+  })
+  await sleep(5)
+  assert.deepEqual(received.map(message => message.chatIdAlt), ['6281234567890@s.whatsapp.net', undefined, undefined])
+
+  // Mappings WhatsApp sends later are saved on known chats that have no alt yet.
+  store.updateChat('777777777777777@lid', {})
+  emit('lid-mapping.update', { lid: '777777777777777@lid', pn: '6287777777777@s.whatsapp.net' })
+  emit('messaging-history.set', { messages: [], lidPnMappings: [{ lid: '888@lid', pn: '6288888888888@s.whatsapp.net' }] })
+  emit('lid-mapping.update', { lid: '999@lid', pn: OWNER_PN })
+  assert.equal(store.existingChat('777777777777777@lid').chatIdAlt, '6287777777777@s.whatsapp.net')
+  assert.equal(store.existingChat('888@lid'), undefined, 'unknown chats get no record')
 })
 
 test('stop codes: 401 and 440 stop without reconnecting', async t => {

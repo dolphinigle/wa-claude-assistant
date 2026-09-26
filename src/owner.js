@@ -74,6 +74,7 @@ export function formatDraftNotice (draft) {
   lines.push(`Why: ${draft.reason}`)
   const blockers = (draft.policyReasons ?? []).filter(reason => !reason.startsWith('category:'))
   if (blockers.length > 0) lines.push(`Not auto-sent: ${blockers.join(', ')}`)
+  if (blockers.includes('blocklist_unchecked')) lines.push(`Number unknown, so the blocklist cannot match it by phone number. To exclude this contact, add "${draft.chatId}" to blocklist.`)
   lines.push(draft.draft ? `Reply: /ok ${draft.id} · /edit ${draft.id} <text> · /no ${draft.id}` : `Reply: /edit ${draft.id} <text> · /no ${draft.id}`)
   return lines.join('\n')
 }

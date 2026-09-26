@@ -9,7 +9,7 @@ const QUOTA_OK_STATUSES = new Set(['allowed', 'allowed_warning'])
  * @param {object} ctx.config
  * @param {{ok: boolean, reasons: string[]}} [ctx.guard]  guards.checkReply() output for the reply
  * @param {boolean} ctx.paused
- * @param {{muted?: boolean, blocked?: boolean, takeoverUntil?: number}} ctx.chat
+ * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number}} ctx.chat
  * @param {number} ctx.now  epoch ms
  * @param {number} ctx.chatAutoSendsLastHour
  * @param {number} ctx.autoSendsLastDay
@@ -33,6 +33,7 @@ export function decide (result, ctx) {
   else if (!ctx.guard.ok) blockers.push(...ctx.guard.reasons.map(reason => `guard:${reason}`))
   if (ctx.paused) blockers.push('paused')
   if (chat.blocked) blockers.push('blocked')
+  if (chat.blocklistUnchecked) blockers.push('blocklist_unchecked') // phone number unknown, cannot rule the blocklist out
   if (chat.muted) blockers.push('muted')
   if (chat.takeoverUntil && chat.takeoverUntil > ctx.now) blockers.push('human_takeover')
   if (ctx.chatAutoSendsLastHour >= config.autoSend.maxPerChatPerHour) blockers.push('chat_rate_limit')

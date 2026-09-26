@@ -38,17 +38,22 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   const ownerRepliedAt = (chatId, chatIdAlt) => Math.max(0, ...linkedChats(chatId, chatIdAlt).map(chat => chat.ownerRepliedAt ?? 0))
 
   // Entries are JIDs or phone numbers (08…, 62…, +62…); pushNames are not accepted because senders choose them.
-  // A LID chat's phone number is known only from its messages' alt JID, which is kept on the chat record.
-  function isBlocked (chatId, chatIdAlt = store.existingChat(chatId)?.chatIdAlt) {
-    const ids = [chatId, chatIdAlt].filter(Boolean)
-    const users = ids.map(jidUser)
-    return (config.blocklist ?? []).some(entry => {
-      const value = String(entry).trim()
-      if (ids.includes(value)) return true
-      const digits = value.replace(/\D/g, '').replace(/^0/, '62')
-      return digits.length >= 6 && !value.includes('@') && users.includes(digits)
-    })
+  // A LID chat's phone number is known only from an alt JID (its messages, or WhatsApp's LID mapping), which is kept
+  // on the chat record.
+  const phoneEntry = entry => {
+    const value = String(entry).trim()
+    const digits = value.replace(/\D/g, '').replace(/^0/, '62')
+    return !value.includes('@') && digits.length >= 6 ? digits : undefined
   }
+  function isBlocked (chatId, chatIdAlt) {
+    const ids = store.linkedChatIds(chatId, chatIdAlt)
+    const users = ids.map(jidUser)
+    return (config.blocklist ?? []).some(entry => ids.includes(String(entry).trim()) || users.includes(phoneEntry(entry)))
+  }
+  /** A LID chat with no known phone number cannot be matched against phone-number entries: fail closed (drafts). */
+  const blocklistUnchecked = chatId => chatId.endsWith('@lid') &&
+    !store.linkedChatIds(chatId).some(id => id.endsWith('@s.whatsapp.net')) &&
+    (config.blocklist ?? []).some(phoneEntry)
 
   // --- the send gate: every outgoing message passes through one of these two functions ------------------------
 
@@ -306,7 +311,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       config,
       guard,
       paused: store.paused,
-      chat: { muted: chat.muted, blocked: isBlocked(chatId), takeoverUntil: takeoverUntil(chatId) },
+      chat: { muted: chat.muted, blocked: isBlocked(chatId), blocklistUnchecked: blocklistUnchecked(chatId), takeoverUntil: takeoverUntil(chatId) },
       now: now(),
       chatAutoSendsLastHour: store.countChatAutoSends(chatId, HOUR_MS),
       autoSendsLastDay: store.countAutoSends(DAY_MS),

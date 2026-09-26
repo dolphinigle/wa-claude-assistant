@@ -186,7 +186,7 @@ triaged, and drafts made from them are cancelled.
 | `debounceMs` | `15000` | wait for a burst to finish before triage |
 | `backlog.maxAgeMinutes` / `liveWindowMinutes` / `autoSend` | `60` / `2` / `false` | skip messages older than `maxAgeMinutes`; older than `liveWindowMinutes` (or offline) counts as backlog: never auto-replied |
 | `contextMessages` | `8` | earlier messages sent to Claude as `<history>` |
-| `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`); never sent to Claude, never replied to (a LID chat matches by the phone number its messages carried) |
+| `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`); never sent to Claude, never replied to. A LID chat matches a phone number through the number its messages carried or WhatsApp's LID mapping; while its number is unknown and the list has phone numbers, that chat gets drafts only (its messages still reach Claude) and the draft shows the LID to add here |
 | `disclosure.enabled` / `text` / `sessionGapHours` | `true` / … / `12` | AI disclosure on the first auto-reply per session |
 | `notifyOwnerOnAutoSend` | `true` | post each auto-reply to "Message yourself" |
 | `draftTtlHours` | `24` | pending drafts expire |
@@ -256,8 +256,9 @@ more work):
 - `messages.upsert` can stop firing while the socket looks open (#2810); the watchdog recreates the socket if
   `receivedPendingNotifications` never arrives, and gives up after `maxReconnectAttempts` such open-then-drop
   cycles in a row. There is no process supervisor: after a give-up (or a 401/403/405/440 stop) restart it by hand.
-- Contacts with WhatsApp usernames (`@lid` without a phone alt, #2742) may never arrive; the blocklist cannot match
-  them by phone number.
+- Contacts with WhatsApp usernames (`@lid` without a phone alt, #2742) may never arrive. If they do and Baileys'
+  local LID mapping does not know their number either, a phone-number blocklist entry cannot match them: such
+  chats are drafted, never auto-replied, while the blocklist has phone numbers, and you can block them by LID.
 - Memory/CPU after pairing and history sync are unmeasured. The per-call spawn overhead (~2 s) remains.
 
 Prototype limits of this code:

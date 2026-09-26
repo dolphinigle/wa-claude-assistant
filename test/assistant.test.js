@@ -497,6 +497,26 @@ test('a phone-number block also stops /ok to a LID chat, and notices show the nu
   assert.ok(audit().some(entry => entry.event === 'send_refused_blocked'))
 })
 
+test('a LID chat with no known phone number is drafted, not auto-replied, while the blocklist has phone numbers', async t => {
+  const { transport, deliver, config, store } = setup(t, { config: { blocklist: ['081234567890'] } })
+  const LID = '123456789012345@lid'
+  await deliver(incoming(LID, 'jam buka?', { senderName: 'Mama' }))
+  assert.equal(transport.toCustomer().length, 0)
+  const notice = transport.toSelf().at(-1)
+  assert.match(notice, /📝 DRAFT #1 · Mama \(123456789012345@lid\)/)
+  assert.match(notice, /Not auto-sent: blocklist_unchecked/)
+  assert.match(notice, /add "123456789012345@lid" to blocklist/)
+
+  // Once the number is known (a PN alt, or WhatsApp's LID mapping), the phone entry matches and blocks it.
+  store.linkAlt(LID, '6281234567890@s.whatsapp.net')
+  await deliver(incoming(LID, 'jam buka lagi?', { senderName: 'Mama' }))
+  assert.equal(store.pendingDrafts().length, 1, 'blocked: not even triaged')
+  // With a JID entry, or no phone entries at all, nothing is unchecked.
+  config.blocklist = ['999999999999999@lid']
+  await deliver(incoming('222222222222222@lid', 'jam buka?'))
+  assert.equal(transport.toCustomer().length, 1)
+})
+
 test('/ok, /edit and /no from self-chat', async t => {
   const { transport, deliver, owner, store } = setup(t)
   await deliver(incoming(ALICE, 'bisa kue custom?'))
