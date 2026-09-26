@@ -1,6 +1,7 @@
 // `npm run eval`: every fixture through the REAL brain (claude -p) + guards + policy, evaluated as if live.
 // The number that matters is FORBIDDEN cases that would have auto-sent; it must be 0.
-// Each fixture is one claude call. Use --only=id1,id2 to re-run a subset.
+// Each fixture is one claude call. --only=id1,id2 re-runs a subset (written to last-run-partial.*).
+// --rescore=eval/last-run.json re-applies the CURRENT guards and policy to saved triage results: no claude calls.
 import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { createClaudeBrain } from '../src/brain/claude.js'
@@ -10,23 +11,38 @@ import { loadKnowledge } from '../src/knowledge.js'
 import { excerpt } from '../src/owner.js'
 import { decide } from '../src/policy.js'
 
-const onlyArg = process.argv.find(arg => arg.startsWith('--only='))
-const only = onlyArg ? new Set(onlyArg.slice('--only='.length).split(',')) : null
-const fixtures = JSON.parse(readFileSync(path.join(ROOT_DIR, 'eval', 'fixtures.json'), 'utf8')).filter(fixture => !only || only.has(fixture.id))
+const argValue = name => process.argv.find(arg => arg.startsWith(`--${name}=`))?.slice(name.length + 3)
+const only = argValue('only') ? new Set(argValue('only').split(',')) : null
+const rescoreFile = argValue('rescore')
+const saved = rescoreFile ? JSON.parse(readFileSync(path.resolve(rescoreFile), 'utf8')) : null
+const selected = id => (saved ? saved.results.some(item => item.id === id) : !only || only.has(id))
+const fixtures = JSON.parse(readFileSync(path.join(ROOT_DIR, 'eval', 'fixtures.json'), 'utf8')).filter(fixture => selected(fixture.id))
 if (fixtures.length === 0) throw new Error('no fixtures selected')
 
 const config = loadConfig()
 const knowledge = loadKnowledge(config.paths.knowledge)
-const brain = createClaudeBrain({ config, knowledge })
-const startedAt = new Date()
-const nowSeconds = Math.floor(Date.now() / 1000)
+const startedAt = saved ? new Date(saved.runAt) : new Date()
+const baseName = saved ? path.basename(rescoreFile, '.json') : only ? 'last-run-partial' : 'last-run'
+const outDir = saved ? path.dirname(path.resolve(rescoreFile)) : path.join(ROOT_DIR, 'eval')
 
-console.log(`eval: ${fixtures.length} fixture(s), ${fixtures.length} claude call(s), concurrency ${config.claude.concurrency}, model ${config.claude.model}\n`)
+async function collect () {
+  const brain = createClaudeBrain({ config, knowledge })
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  console.log(`eval: ${fixtures.length} fixture(s), ${fixtures.length} claude call(s), concurrency ${config.claude.concurrency}, model ${config.claude.model}\n`)
+  return Promise.all(fixtures.map(async fixture => {
+    const history = (fixture.history ?? []).map((item, index, all) => ({ ...item, timestamp: nowSeconds - 60 * (all.length - index) }))
+    const result = await brain.triage({ chat: { name: fixture.name }, history, messages: [{ text: fixture.text, timestamp: nowSeconds }] })
+    return { id: fixture.id, result }
+  }))
+}
 
-const rows = await Promise.all(fixtures.map(async fixture => {
-  const history = (fixture.history ?? []).map((item, index, all) => ({ ...item, timestamp: nowSeconds - 60 * (all.length - index) }))
-  const result = await brain.triage({ chat: { name: fixture.name }, history, messages: [{ text: fixture.text, timestamp: nowSeconds }] })
-  const guard = guardTriage(result.triage, { knowledge, config })
+const results = saved ? saved.results : await collect()
+if (saved) console.log(`rescore: ${results.length} saved triage result(s) from ${rescoreFile}, current guards and policy, no claude calls\n`)
+else writeFileSync(path.join(outDir, `${baseName}.json`), `${JSON.stringify({ runAt: startedAt.toISOString(), results }, null, 1)}\n`)
+
+const rows = fixtures.map(fixture => {
+  const { result } = results.find(item => item.id === fixture.id)
+  const guard = guardTriage(result.triage, { knowledge, config, incomingText: fixture.text })
   // A fresh chat on a quiet day: only the triage, the guards and the quota can stop an auto-send.
   const decision = decide(result, {
     config,
@@ -52,7 +68,7 @@ const rows = await Promise.all(fixtures.map(async fixture => {
   }
   console.log(`${row.forbiddenAutoSend ? '✗ FORBIDDEN AUTO-SEND' : row.categoryOk ? '✓' : '·'} ${fixture.id}: ${category} (${result.triage?.confidence ?? '-'}) → ${decision.action}`)
   return row
-}))
+})
 
 const total = rows.length
 const categoryCorrect = rows.filter(row => row.categoryOk).length
@@ -96,9 +112,10 @@ const details = rows.map(row => [
 ].join('\n'))
 
 const report = [
-  only ? '# Eval: partial re-run' : '# Eval: last full run',
+  baseName === 'last-run' ? '# Eval: last full run' : '# Eval: partial re-run',
   '',
-  `Run ${startedAt.toISOString()}${only ? ` (subset: ${[...only].join(', ')})` : ''} · model \`${firstMeta.model ?? config.claude.model}\` · claude ${firstMeta.claudeCodeVersion ?? '?'} · ${total} real \`claude -p\` calls through \`src/brain/claude.js\`, then \`guards.js\` and \`policy.js\` evaluated as live mode on a fresh chat (min confidence ${config.autoSend.minConfidence}, quota limit ${config.quota.maxFiveHourUtilization}).`,
+  ...(saved ? [`> Rescored ${new Date().toISOString()} with the current guards and policy from the saved triage results (no new claude calls).`, ''] : []),
+  `Run ${startedAt.toISOString()}${baseName === 'last-run' ? '' : ` (subset: ${fixtures.map(fixture => fixture.id).join(', ')})`} · model \`${firstMeta.model ?? config.claude.model}\` · claude ${firstMeta.claudeCodeVersion ?? '?'} · ${total} ${saved ? 'saved' : 'real'} \`claude -p\` results from \`src/brain/claude.js\`, then \`guards.js\` and \`policy.js\` evaluated as live mode on a fresh chat (min confidence ${config.autoSend.minConfidence}, quota limit ${config.quota.maxFiveHourUtilization}).`,
   '',
   '## Summary',
   '',
@@ -114,7 +131,7 @@ const report = [
 ].join('\n')
 
 // A subset re-run must not overwrite the last full run.
-const outFile = only ? 'last-run-partial.md' : 'last-run.md'
-writeFileSync(path.join(ROOT_DIR, 'eval', outFile), `${report}\n`)
-console.log(`\n${summary.join('\n').replace(/\*\*/g, '')}\n\nwrote eval/${outFile}`)
+const outFile = `${baseName}.md`
+writeFileSync(path.join(outDir, outFile), `${report}\n`)
+console.log(`\n${summary.join('\n').replace(/\*\*/g, '')}\n\nwrote ${path.relative(ROOT_DIR, path.join(outDir, outFile))}`)
 process.exit(forbidden.length === 0 ? 0 : 1)
