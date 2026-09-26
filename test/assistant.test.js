@@ -60,6 +60,23 @@ test('live: a simple question is auto-sent with disclosure, quoted, marked read,
   assert.equal(store.countChatAutoSends(ALICE, 3_600_000), 1)
 })
 
+test('an auto-reply is not marked read while the chat still has an URGENT or draft waiting for the owner', async t => {
+  const { transport, deliver, owner, advance, now, audit } = setup(t)
+  const live = () => ({ timestamp: Math.floor(now() / 1000) })
+  await deliver(incoming(ALICE, 'Saya sudah transfer 2 juta, tolong dicek', live()))
+  advance(30_000)
+  await deliver(incoming(ALICE, 'jam berapa tutup?', live()))
+  assert.equal(transport.toCustomer().length, 1, 'the simple question is still answered')
+  assert.deepEqual(transport.read, [])
+  assert.ok(audit().some(entry => entry.event === 'mark_read_skipped' && entry.openDrafts.includes(1)))
+
+  await owner('/no 1')
+  advance(30_000)
+  const last = incoming(ALICE, 'jam berapa buka?', live())
+  await deliver(last)
+  assert.deepEqual(transport.read, [last.id], 'once nothing is open, auto-replies mark read again')
+})
+
 test('disclosure only on the first auto-reply of a session', async t => {
   const { transport, deliver, advance, now } = setup(t)
   const live = () => ({ timestamp: Math.floor(now() / 1000) })

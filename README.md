@@ -163,7 +163,9 @@ triaged, and drafts made from them are cancelled.
   you in "Message yourself" instead.
 - **Notices are never dropped:** a draft, URGENT or other notice that fails because WhatsApp is reconnecting is
   kept in `data/state.json` and re-sent, marked "Delayed", on the next connection.
-- **Blue ticks only after an auto-reply** (`markRead`), never for drafted or escalated chats.
+- **Blue ticks only after an auto-reply** (`markRead`), never for drafted or escalated messages, and not while the
+  chat still has a draft or URGENT waiting for you (an auto-answered "jam berapa tutup?" does not mark read a chat
+  whose "saya sudah transfer" is still unanswered).
 - **Burst handling:** messages in the same chat within 15 s are triaged together; a message that arrives while a
   triage is running discards that result and re-triages the whole burst.
 - Everything is logged to `data/audit.jsonl`; state is in `data/state.json` (atomic temp+rename writes).

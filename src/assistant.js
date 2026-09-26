@@ -355,15 +355,24 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       return postDraft(chatId, batch, { ok: true, triage }, { action: 'escalate', reasons: [...decision.reasons, `send_failed:${outcome.error}`] })
     }
     if (needsDisclosure) store.updateChat(chatId, { [disclosureKey]: now() })
-    if (outcome.sent) {
-      try { await transport.markRead?.(batch) } catch (error) { logger.warn(`[assistant] markRead failed: ${error.message}`) }
-    }
+    if (outcome.sent) await markReadUnlessOpen(chatId, batch)
     const name = contactLabel(chatId)
     if (outcome.shadow) {
       await sendToOwner(`${BOT_PREFIX} [SHADOW] Would auto-reply to ${name}\nThey wrote: "${excerpt(batch.map(message => message.text).join(' / '))}"\nReply:\n${text}`)
     } else if (config.notifyOwnerOnAutoSend) {
       await sendToOwner(`${BOT_PREFIX} ✅ Auto-replied to ${name}\nThey wrote: "${excerpt(batch.map(message => message.text).join(' / '))}"\nReply:\n${triage.reply}`)
     }
+  }
+
+  /** Blue ticks say "seen": never while a draft or URGENT of this chat is still waiting for the owner. */
+  async function markReadUnlessOpen (chatId, batch) {
+    const chatIds = store.linkedChatIds(chatId)
+    const open = store.pendingDrafts().filter(draft => chatIds.includes(draft.chatId))
+    if (open.length > 0) {
+      store.audit('mark_read_skipped', { chatId, ids: batch.map(message => message.id), openDrafts: open.map(draft => draft.id) })
+      return
+    }
+    try { await transport.markRead?.(batch) } catch (error) { logger.warn(`[assistant] markRead failed: ${error.message}`) }
   }
 
   async function postDraft (chatId, batch, result, decision) {
