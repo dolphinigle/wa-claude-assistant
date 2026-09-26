@@ -92,8 +92,13 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
   // Drafts whose send is in flight: two self-chat commands run concurrently (Baileys does not await listeners).
   const sending = new Set()
   // Whatever the owner did with a thanks (sent it, edited it, discarded it) closes the chat for the session, like a
-  // closing the bot sent: the next 🙏 is skipped instead of drafted again.
-  const resolveClosing = draft => { if (draft.closing) store.updateChat(draft.chatId, { lastClosingAt: now() }) }
+  // closing the bot sent: the next 🙏 is skipped instead of drafted again. It is dated by the thanks, not the command:
+  // what our side sent after the thanks (the edited text itself, another draft) stays newer, so an "iya" to it is held.
+  const resolveClosing = draft => {
+    if (!draft.closing) return
+    const thanksAt = draft.lastMessageAt ?? draft.createdAt
+    store.updateChat(draft.chatId, { lastClosingAt: Math.max(store.chat(draft.chatId).lastClosingAt ?? 0, thanksAt) })
+  }
 
   function pendingDraft (id, commandTimestampMs) {
     const draft = store.getDraft(id)
@@ -136,8 +141,10 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
       ? Object.keys(store.state.chats).filter(chatId => [chatId, store.existingChat(chatId).chatIdAlt].some(jid => jid && jidUser(jid) === digits.replace(/^0/, '62')))
       : store.findChatsByName(target)
     if (matches.length === 0) return { error: `No chat matches "${target}".` }
-    // Names are chosen by the senders, so two chats sharing one must be told apart by number or draft number.
-    if (matches.length > 1) return { error: `"${target}" matches ${matches.map(chatName).join(', ')}; use the number or a draft number.` }
+    // Names are chosen by the senders, so two chats sharing one must be told apart by number or draft number. One
+    // contact's PN and LID records are one chat, not two.
+    const linked = store.linkedChatIds(matches[0])
+    if (matches.some(chatId => !linked.includes(chatId))) return { error: `"${target}" matches ${matches.map(chatName).join(', ')}; use the number or a draft number.` }
     return { chatId: matches[0] }
   }
 
@@ -201,7 +208,9 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
       case 'unmute': {
         const { chatId, error } = resolveTarget(command.target)
         if (error) return `${BOT_PREFIX} ${error}`
-        store.updateChat(chatId, { muted: command.name === 'mute' })
+        // A mute on either of the contact's records holds both (assistant.js), so an unmute clears both.
+        const records = command.name === 'mute' ? [chatId] : store.linkedChatIds(chatId).filter(id => store.existingChat(id))
+        for (const id of records) store.updateChat(id, { muted: command.name === 'mute' })
         return command.name === 'mute'
           ? `${BOT_PREFIX} 🔇 Muted ${chatName(chatId)}: no auto-replies there; drafts still come here.`
           : `${BOT_PREFIX} 🔈 Unmuted ${chatName(chatId)}.`

@@ -120,6 +120,7 @@ test('conversationState: a closing ends only its own session, and a greeting is 
   assert.equal(state(CLOSED_YESTERDAY), 'answered', 'yesterday\'s closing does not close today\'s chat')
   assert.equal(state([customer('makasih'), bot('Sama-sama, Kak 🙏', { timestamp: undefined })]), 'answered', 'nor does one of unknown age')
   assert.equal(state([customer('makasih'), bot('Sama-sama, Kak 🙏'), customer('Selamat pagi kak')]), 'waiting', 'a greeting waits for an answer')
+  assert.equal(state([customer('ok '.repeat(12000))]), 'waiting', 'a spammed "ok" in the history is read, not a stack overflow')
 })
 
 test('conversationState: whose words our side\'s last message are, a closing handled after it, and open drafts', () => {
@@ -206,6 +207,10 @@ test('a thanks while an open draft already holds the chat is skipped, not drafte
     [[], THANKS]
   ]) assert.deepEqual(decide(triageResult(triage), closingContext(history, { openDrafts })), { action: 'skip', reasons: [`decision:${triage.decision}`, 'open_draft'] })
   assert.equal(decide(triageResult(THANKS), closingContext([bot('Sama-sama, Kak 🙏')], { openDrafts })).action, 'skip', 'after our closing too')
+
+  const pickup = customer('kak pesanan saya bisa diambil hari ini? pagi atau sore?')
+  const choice = closingContext([pickup], { openDrafts: [{ messageIds: [pickup.id] }] }, { incomingText: 'ok kak sore ya' })
+  assert.deepEqual(decide(triageResult({ decision: 'escalate' }), choice), { action: 'escalate', reasons: ['decision:escalate'] }, 'an "ok" that picks a time is new')
 
   const photo = closingContext([transfer], { openDrafts }, { attachments: ['image'] })
   assert.deepEqual(decide(triageResult(THANKS), photo).reasons, ['decision:answer', 'attachment:image', 'open_draft'], 'a file is new: it is drafted')

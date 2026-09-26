@@ -14,8 +14,8 @@ const HOUR_MS = 60 * 60 * 1000
  * - 'drafted': an open draft holds this message and everything before it (also when the history does not reach it)
  * - 'waiting': a customer message nobody has answered; `attachment` names one Claude cannot read (a photo, a
  *   location pin): nobody has seen it
- * - 'closed': our side's last message was a closing, or a closing was handled after it (`closingHandledAt`: sent, or
- *   its draft resolved), within this session (after `sessionStart`)
+ * - 'closed': our side's last message was a closing, or came before a thanks that was closed (`closingHandledAt`: that
+ *   thanks' time; its closing sent or its draft resolved), within this session (after `sessionStart`)
  * - 'question': our side's last message asked something, so an "ok" answers it
  * - 'owner': our side's last message was not one of the bot's auto-replies (`autoReply`): an "ok" may agree to it
  * - 'answered': the bot's auto-reply, or a closing of an earlier session, was the last word
@@ -58,7 +58,8 @@ const flatText = text => normalizeText(text).replace(/\s+/g, ' ').trim()
  * @param {object[]} [ctx.history]  earlier messages of the chat, oldest first (see conversationState)
  * @param {boolean} ctx.paused
  * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, openDrafts?: {messageIds?: string[]}[], lastClosingAt?: number}} ctx.chat
- *   `openDrafts`: the chat's pending drafts; `lastClosingAt`: when a closing was last sent, or a closing draft resolved
+ *   `openDrafts`: the chat's pending drafts; `lastClosingAt`: when the last thanks that was closed (closing sent, or
+ *   its draft resolved) arrived
  * @param {number} ctx.now  epoch ms
  * @param {number} ctx.chatAutoSendsLastHour
  * @param {number} ctx.autoSendsLastDay

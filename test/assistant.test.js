@@ -27,7 +27,7 @@ function setup (t, { config: overrides = {}, respond = byKeyword } = {}) {
   const dir = tempDir(t)
   const config = makeConfig({ mode: 'live', debounceMs: 10, ...overrides }, dir)
   const store = new Store(dir, { now, logger: silent })
-  const transport = createFakeTransport()
+  const transport = createFakeTransport({ now })
   const brain = createFakeBrain(respond)
   const assistant = createAssistant({ config, store, brain, transport, knowledge, now, logger: silent })
   t.after(() => assistant.stop())
@@ -635,6 +635,22 @@ test('/mute blocks auto-replies in that chat only', async t => {
   assert.ok(transport.toSelf().some(text => text.includes('Not auto-sent: muted')))
 })
 
+test('a mute holds one contact on both addressing forms, and the number names that contact', async t => {
+  const { transport, deliver, owner, store } = setup(t)
+  const LID = '123456789012345@lid'
+  await deliver(incoming(ALICE, 'jam buka?', { senderName: 'Rina' }))
+  await deliver(incoming(LID, 'jam buka hari ini?', { chatIdAlt: ALICE, senderName: 'Rina' }))
+  await owner('/mute 0822-2222-2222')
+  assert.match(transport.toSelf().at(-1), /Muted Rina \(\+6282222222222\)/, 'not "matches Rina, Rina"')
+  await deliver(incoming(LID, 'buka hari sabtu?', { chatIdAlt: ALICE, senderName: 'Rina' }))
+  assert.equal(transport.toCustomer().length, 2)
+  assert.deepEqual(store.getDraft(1).policyReasons, ['decision:answer', 'muted'])
+
+  await owner('/unmute 0822-2222-2222')
+  await deliver(incoming(LID, 'buka hari minggu?', { chatIdAlt: ALICE, senderName: 'Rina' }))
+  assert.deepEqual(transport.toCustomer().map(item => item.chatId), [ALICE, LID, LID])
+})
+
 // Answers every thanks with a thanks, as the prompt tells Claude to; the policy decides whether it goes out.
 const thanksBack = input => {
   const text = input.messages.map(message => message.text).join(' ')
@@ -688,6 +704,68 @@ test('drafts only: a thanks is drafted once, and once the owner has dealt with i
   await deliver(incoming(ALICE, '🙏', live()))
   assert.deepEqual(store.pendingDrafts(), [], 'discarding the thanks closed the chat')
   assert.deepEqual(transport.toCustomer().map(item => item.text), [ANSWER_HOURS.reply])
+})
+
+test('what our side sends after a thanks stays newer than its closing: an answer to it is a draft, not skipped', async t => {
+  const { deliver, owner, advance, now, store } = setup(t, { config: { autoSend: { enabled: false } }, respond: thanksBack })
+  const live = () => ({ timestamp: Math.floor(now() / 1000) })
+  const say = async (chatId, text) => { advance(60_500); await deliver(incoming(chatId, text, live())) }
+  const command = async text => { advance(30_500); await owner(text) }
+  const held = id => store.getDraft(id).policyReasons.filter(reason => reason !== 'auto_send_disabled')
+
+  // The thanks draft is edited into a question.
+  await say(ALICE, 'ok makasih kak')
+  await command('/edit 1 Sama-sama kak. Mau sekalian pesan untuk besok?')
+  await say(ALICE, 'iya kak')
+  assert.deepEqual(held(2), ['decision:answer', 'answers_owner_question'])
+
+  // Another draft is answered with a question, then the older thanks draft is discarded.
+  await say(BOB, 'ok makasih kak')
+  await say(BOB, 'kak brownies masih ada?')
+  await command('/edit 4 Bisa kak, mau kami kirim besok pagi?')
+  await command('/no 3')
+  await say(BOB, 'iya kak 🙏')
+  assert.deepEqual(held(5), ['decision:answer', 'answers_owner_question'])
+
+  // The thanks draft is edited into an arrangement.
+  const CAROL = '6284444444444@s.whatsapp.net'
+  await say(CAROL, 'ok makasih kak')
+  await command('/edit 6 Sama-sama kak, pesanan kami kirim besok jam 10 ya')
+  await say(CAROL, 'ok kak')
+  assert.deepEqual(held(7), ['decision:answer', 'answers_owner_message'])
+})
+
+test('a closing and the hourly cap count one contact on both addressing forms', async t => {
+  const { transport, deliver, audit } = setup(t, { respond: thanksBack })
+  const LID = '123456789012345@lid'
+  await deliver(incoming(ALICE, 'ok makasih kak'))
+  await deliver(incoming(LID, '🙏', { chatIdAlt: ALICE }))
+  assert.deepEqual(audit().filter(entry => entry.action === 'skip').map(entry => [entry.chatId, entry.reasons.at(-1)]), [[LID, 'closing_already_sent']])
+
+  for (const [chatId, text] of [[ALICE, 'jam buka?'], [LID, 'jam tutup?'], [ALICE, 'buka sabtu?'], [LID, 'buka minggu?']]) {
+    await deliver(incoming(chatId, text, { chatIdAlt: chatId === LID ? ALICE : undefined }))
+  }
+  assert.equal(transport.toCustomer().length, 4, 'the closing and three answers')
+  assert.match(transport.toSelf().at(-1), /Not auto-sent: chat_rate_limit/)
+})
+
+test('a spammed message is drafted, and so is the next one in that chat', async t => {
+  const { deliver, store } = setup(t)
+  await deliver(incoming(ALICE, 'ok '.repeat(12000) + 'tolong refund ke rekening saya'))
+  await deliver(incoming(ALICE, 'Kak mau pesan 2 loyang'))
+  assert.deepEqual(store.pendingDrafts().map(draft => draft.id), [1, 2])
+  assert.deepEqual(store.inboxMessages(), [])
+})
+
+test('a routing failure is a draft, never a silent drop', async t => {
+  const { transport, deliver, store } = setup(t)
+  const audit = store.audit.bind(store)
+  store.audit = (event, data) => { if (event === 'decision') throw new Error('disk full'); audit(event, data) }
+  await deliver(incoming(ALICE, 'jam buka?'))
+  assert.deepEqual(transport.toCustomer(), [])
+  assert.deepEqual(store.getDraft(1).policyReasons, ['route_failed'])
+  assert.match(transport.toSelf().at(-1), /📝 DRAFT #1 .*Not auto-sent: route_failed/s)
+  assert.deepEqual(store.inboxMessages(), [])
 })
 
 test('a greeting the day after a closing is escalated, not skipped', async t => {

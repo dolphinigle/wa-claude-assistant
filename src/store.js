@@ -198,7 +198,7 @@ export class Store {
 
   countChatAutoSends (chatId, windowMs) {
     const at = this.now()
-    return this.chat(chatId).autoSendTimes.filter(ts => at - ts < windowMs).length
+    return (this.existingChat(chatId)?.autoSendTimes ?? []).filter(ts => at - ts < windowMs).length
   }
 
   countAutoSends (windowMs) {

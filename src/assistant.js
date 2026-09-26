@@ -34,10 +34,14 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   // A burst as the owner sees it: a file is named, since only its caption reaches Claude.
   const describe = batch => batch.map(message => (message.attachment ? `[${message.attachment}] ${message.text}`.trim() : message.text)).join(' / ')
   // The owner's reply can arrive on the other addressing form of the customer's chat (PN vs LID), so takeover state
-  // is read across both records.
+  // is read across both records. So are the per-person gates: a mute, a closing and the hourly cap.
   const linkedChats = (chatId, chatIdAlt) => store.linkedChatIds(chatId, chatIdAlt).map(id => store.existingChat(id)).filter(Boolean)
   const takeoverUntil = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.takeoverUntil ?? 0))
   const ownerRepliedAt = (chatId, chatIdAlt) => Math.max(0, ...linkedChats(chatId, chatIdAlt).map(chat => chat.ownerRepliedAt ?? 0))
+  const lastClosingAt = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.lastClosingAt ?? 0))
+  const chatAutoSendsLastHour = chatId => store.linkedChatIds(chatId).reduce((sum, id) => sum + store.countChatAutoSends(id, HOUR_MS), 0)
+  /** Epoch ms of a burst's newest message: a closing is dated by the thanks it closes, not by when it was handled. */
+  const lastMessageAt = batch => Math.max(...batch.map(message => message.timestamp)) * 1000
 
   // Entries are JIDs or phone numbers (08…, 62…, +62…); pushNames are not accepted because senders choose them.
   // A LID chat's phone number is known only from an alt JID (its messages, or WhatsApp's LID mapping), which is kept
@@ -278,6 +282,11 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     if (result.rateLimit) store.setLastRateLimit(result.rateLimit)
     try {
       await route(chatId, batch, history, result, generation)
+    } catch (error) {
+      // A bug in the checks must not drop the customer's message with the inbox entry: it becomes a draft.
+      logger.error(`[assistant] routing failed: ${error.stack ?? error.message}`)
+      store.audit('route_failed', { chatId, ids: [...batchIds], error: error.message })
+      await postDraft(chatId, batch, result, { action: 'escalate', reasons: ['route_failed'] }, false)
     } finally {
       store.removeFromInbox([...batchIds])
     }
@@ -318,7 +327,6 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
 
   async function route (chatId, batch, history, result, generation) {
     const triage = result.triage
-    const chat = store.chat(chatId)
     const incomingText = batch.map(message => message.text).join('\n')
     const attachments = [...new Set(batch.map(message => message.attachment).filter(Boolean))]
     // Only a thanks, ack or goodbye: its auto-reply or its resolved draft closes the chat for the session.
@@ -333,15 +341,15 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       history: history.map(item => (item.fromMe ? { ...item, autoReply: store.isAutoReply(item.id) } : item)),
       paused: store.paused,
       chat: {
-        muted: chat.muted,
+        muted: linkedChats(chatId).some(record => record.muted),
         blocked: isBlocked(chatId),
         blocklistUnchecked: blocklistUnchecked(chatId),
         takeoverUntil: takeoverUntil(chatId),
         openDrafts: openDrafts(chatId),
-        lastClosingAt: chat.lastClosingAt
+        lastClosingAt: lastClosingAt(chatId)
       },
       now: now(),
-      chatAutoSendsLastHour: store.countChatAutoSends(chatId, HOUR_MS),
+      chatAutoSendsLastHour: chatAutoSendsLastHour(chatId),
       autoSendsLastDay: store.countAutoSends(DAY_MS),
       rateLimit: result.rateLimit,
       isBacklog: batch.some(message => message.isBacklog)
@@ -389,7 +397,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     }
     if (outcome.sent) store.markAutoReply(outcome.id)
     if (needsDisclosure) store.updateChat(chatId, { [disclosureKey]: now() })
-    if (closing) store.updateChat(chatId, { lastClosingAt: now() }) // shadow too, like the rate limits
+    if (closing) store.updateChat(chatId, { lastClosingAt: lastMessageAt(batch) }) // shadow too, like the rate limits
     if (outcome.sent) await markReadUnlessOpen(chatId, batch)
     const name = contactLabel(chatId)
     if (outcome.shadow) {
@@ -421,7 +429,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       summary: triage?.summary,
       policyReasons: decision.reasons,
       messageIds: batch.map(message => message.id),
-      lastMessageAt: Math.max(...batch.map(message => message.timestamp)) * 1000, // an owner reply after it answers it
+      lastMessageAt: lastMessageAt(batch), // an owner reply after it answers it; a resolved closing is dated by it
       closing,
       privateDetails: findPrivateDetails(triage?.reply ?? '', privateIdentifiersFor(config))
     })

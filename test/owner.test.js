@@ -78,17 +78,21 @@ test('shadow mode: /ok is recorded but the gate reports nothing sent', async t =
   assert.equal(store.getDraft(draft.id).status, 'approved_shadow')
 })
 
-test('resolving a thanks draft closes the chat for the session; resolving any other draft does not', async t => {
+test('resolving a thanks draft closes the chat as of the thanks; resolving any other draft does not', async t => {
   const { store, owner, draft, advance, now } = setup(t)
-  const thanks = () => store.createDraft({ chatId: 'b@s.whatsapp.net', contactName: 'Bob', excerpt: 'ok makasih kak', draft: 'Sama-sama, Kak 🙏', closing: true })
+  const thanks = lastMessageAt => store.createDraft({ chatId: 'b@s.whatsapp.net', contactName: 'Bob', excerpt: 'ok makasih kak', draft: 'Sama-sama, Kak 🙏', closing: true, lastMessageAt })
   await owner.handle(`/ok ${draft.id}`)
   assert.equal(store.chat('a@s.whatsapp.net').lastClosingAt, undefined)
   for (const command of ['/no', '/ok', '/edit']) {
-    advance(60_000)
-    const { id } = thanks()
+    advance(60 * 60_000)
+    const { id } = thanks(now() - 20 * 60_000)
+    advance(5 * 60_000) // the owner gets to it later: what our side sent meanwhile stays newer than the closing
     await owner.handle(`${command} ${id}${command === '/edit' ? ' Sama-sama ya Kak' : ''}`)
-    assert.equal(store.chat('b@s.whatsapp.net').lastClosingAt, now(), command)
+    assert.equal(store.chat('b@s.whatsapp.net').lastClosingAt, now() - 25 * 60_000, command)
   }
+  const { id } = thanks(now() - 2 * 60 * 60_000)
+  await owner.handle(`/no ${id}`)
+  assert.equal(store.chat('b@s.whatsapp.net').lastClosingAt, now() - 25 * 60_000, 'an older thanks never moves it back')
 })
 
 test('shadow mode: approving a thanks draft closes the chat like a send would', async t => {
@@ -152,6 +156,13 @@ test('a pushName is never enough: labels carry the number and a shared name must
   assert.equal(store.chat(REAL).muted, true)
   assert.match(await owner.handle('/mute +62 899 9999 9999'), /Muted Budi \(\+6289999999999\)/, 'a LID chat is found by its phone alt')
   assert.equal(store.chat(STRANGER).muted, true)
+
+  // The same person on both addressing forms is one chat, not an ambiguous match; an unmute clears both records.
+  store.updateChat('6289999999999@s.whatsapp.net', { name: 'Budi', muted: true })
+  assert.match(await owner.handle('/unmute 0899-9999-9999'), /Unmuted Budi \(\+6289999999999\)/)
+  assert.deepEqual([store.chat(STRANGER).muted, store.chat('6289999999999@s.whatsapp.net').muted], [false, false])
+  assert.match(await owner.handle('/mute 0899-9999-9999'), /Muted Budi \(\+6289999999999\)/)
+  assert.match(await owner.handle('/mute Budi'), /matches .*; use the number/, 'another Budi still makes the name ambiguous')
 })
 
 test('one notice format: id, name, excerpt, summary, draft, reason, held gates and hints', () => {

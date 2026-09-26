@@ -54,7 +54,8 @@ export function createFakeBrain (respond = () => triageResult(ANSWER_HOURS)) {
   }
 }
 
-export function createFakeTransport () {
+/** `now` stamps our sends, like Baileys does at send time (whole seconds). */
+export function createFakeTransport ({ now = () => Date.now() } = {}) {
   const sent = []
   const read = []
   const history = new Map()
@@ -78,7 +79,7 @@ export function createFakeTransport () {
       if (this.down) throw new Error('whatsapp not connected')
       const id = options.messageId ?? `SENT${++counter}`
       sent.push({ chatId, text, id, quotedRaw: options.quotedRaw })
-      this.remember({ id, chatId, fromMe: true, text, timestamp: Math.floor(Date.now() / 1000) })
+      this.remember({ id, chatId, fromMe: true, text, timestamp: Math.floor(now() / 1000) })
       return { id }
     },
     async sendToSelf (text, options = {}) {

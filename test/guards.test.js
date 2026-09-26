@@ -239,9 +239,23 @@ test('the customer side is matched as phrases: a greeting alone, or a friendly w
   }
   for (const text of ['Selamat pagi kak', 'halo kak', 'hai', 'hello', 'good morning', 'pagi kak', 'selamat malam kak', 'Pagi kak 🙏', 'halo kak 🙏',
     'no good', 'too much', 'it was too much', 'oh no', 'no no no', 'so bad', 'wow', 'wah', 'ya kak', 'infonya kak', 'selamat ya kak',
-    'ok :(', 'ok -_-', 'T_T', 'makasih *kak*', 'ok kak :/']) {
+    'ok :(', 'ok -_-', 'T_T', 'makasih *kak*', 'ok kak :/',
+    // a bare day part next to an "ok" picks a time; only "selamat sore" or "good morning" greets
+    'ok kak sore ya', 'siap kak malam ya', 'iya kak siang ya 🙏', 'ok kak pagi ya', 'ok morning', 'ok sore']) {
     assert.equal(isSocialMessage(text), false, text)
   }
+})
+
+test('a long message is never a closing, and costs little to reject: no backtracking, no recursion', () => {
+  assert.equal(isSocialMessage('good bye '.repeat(15)), true, '30 words may still close')
+  for (const text of ['good bye '.repeat(15) + 'kak', 'good bye '.repeat(40) + 'x', 'ok '.repeat(20000), 'ok '.repeat(12000) + 'tolong refund ke rekening saya']) {
+    assert.equal(isSocialMessage(text), false, `${text.length} chars`)
+  }
+  assert.equal(isSocialReply('sama sama '.repeat(20000)), false)
+  // "good bye" splits two ways ("good" + "bye"), so backtracking tried 2^14 splits of this one before failing on "x".
+  const started = performance.now()
+  for (let i = 0; i < 100; i++) isSocialMessage('good bye '.repeat(14) + 'x')
+  assert.ok(performance.now() - started < 1000, `${Math.round(performance.now() - started)} ms`)
 })
 
 test('a thanks answered with facts fails: nobody asked for them, and a fact licenses a promise', () => {

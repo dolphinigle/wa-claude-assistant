@@ -193,9 +193,10 @@ export function detectLanguage (text) {
 // A reply that cites no fact may only close a purely social message. The customer's side is matched as whole phrases
 // (a thanks, a goodbye or an acknowledgement, with honorifics and softeners around it), so a word that only makes
 // sense inside a phrase never counts alone: "no good", "too much" and "oh no" are not a thanks. A greeting may go with
-// one ("makasih kak, selamat siang") but never stands alone: "Selamat pagi kak" opens a conversation. Words that ask
-// for something ("dibantu ya", "ditunggu") are in no list. Acknowledgements (ok, siap, iya) can close the customer's
-// message but never the reply: they could agree to something asked earlier.
+// one ("makasih kak, selamat siang") but never stands alone: "Selamat pagi kak" opens a conversation. A day part is a
+// greeting only in full: a bare "sore" next to an "ok" picks a time ("ok kak sore ya"). Words that ask for something
+// ("dibantu ya", "ditunggu") are in no list. Acknowledgements (ok, siap, iya) can close the customer's message but
+// never the reply: they could agree to something asked earlier.
 const HONORIFICS = new Set('kak ka kakak mas mbak bu ibu pak bapak sis gan dear min'.split(' '))
 const HAVE_A_NICE = ['nice', 'great', 'good', 'lovely'].flatMap(adjective => ['day', 'weekend', 'evening', 'night'].map(time => `have a ${adjective} ${time}`))
 const CUSTOMER_PHRASES = {
@@ -206,8 +207,8 @@ const CUSTOMER_PHRASES = {
     'sehat selalu', 'semoga harinya menyenangkan', ...HAVE_A_NICE, 'all the best', 'best wishes', 'you too'],
   acknowledgements: ['ok', 'oke', 'okay', 'okey', 'okee', 'oce', 'sip', 'siap', 'baik', 'noted', 'mantap', 'mantab', 'iya', 'yes', 'yup',
     'yep', 'sure', 'alright', 'cool', 'perfect', 'great', 'nice', 'good', 'lovely', 'got it', 'understood', 'paham'],
-  greetings: ['selamat pagi', 'selamat siang', 'selamat sore', 'selamat malam', 'good morning', 'good afternoon', 'good evening', 'pagi',
-    'siang', 'sore', 'malam', 'morning', 'halo', 'hallo', 'hai', 'hi', 'hello', 'hey', 'salam'],
+  greetings: ['selamat pagi', 'selamat siang', 'selamat sore', 'selamat malam', 'good morning', 'good afternoon', 'good evening', 'halo',
+    'hallo', 'hai', 'hi', 'hello', 'hey', 'salam'],
   // Only next to one of the above: "makasih banyak ya kak", "thanks so much", "sampai jumpa lagi", "oh ok".
   fillers: [...HONORIFICS, 'ya', 'yaa', 'deh', 'dong', 'nih', 'juga', 'banyak', 'lagi', 'again', 'soon', 'so much', 'very much', 'a lot',
     'for your help', 'for the help', 'for the info', 'infonya', 'oh', 'oo', 'wah', 'wow', 'and']
@@ -215,15 +216,20 @@ const CUSTOMER_PHRASES = {
 const PHRASE_KIND = new Map(Object.entries(CUSTOMER_PHRASES).flatMap(([kind, list]) => list.map(phrase => [phrase, kind])))
 const LONGEST_PHRASE = Math.max(...[...PHRASE_KIND.keys()].map(phrase => phrase.split(' ').length))
 
-/** The kinds of phrases the words split into, longest phrase first with backtracking; undefined if they do not split. */
-function phraseKinds (words, start = 0) {
-  if (start === words.length) return new Set()
-  for (let length = Math.min(LONGEST_PHRASE, words.length - start); length > 0; length--) {
-    const kind = PHRASE_KIND.get(words.slice(start, start + length).join(' '))
-    const rest = kind && phraseKinds(words, start + length)
-    if (rest) return rest.add(kind)
+/**
+ * The kinds of phrases the words split into, the longest phrase first at each word ("good morning" is one greeting,
+ * not "good" and "morning"); undefined if they do not split. Built from the last word back, so a customer's message
+ * costs linear time and no recursion however long it is ("good bye" × 40 + "x" was exponential).
+ */
+function phraseKinds (words) {
+  const splits = [...Array(words.length), new Set()] // splits[i]: the kinds of words[i..], if they split
+  for (let start = words.length - 1; start >= 0; start--) {
+    for (let length = Math.min(LONGEST_PHRASE, words.length - start); length > 0 && !splits[start]; length--) {
+      const kind = PHRASE_KIND.get(words.slice(start, start + length).join(' '))
+      if (kind && splits[start + length]) splits[start] = new Set([...splits[start + length], kind])
+    }
   }
-  return undefined
+  return splits[0]
 }
 
 // Emoji that can only be friendly. Any other one (😡, 👎, 💩) or bare punctuation ("!!!") is not a closing; 👍 and 👌
@@ -249,11 +255,15 @@ const phrases = list => list.map(phrase => phrase.replace(/ /g, ' +')).join('|')
 const REPLY_HEAD = new RegExp(`(?<= )(?:${phrases(REPLY_HEADS)})(?: +yaa?)?(?= )`, 'g')
 const REPLY_WISH = new RegExp(`(?<= )(?:${phrases(REPLY_WISHES)})(?: +yaa?)?(?= )`, 'g')
 
+// A closing is short: a longer message is none, whatever its words, and a spammed one costs nothing to reject.
+const MAX_SOCIAL_WORDS = 30
+
 const socialText = input => {
   const text = normalizeText(input).toLowerCase().replace(SMILEYS, ' ')
   if (/[?¿]/.test(text) || /\p{N}/u.test(text)) return undefined
   if (text.replace(/\p{L}+/gu, '').replace(EMOJI, '').replace(EMOJI_PARTS, '').replace(PUNCTUATION, '') !== '') return undefined
-  return { words: text.match(/\p{L}+/gu) ?? [], emoji: text.match(EMOJI) ?? [] }
+  const words = text.match(/\p{L}+/gu) ?? []
+  return words.length > MAX_SOCIAL_WORDS ? undefined : { words, emoji: text.match(EMOJI) ?? [] }
 }
 
 /**

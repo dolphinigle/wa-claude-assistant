@@ -146,7 +146,7 @@ start with 🤖 and are ignored, and so is anything you forward there (a custome
 | `/no N` | discard draft N |
 | `/pause` · `/resume` | stop / allow all auto-replies (drafts keep coming) |
 | `/status` | mode, pending drafts, auto-replies in the last 24 h, last seen Claude quota, takeovers, muted chats |
-| `/mute <N, number or name>` · `/unmute …` | no auto-replies in that chat (N = a draft number); drafts keep coming. A name matching more than one chat is refused: names are chosen by the senders |
+| `/mute <N, number or name>` · `/unmute …` | no auto-replies in that chat, on both its addressing forms (N = a draft number); drafts keep coming. A name matching more than one contact is refused: names are chosen by the senders |
 | `/help` | the list |
 
 Every escalation uses one notice format: `📝 DRAFT #N · contact`, what they wrote, Claude's one-line summary, the
@@ -155,10 +155,11 @@ or `triage_failed:timeout`), and the hints. There is no separate "urgent" format
 is about (a family emergency reads as one).
 Pending drafts expire after 24 h. Replying yourself in a customer's chat cancels that chat's pending drafts and
 keeps the bot out of that chat for `humanTakeoverMinutes`: it does not even call Claude for it. This covers both
-addressing forms of the chat (phone number and LID), which WhatsApp can mix within one conversation. A reply of yours
-that the assistant only sees late (it was down, or the reply is older than `humanTakeoverMinutes`) starts no
-takeover, but it still counts as the answer to everything the customer wrote before it: those messages are not
-triaged, and drafts made from them are cancelled.
+addressing forms of the chat (phone number and LID), which WhatsApp can mix within one conversation, and so do
+`/mute`, the one closing per session and the 3 auto-replies per hour. A reply of yours that the assistant only sees
+late (it was down, or the reply is older than `humanTakeoverMinutes`) starts no takeover, but it still counts as the
+answer to everything the customer wrote before it: those messages are not triaged, and drafts made from them are
+cancelled.
 
 ## Safety defaults
 
@@ -181,9 +182,11 @@ triaged, and drafts made from them are cancelled.
   (`disclosure.sessionGapHours`). A thanks, 👍 or goodbye gets no reply and no notice (audited as action `skip`) when
   it follows a closing this session (sent by the bot, by you or as an approved draft, or a thanks draft you dealt
   with by `/ok`, `/edit` or `/no`), or while a draft of that chat is still open and nothing new came after it
-  (`open_draft`: one draft per open question, not one per pleasantry). A greeting, a closing from an earlier session,
-  a quote of an older message and a failed triage are never skipped. A closing uses none of the chat's 3 slots per
-  hour, but counts toward the 30 per day.
+  (`open_draft`: one draft per open question, not one per pleasantry). A thanks draft you dealt with closes the chat
+  as of that thanks, so what you send after it (your `/edit` that asks "mau diantar besok?", another draft) still
+  holds the "iya kak" that answers it. A greeting, a bare time of day ("ok kak sore ya" picks a time), a message over
+  30 words, a closing from an earlier session, a quote of an older message and a failed triage are never skipped. A
+  closing uses none of the chat's 3 slots per hour, but counts toward the 30 per day.
 - **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with a short
   Indonesian/English line saying it is an automated AI reply. Approved drafts carry no marker.
 - **Contacts are shown with their number:** notices say `Name (+62…)`, because the name is the sender's own
@@ -199,7 +202,8 @@ triaged, and drafts made from them are cancelled.
 - **Accepted messages survive a restart:** a message that was accepted but not yet triaged when the process stopped
   (or crashed), or that arrived while it was shutting down, is triaged on the next start as backlog (drafts only);
   one older than 60 min is listed for you in "Message yourself" instead. A `/command` typed during the shutdown is
-  not run (audited only): send it again once the assistant is back.
+  not run (audited only): send it again once the assistant is back. A message whose routing fails after triage (a
+  bug in the checks) becomes a draft (`route_failed`), never a silent drop.
 - **Notices are never dropped:** a draft or other notice that fails because WhatsApp is reconnecting is
   kept in `data/state.json` and re-sent, marked "Delayed", on the next connection.
 - **Blue ticks only after an auto-reply** (`markRead`), never for escalated or skipped messages, and not while the chat still has
