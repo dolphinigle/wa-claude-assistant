@@ -1,0 +1,44 @@
+import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+export const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+const isPlainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+
+// Objects merge key by key; arrays and scalars in `override` replace the base value.
+export function deepMerge (base, override) {
+  if (!isPlainObject(base) || !isPlainObject(override)) return override === undefined ? base : override
+  const merged = { ...base }
+  for (const [key, value] of Object.entries(override)) merged[key] = deepMerge(base[key], value)
+  return merged
+}
+
+function readJson (file) {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch (error) {
+    throw new Error(`cannot read ${file}: ${error.message}`)
+  }
+}
+
+/**
+ * config.json (committed defaults) deep-merged with config.local.json (gitignored), then `overrides`.
+ * Relative paths are resolved against `rootDir`.
+ */
+export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
+  const base = readJson(path.join(rootDir, 'config.json'))
+  const localFile = path.join(rootDir, 'config.local.json')
+  const local = existsSync(localFile) ? readJson(localFile) : {}
+  const config = deepMerge(deepMerge(base, local), overrides)
+
+  if (!['shadow', 'live'].includes(config.mode)) throw new Error(`config.mode must be "shadow" or "live", got ${JSON.stringify(config.mode)}`)
+  config.rootDir = rootDir
+  config.paths = {
+    auth: path.resolve(rootDir, config.paths.auth),
+    data: path.resolve(rootDir, config.paths.data),
+    prompts: path.resolve(rootDir, config.paths.prompts ?? 'prompts'),
+    knowledge: path.resolve(rootDir, config.knowledgeFile ?? 'knowledge.md')
+  }
+  return config
+}
