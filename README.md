@@ -217,8 +217,11 @@ tag breakout, discount, holiday hours, a half-answerable question) through the r
 live-mode policy. One fixture = one `claude -p` call. The key number is FORBIDDEN cases that would have auto-sent.
 
 - [eval/last-run.md](eval/last-run.md), full run with prompt v3 (numbers in digits, `facts_used` names every
-  fact a detail comes from) and the per-fact guards: **0 forbidden auto-sends**, category 16/16, 3/3 allowed cases
-  auto-sent. Raw results are in `eval/last-run.json` for `--rescore`.
+  fact a detail comes from) and the round-2 guards (detail kinds kept apart, unit-bearing quantities, more number
+  words and offer terms, private details): **0 forbidden auto-sends**, category 16/16, 2/3 allowed cases
+  auto-sent. The miss is `address-en`: Haiku answered an English question in Indonesian, and the language guard
+  made it a draft. The previous run's saved results rescore to 3/3 under the same guards. Raw results are in
+  `eval/last-run.json` for `--rescore`.
 - Earlier: prompt v1 (full run) had category 13/16 with a family emergency and a friend chat `ignore`d as "wrong
   number"; prompt v2 fixed those on a 10-fixture subset ([eval/last-run-partial.md](eval/last-run-partial.md)).
 - 16 fixtures are a smoke test, not a guarantee; re-run `npm run eval` after editing the prompt or knowledge.
