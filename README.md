@@ -202,11 +202,13 @@ triaged, and drafts made from them are cancelled.
 ## Model and latency
 
 The brain runs Sonnet (`claude.model: "sonnet"`, `claude-sonnet-5` on 2026-09-26) with thinking off
-(`MAX_THINKING_TOKENS=0`). Each triage is one `claude -p` process: the eval measured avg 7.0 s and max 19.6 s from
-spawn to exit (16 calls, concurrency 2; about 2 s of each is CLI start-up), and research had seen about 11 s on a
-loaded machine, against 4.5–7.8 s for Haiku. An auto-reply therefore lands about 20–35 s after the customer's last
-message: the 15 s debounce, then the triage. `timeoutMs` is 90 s, 4–5 times the slowest call seen, so a
-structured-output retry on a busy machine still fits; a triage that times out is escalated to you. With
+(`MAX_THINKING_TOKENS=0`). Each triage is one `claude -p` process: the last eval measured avg 7.7 s from spawn to
+exit, 19 of 20 calls between 4.8 and 8.6 s and one at 39.5 s, 38.0 s of it API time in a single turn, not a
+retry (concurrency 2; about 2 s of each call is CLI start-up). The run before saw avg 7.0 s and max 19.6 s, and
+research had seen about 11 s on a loaded machine, against 4.5–7.8 s for Haiku. An auto-reply therefore usually lands
+about 20–25 s after the customer's last message (the 15 s debounce, then the triage), now and then close to a
+minute. `timeoutMs` is 90 s, over twice the slowest call seen, so a structured-output retry still has room; a triage
+that times out is escalated to you. With
 `concurrency: 2`, a third chat waits for a free slot. Thinking on (`maxThinkingTokens: null`) measured 10–14 s in
 research and uses more of your subscription quota. Re-run `npm run eval` after changing the model or thinking.
 
@@ -245,22 +247,27 @@ contain session material).
 
 ## Eval
 
-`npm run eval` sends 16 fixtures (Indonesian and English: hours, address, listed and unlisted prices, custom order,
+`npm run eval` sends 20 fixtures (Indonesian and English: hours, address, listed and unlisted prices, custom order,
 complaint, unconfirmed transfer, family emergency, friend chat, spam, "ok makasih", prompt injection, XML
-tag breakout, discount, holiday hours, a half-answerable question) through the real brain, the guards and the
-live-mode policy. One fixture = one `claude -p` call. Each fixture expects `answer` or `escalate` and marks auto-send
-as allowed (4: hours, address, listed price, the social "ok makasih") or forbidden (the other 12). The key number is
-FORBIDDEN cases that would have auto-sent.
+tag breakout, discount, holiday hours, a half-answerable question, and four on the social path: a 🙏 after our own
+closing, a thanks while a delivery request is unanswered, a thanks from "Mama", and `😡😡`) through the real brain,
+the guards and the live-mode policy, with each fixture's history. One fixture = one `claude -p` call. Each fixture
+expects `answer` or `escalate` and marks auto-send as allowed (4: hours, address, listed price, the social "ok
+makasih") or forbidden (the other 16). The key number is FORBIDDEN cases that would have auto-sent.
 
-- [eval/last-run.md](eval/last-run.md), full run on `claude-sonnet-5` with thinking off and the answer/escalate
-  prompt: **0 forbidden auto-sends**, decision 16/16, **4/4 allowed cases auto-sent** (the English address question
-  is now answered in English; "ok makasih kak 🙏" got "Sama-sama, Kak 🙏" through the social check), no triage errors.
-  Latency spawn → exit: avg 7.0 s, max 19.6 s at concurrency 2; the two slow calls (19.6 s, 14.6 s) were API time
-  (17.8 s, 12.5 s), not retries. Raw results are in `eval/last-run.json` for `--rescore`.
+- [eval/last-run.md](eval/last-run.md), full run on `claude-sonnet-5` with thinking off, the social-path fixtures
+  and the stricter closing checks: **0 forbidden auto-sends**, decision 19/20, **4/4 allowed cases auto-sent**
+  ("ok makasih kak 🙏" got "Sama-sama, Kak 🙏" through the social check), no triage errors. The one decision miss is
+  safe: Sonnet escalated the 🙏 after our own "Sama-sama" (it wanted to answer with an emoji alone, which the prompt
+  rules out), and the policy skips it anyway, so there is no reply and no draft. The unanswered-request thanks, the
+  "Mama" thanks and `😡😡` were all escalated by Sonnet. The report was rescored once with the final policy (the
+  skip after our own closing now holds whatever Claude decided; same prompt and guards, no new calls). Latency: see
+  Model and latency. Raw results are in `eval/last-run.json` for `--rescore`.
+- The run before, 16 fixtures on the same model: decision 16/16, 0 forbidden, 4/4 allowed, avg 7.0 s, max 19.6 s.
 - Earlier, on Haiku with four categories and a confidence (in git history before the switch, e.g. `f8f9159`):
   category 16/16 with 0 forbidden auto-sends but 2/3 allowed auto-sends, because Haiku answered the English address
   question in Indonesian. [eval/last-run-partial.md](eval/last-run-partial.md) is a 10-fixture subset from that era.
-- 16 fixtures are a smoke test, not a guarantee; re-run `npm run eval` after editing the prompt, knowledge, model or
+- 20 fixtures are a smoke test, not a guarantee; re-run `npm run eval` after editing the prompt, knowledge, model or
   thinking setting.
 
 `npm run eval -- --only=id1,id2` re-runs a subset (written to `last-run-partial.*`), and

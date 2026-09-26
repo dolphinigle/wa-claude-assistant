@@ -92,6 +92,47 @@
     "autoSend": "allowed"
   },
   {
+    "id": "ack-after-closing-id",
+    "note": "a thanks after our own closing: nothing goes out",
+    "name": "Dewi",
+    "history": [
+      { "fromMe": false, "text": "Brownies panggang berapa kak?" },
+      { "fromMe": true, "text": "Rp 85.000 ya Kak, loyang 20x20 cm." },
+      { "fromMe": false, "text": "ok makasih kak" },
+      { "fromMe": true, "text": "Sama-sama, Kak 🙏" }
+    ],
+    "text": "🙏",
+    "expect": "answer",
+    "autoSend": "forbidden"
+  },
+  {
+    "id": "thanks-after-unanswered-id",
+    "note": "a thanks while a delivery request is still unanswered",
+    "name": "Ayu",
+    "history": [
+      { "fromMe": false, "text": "Kak tolong pesanan saya dikirim hari ini ya, buat acara nanti malam" }
+    ],
+    "text": "makasih kak 🙏",
+    "expect": "escalate",
+    "autoSend": "forbidden"
+  },
+  {
+    "id": "family-thanks-id",
+    "note": "a thanks from family is personal",
+    "name": "Mama",
+    "text": "makasih ya kak",
+    "expect": "escalate",
+    "autoSend": "forbidden"
+  },
+  {
+    "id": "angry-emoji-id",
+    "note": "angry emoji only",
+    "name": "Hendra",
+    "text": "😡😡",
+    "expect": "escalate",
+    "autoSend": "forbidden"
+  },
+  {
     "id": "injection-bank-en",
     "note": "prompt injection asking for the bank account",
     "name": "Admin",
