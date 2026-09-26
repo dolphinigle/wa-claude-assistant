@@ -8,6 +8,7 @@ const config = makeConfig()
 const NOW = Date.UTC(2026, 8, 26, 3, 0)
 const baseContext = () => ({
   config,
+  incomingText: 'Kak, jam berapa buka?',
   guard: { ok: true, reasons: [] },
   paused: false,
   chat: { muted: false, blocked: false, takeoverUntil: 0 },
@@ -178,7 +179,7 @@ test('a thanks that agrees closes only after our closing reply: after a /no, a s
   assert.equal(closedThisSession(asked, { lastClosingAt: CLOSED_AT, sessionStart: SESSION_START }), false, 'unset: it agrees')
   // decide reads it from the message.
   for (const incomingText of ['iya kak makasih', '👍 makasih kak', 'ok siap, makasih', 'perfect, thanks']) {
-    assert.deepEqual(decide(triageResult(THANKS), thanksContext(asked, {}, { incomingText })), { action: 'escalate', reasons: ['decision:answer', 'thanks_not_auto_sent'] }, incomingText)
+    assert.deepEqual(decide(triageResult(THANKS), thanksContext(asked, {}, { incomingText })), { action: 'escalate', reasons: ['decision:answer', 'no_question'] }, incomingText)
   }
   assert.equal(decide(triageResult(THANKS), thanksContext(asked)).action, 'skip', 'makasih kak 🙏')
 })
@@ -186,7 +187,7 @@ test('a thanks that agrees closes only after our closing reply: after a /no, a s
 test('a thanks quoting our message is skipped only when that message is our closing reply (skip-safety-r3-1)', () => {
   const question = ours('Bisa kak, mau diantar jam 5 sore?', 40)
   const asked = [customer('kak brownies bisa diantar besok?', 41), question, customer('makasih kak', 30)]
-  const escalated = { action: 'escalate', reasons: ['decision:answer', 'thanks_not_auto_sent'] }
+  const escalated = { action: 'escalate', reasons: ['decision:answer', 'no_question'] }
   for (const quote of [{ id: question.id, text: question.text }, { text: question.text }, question.text]) {
     assert.deepEqual(decide(triageResult(THANKS), thanksContext(asked, {}, { quoted: [quote] })), escalated, JSON.stringify(quote))
   }
@@ -199,7 +200,7 @@ test('a thanks quoting an older message without text is drafted: quotes are told
   const photo = ours('', 45, { attachment: 'image' })
   const reply = ours('Sama-sama, Kak 🙏', 20, { closing: true })
   const history = [photo, ...THANKED, reply]
-  const escalated = { action: 'escalate', reasons: ['decision:answer', 'thanks_not_auto_sent'] }
+  const escalated = { action: 'escalate', reasons: ['decision:answer', 'no_question'] }
   assert.deepEqual(decide(triageResult(THANKS), thanksContext(history, {}, { quoted: [{ id: photo.id, text: '' }] })), escalated, 'our older photo, by id')
   assert.deepEqual(decide(triageResult(THANKS), thanksContext(history, {}, { quoted: [{ text: '' }] })), escalated, 'no id: an empty text is not our last')
   const photoLast = [...THANKED, ours('', 25, { attachment: 'image' }), ours('', 24, { attachment: 'image', closing: true })]
@@ -221,25 +222,35 @@ test('a thanks after a closing this session is skipped, whatever Claude decided 
   assert.equal(decide(triageResult(THANKS), quotingOurLast).action, 'skip', 'quoting our last message is fine')
 })
 
-test('a thanks is never auto-sent: it is a draft that leads with thanks_not_auto_sent', () => {
-  const drafted = { action: 'escalate', reasons: ['decision:answer', 'thanks_not_auto_sent'] }
+test('an answer to a message that asks nothing is never auto-sent, whatever it cites: a draft that leads with no_question', () => {
+  const drafted = { action: 'escalate', reasons: ['decision:answer', 'no_question'] }
   // Every gate open, and the reply cites a fact the guards accept.
-  const facts = { ...THANKS, facts_used: ['F1'] }
+  const facts = { decision: 'answer', reply: 'Siap Kak, ditunggu ya. Kami buka Senin–Sabtu pukul 08.00–17.00 WIB.', facts_used: ['F1'] }
   const open = incomingText => ({ ...baseContext(), incomingText })
-  for (const incomingText of ['ok makasih kak 🙏', 'thanks!', '🙏', 'Terima kasih kembali kak', 'bye']) {
+  for (const incomingText of ['iya kak', 'ok', '👍', 'makasih bang', 'sama2 kak', 'gapapa', 'betul', 'saya tunggu', 'ok kk', 'siap bos',
+    'saya mau ambil besok', 'makasih infonya kak', 'ok makasih kak 🙏', 'thanks!', '🙏', 'Terima kasih kembali kak', 'bye', 'Selamat pagi kak']) {
     assert.deepEqual(decide(triageResult(facts), open(incomingText)), drafted, incomingText)
     assert.deepEqual(decide(triageResult(THANKS), open(incomingText)), drafted, incomingText)
   }
-  // The guards refuse it too, but the notice leads with the policy's one reason.
-  const guard = guardTriage(facts, { knowledge, config, incomingText: 'makasih kak' })
-  assert.deepEqual(guard.reasons, ['social_message_answered_with_facts', 'thanks_back'])
-  assert.deepEqual(decide(triageResult(facts), { ...open('makasih kak'), guard }), drafted)
-  assert.deepEqual(decide(triageResult(THANKS), { ...open('makasih kak 🙏'), attachments: ['image'] }).reasons, ['decision:answer', 'thanks_not_auto_sent', 'attachment:image'])
+  assert.deepEqual(decide(triageResult(facts), { ...baseContext(), incomingText: undefined }), drafted, 'no text: it asks nothing')
+  assert.deepEqual(decide(triageResult(THANKS), { ...open('makasih kak 🙏'), attachments: ['image'] }).reasons, ['decision:answer', 'no_question', 'attachment:image'])
   assert.deepEqual(decide(triageResult({ decision: 'escalate' }), open('makasih kak')), { action: 'escalate', reasons: ['decision:escalate'] }, 'Claude\'s escalation stands')
 })
 
+test('an answer to a message that asks something goes on to the other gates, a burst where one message asks too', () => {
+  const autoSent = { action: 'auto_send', reasons: ['decision:answer', 'all_gates_passed'] }
+  const open = incomingText => ({ ...baseContext(), incomingText })
+  for (const incomingText of ['Halo kak, tokonya buka jam berapa aja ya?', "Hi! Where is your shop located? I'd like to pick up my order.",
+    'Kak, brownies panggang harganya berapa ya?', 'jam berapa buka kak', 'alamatnya dimana', 'where are you located', 'tokonya buka gak kak',
+    'makasih kak, jam berapa tutup?', 'ok makasih kak\njam tutupnya jam berapa']) {
+    assert.deepEqual(decide(triageResult(ANSWER_HOURS), open(incomingText)), autoSent, incomingText)
+  }
+  const ctx = { ...open('jam berapa buka kak'), guard: { ok: false, reasons: ['unsupported_time:21:00'] } }
+  assert.deepEqual(decide(triageResult(ANSWER_HOURS), ctx), { action: 'escalate', reasons: ['decision:answer', 'guard:unsupported_time:21:00'] }, 'the other gates still hold it')
+})
+
 test('an answer that cites no fact never auto-sends', () => {
-  for (const incomingText of ['halo kak', 'iya kak', 'ok', 'jam buka?']) {
+  for (const incomingText of ['jam buka?', 'alamatnya dimana kak', 'where is the shop', 'makasih, bisa kirim ke Jakarta?']) {
     const reply = { decision: 'answer', reply: 'Siap Kak 🙏', facts_used: [] }
     const guard = guardTriage(reply, { knowledge, config, incomingText })
     const decision = decide(triageResult(reply), { ...baseContext(), incomingText, guard })

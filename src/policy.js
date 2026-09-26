@@ -1,9 +1,10 @@
-// PURE routing decision. Claude either answers or escalates. An answer is auto-sent only if every gate passes; a
-// failed gate escalates it instead, with the gates as reasons for the owner. A thanks is never auto-answered: Claude's
-// thanks-back is only a draft. The one exception to "everything reaches the owner" is a thanks right after a closing
-// this session: it is skipped, since another "sama-sama" or another draft only adds volume. Shadow mode is not decided
-// here: the send gate in assistant.js turns an approved send into a notice.
-import { isThanks, normalizeText, thanksAgrees } from './guards.js'
+// PURE routing decision. Claude either answers or escalates. An answer is auto-sent only if the customer's message asks
+// something and every gate passes; otherwise it is escalated, with the reasons for the owner. So a thanks, a yes or any
+// other message that asks nothing is never auto-answered: Claude's thanks-back is only a draft. The one exception to
+// "everything reaches the owner" is a thanks right after a closing this session: it is skipped, since another
+// "sama-sama" or another draft only adds volume. Shadow mode is not decided here: the send gate in assistant.js turns
+// an approved send into a notice.
+import { asksSomething, isThanks, normalizeText, thanksAgrees } from './guards.js'
 
 const QUOTA_OK_STATUSES = new Set(['allowed', 'allowed_warning'])
 const HOUR_MS = 60 * 60 * 1000
@@ -62,7 +63,7 @@ const flatText = text => normalizeText(text).replace(/\s+/g, ' ').trim()
  * @param {object} ctx
  * @param {object} ctx.config
  * @param {{ok: boolean, reasons: string[]}} [ctx.guard]  guards.checkReply() output for the reply
- * @param {string} [ctx.incomingText]  the new messages' text, joined
+ * @param {string} [ctx.incomingText]  the new messages' text, joined; unset, it asks nothing
  * @param {string[]} [ctx.attachments]  kinds of the files attached to the new messages (image, video, …)
  * @param {(string|{id?: string, text?: string})[]} [ctx.quoted]  the earlier messages the new ones reply to (WhatsApp
  *   quotes): their ids where known, and their texts ('' for a photo, a voice note or a pin)
@@ -107,9 +108,9 @@ export function decide (result, ctx) {
   if (decision !== 'answer') return { action: 'escalate', reasons: [`decision:${decision}`] }
 
   const held = attachments.map(kind => `attachment:${kind}`) // Claude cannot see it: a payment proof?
-  // Whatever it cites and whatever the other gates say: the notice leads with this one reason instead of listing
-  // gates that would not have mattered (a thanks-back cites no fact, so the guards always refuse it).
-  if (thanks) return { action: 'escalate', reasons: ['decision:answer', 'thanks_not_auto_sent', ...held] }
+  // Owner decision (2026-09-27): whatever it cites and whatever the other gates say, an answer to a message that asks
+  // nothing is a draft. The notice leads with this one reason instead of listing gates that would not have mattered.
+  if (!asksSomething(ctx.incomingText)) return { action: 'escalate', reasons: ['decision:answer', 'no_question', ...held] }
 
   const blockers = [...held]
   if (!config.autoSend?.enabled) blockers.push('auto_send_disabled')

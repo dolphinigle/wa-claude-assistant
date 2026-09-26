@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, isSocialMessage, isThanks, privateIdentifiers, privateIdentifiersFor, socialWithoutQuestion, thanksAgrees } from '../src/guards.js'
+import { asksSomething, buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, isThanks, privateIdentifiers, privateIdentifiersFor, thanksAgrees } from '../src/guards.js'
 import { parseKnowledge } from '../src/knowledge.js'
 import { knowledge, makeConfig } from './helpers.js'
 
@@ -177,63 +177,19 @@ test('structural checks: empty, length, placeholders, fact ids, facts_used', () 
 
 const reply = (text, factsUsed, incomingText) => checkReply({ reply: text, factsUsed, incomingText }, { knowledge, ...guards })
 
-test('a reply without facts never passes, and a thanks-back is held by its own words: a thanks is only ever drafted', () => {
+test('a reply without facts never passes: a thanks-back is only ever drafted', () => {
   for (const [incoming, text] of [
     ['ok makasih kak 🙏', 'Sama-sama, Kak 🙏'],
     ['thanks!', "You're welcome! Have a nice day."],
     ['🙏', 'Terima kasih juga, Kak ❤️'],
     [undefined, 'Sama-sama Kak']
   ]) {
-    assert.deepEqual(reply(text, [], incoming), { ok: false, reasons: ['no_facts_used', 'thanks_back'] }, `${incoming} → ${text}`)
-    assert.deepEqual(reply(text, undefined, incoming).reasons, ['no_facts_used', 'thanks_back'], 'facts_used missing')
-  }
-  // Citing a fact changes nothing, however the customer spelled the thanks: no matcher knows every spelling.
-  for (const incoming of ['makasih kak', 'makasihh kak', 'tq bgt kak', 'hatur nuhun', 'makasih kak, kuenya enak banget', undefined]) {
-    assert.ok(reply('Sama-sama Kak, ditunggu pesanan berikutnya ya 🙏', ['F13'], incoming).reasons.includes('thanks_back'), incoming)
-  }
-  for (const text of ['sama2 kak', 'Sama - sama', "You’re welcome!", 'youre welcome', 'Terima kasih kembali, Kak', 'Makasih juga kak', 'My pleasure!']) {
-    assert.ok(reply(text, ['F1']).reasons.includes('thanks_back'), text)
+    assert.deepEqual(reply(text, [], incoming), { ok: false, reasons: ['no_facts_used'] }, `${incoming} → ${text}`)
+    assert.deepEqual(reply(text, undefined, incoming).reasons, ['no_facts_used'], 'facts_used missing')
   }
   // Ordinary answers open with a plain thanks.
   assert.deepEqual(reply('Terima kasih sudah menghubungi kami, Kak. Kami buka Senin–Sabtu pukul 08.00–17.00 WIB.', ['F1']), { ok: true, reasons: [] })
   assert.deepEqual(reply('Thanks for asking! We are at Jl. Contoh Raya No. 12, Coblong, Bandung.', ['F2']), { ok: true, reasons: [] })
-})
-
-test('the thanks-back backstop knows every thanks-back the customer side lists (send-path-r2-2)', () => {
-  const hours = ' Kami buka Senin–Sabtu pukul 08.00–17.00 WIB.'
-  for (const opening of ['Senang bisa membantu, Kak!', 'Senang membantu Kak 🙏', 'Kembali kasih, Kak!', "You're very welcome!", 'You are most welcome.',
-    'Your welcome kak!', 'Happy to help!', 'Glad I could help!', 'No problem!', 'No worries, Kak.', 'Anytime!']) {
-    assert.deepEqual(reply(opening + hours, ['F1'], 'Terima kasih atas bantuannya'), { ok: false, reasons: ['social_message_answered_with_facts', 'thanks_back'] }, opening)
-    assert.deepEqual(reply(opening + hours, ['F1']).reasons, ['thanks_back'], `${opening}, whatever the customer wrote`)
-  }
-  // "No problem" and "kembali kasih" only as the opening: inside an answer they mean something else.
-  for (const text of ['Nanti kami kembali kasih kabar ya Kak.' + hours, 'Kami buka Senin–Sabtu pukul 08.00–17.00 WIB, no problem kalau datang sore.']) {
-    assert.deepEqual(reply(text, ['F1']), { ok: true, reasons: [] }, text)
-  }
-})
-
-test('an answer to a thanks, a goodbye or a yes alone is held whatever it cites: a fact there licenses a promise nobody asked for', () => {
-  for (const [incoming, text, facts] of [
-    ['ok kak', 'Siap kak, sudah kami catat pesanannya ya', ['F13']],
-    ['iya kak', 'Baik Kak, dikirim pakai GoSend ya, ongkir dibayar pembeli.', ['F3']],
-    ['oke kak 👍', 'Baik Kak, dikirim pakai GoSend ya, ongkir dibayar pembeli.', ['F3']],
-    ['siap kak', 'Siap kak, besok kami kirim ya', ['F3']],
-    ['👍', 'Siap kak, besok kami kirim ya', ['F3']],
-    ['makasih kak, selamat siang', 'Siap kak, besok kami kirim ya', ['F3']],
-    ['makasih kak, sampai jumpa', 'Siap kak, besok kami kirim ya', ['F3']],
-    ['thanks, see you!', 'See you soon at our kitchen!', ['F2']],
-    ['no problem kak', 'Siap kak, besok kami kirim ya', ['F3']],
-    ['makasihh kakk', 'Siap kak, besok kami kirim ya', ['F3']],
-    ['thank u kak', 'Siap kak, besok kami kirim ya', ['F3']],
-    ['tks kak 🙏', 'Siap kak, besok kami kirim ya', ['F3']],
-    ['boleh kak', 'Siap kak, besok kami kirim ya', ['F3']],
-    ['makasih kak, ditunggu ya', 'Siap kak, besok kami kirim ya', ['F3']]
-  ]) {
-    assert.deepEqual(reply(text, facts, incoming), { ok: false, reasons: ['social_message_answered_with_facts'] }, incoming)
-  }
-  assert.deepEqual(reply('Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya Kak.', ['F1'], 'ok kak, jam buka?'), { ok: true, reasons: [] })
-  assert.deepEqual(reply('Selamat pagi Kak! Kami buka Senin–Sabtu pukul 08.00–17.00 WIB.', ['F1'], 'Selamat pagi kak'), { ok: true, reasons: [] },
-    'a greeting alone is answered like any message')
 })
 
 const THANKS_EXAMPLES = ['ok makasih kak 🙏', 'makasih banyak ya kak', 'Terima kasih', 'terimakasih kak', 'thank you very much', 'thanks a lot!',
@@ -246,43 +202,6 @@ const THANKS_EXAMPLES = ['ok makasih kak 🙏', 'makasih banyak ya kak', 'Terima
 
 test('isThanks: a thanks or goodbye, with acknowledgements, honorifics and friendly emoji around it', () => {
   for (const text of THANKS_EXAMPLES) assert.equal(isThanks(text), true, text)
-})
-
-test('isSocialMessage: every thanks, and also a goodbye or a yes alone, other spellings, and a greeting next to one', () => {
-  for (const text of [...THANKS_EXAMPLES, 'ok', 'oke kak', 'iya kak', 'ya kak', 'siap kak 👍', 'sip 👌', 'noted', 'boleh kak', 'mau kak', '👍', '😡😡',
-    'kak 🙏', 'makasih kak, selamat siang', 'halo, thanks', 'thanks, see you!', 'sampai jumpa lagi kak', 'no problem kak', 'anytime',
-    'makasihh kakk', 'okee siapp', 'thankss', 'tks kak', 'thank u kak', 'trimakasih kak', 'hatur nuhun', 'ok kak sore ya', 'ok kak?', 'ok :(',
-    'makasih kak, ditunggu ya', 'makasih 🙏🙏 mantul kak']) {
-    assert.equal(isSocialMessage(text), true, text)
-  }
-  // A greeting alone opens a conversation; a digit or a word outside the vocabulary is content.
-  for (const text of ['Selamat pagi kak', 'halo kak', 'pagi kak 🙏', 'hai 😊', 'kak', 'wah', ':)', '', '...', 'ok 2 loyang', 'dibantu kak',
-    'iya kak, dikirim besok ya', 'no good', 'jam berapa buka?', 'hehe', 'hi', 'kami kembali kasih kabar', 'ok '.repeat(300) + 'tolong refund', undefined]) {
-    assert.equal(isSocialMessage(text), false, String(text))
-  }
-})
-
-test('isSocialMessage: laughter, text emoticons and the common ways to say yes or thanks (send-path-r2-1, consistency-r2-1)', () => {
-  for (const text of ['makasih kak hehe', 'makasih kak hehe 🙏', 'iya kak hehe', 'iya kak wkwk', 'ok kak wkwkwk', 'haha oke kak makasih',
-    'ahahah siap kak', 'ok lol', 'oke kak :D', 'ok kak xD', 'iya kak :D', 'ok kak :p', 'siap kak :v', 'iya kak <3', 'oke kak :3', 'ok kak :(',
-    'makasih :D', 'makasih;p', 'makasih kak <3', 'Yes please', 'ya udah kak', 'yaudah kak', 'jadi kak', 'fix kak', 'oke lanjut', 'gas kak',
-    'sudah kak', "thank's kak", 'thx u', 'mksi kak', 'trmksh kak', 'Terima kasih atas bantuannya', 'Terima kasih atas infonya kak',
-    'makasih kak sangat membantu', 'Thanks, much appreciated!', 'senang bisa membantu kak', 'kembali kasih kak', 'your welcome']) {
-    assert.equal(isSocialMessage(text), true, text)
-  }
-  // Everything isThanks takes is social too, smileys included: the broad matcher never knows less than the narrow one.
-  for (const text of [...THANKS_EXAMPLES, 'makasih :D', 'makasih;p', 'makasih kak <3', 'makasih kak :)']) {
-    if (isThanks(text)) assert.equal(isSocialMessage(text), true, text)
-  }
-})
-
-test('isSocialMessage has no size limit: a burst of thanks or a spammed one is still social (send-path-r2-4)', () => {
-  const burst = ['Makasih banyak ya kak ' + '🙏'.repeat(10), 'iya kak siap ' + '👍'.repeat(5), 'makasih ya kak ' + '❤️'.repeat(10)].join('\n')
-  for (const text of [burst, 'Makasih kak ' + '🙏'.repeat(30), 'makasih 🙏'.repeat(40), 'ok '.repeat(31), 'makasih kak '.repeat(100)]) {
-    assert.equal(isThanks(text), false, 'too long for the skip')
-    assert.equal(isSocialMessage(text), true, 'held all the same')
-  }
-  assert.deepEqual(reply('Siap Kak, ditunggu pesanannya ya. Pesan paling lambat 2 hari sebelumnya.', ['F9'], burst).reasons, ['social_message_answered_with_facts'])
 })
 
 test('isThanks: an acknowledgement or 👍 alone, a greeting, a question, digits or any other symbol is no thanks', () => {
@@ -304,24 +223,18 @@ test('isThanks: an acknowledgement or 👍 alone, a greeting, a question, digits
   }
 })
 
-test('isThanks: a long message is no thanks and costs little to reject; isSocialMessage scans it in linear time', () => {
+test('isThanks: a long message is no thanks and costs little to reject', () => {
   assert.equal(isThanks('good bye '.repeat(8)), true, '16 words may still be a thanks')
   assert.equal(isThanks('good bye '.repeat(8) + 'kak'), false, '17 are not')
   assert.equal(isThanks('🙏'.repeat(17)), false)
-  // [text, isSocialMessage]: a recursive split was exponential on "good bye" × n + "x".
-  const adversarial = [['good bye '.repeat(5000) + 'x', false], ['makasih '.repeat(5000), true], ['ok '.repeat(20000), true],
-    ['ok '.repeat(12000) + 'tolong refund ke rekening saya', false], ['good bye '.repeat(7) + 'x', false], ['good bye '.repeat(14) + 'x', false],
-    ['🙏'.repeat(20000), true], ['hehe '.repeat(13000), false], ['makasih kak :D '.repeat(4300), true]]
-  let started = performance.now()
+  // A recursive split was exponential on "good bye" × n + "x".
+  const adversarial = ['good bye '.repeat(5000) + 'x', 'makasih '.repeat(5000), 'ok '.repeat(20000), 'ok '.repeat(12000) + 'tolong refund ke rekening saya',
+    'good bye '.repeat(7) + 'x', 'good bye '.repeat(14) + 'x', '🙏'.repeat(20000), 'hehe '.repeat(13000), 'makasih kak :D '.repeat(4300)]
+  const started = performance.now()
   for (let round = 0; round < 50; round++) {
-    for (const [text] of adversarial) assert.equal(isThanks(text), false, `${text.length} chars`)
+    for (const text of adversarial) assert.equal(isThanks(text), false, `${text.length} chars`)
   }
   assert.ok(performance.now() - started < 1000, `isThanks: ${Math.round(performance.now() - started)} ms`)
-  started = performance.now()
-  for (let round = 0; round < 5; round++) {
-    for (const [text, social] of adversarial) assert.equal(isSocialMessage(text), social, `${text.length} chars`)
-  }
-  assert.ok(performance.now() - started < 1000, `isSocialMessage: ${Math.round(performance.now() - started)} ms`)
 })
 
 test('thanksAgrees: a thanks that reads as one only with an acknowledgement or 👍 may be a yes (skip-safety-r3-2)', () => {
@@ -334,36 +247,46 @@ test('thanksAgrees: a thanks that reads as one only with an acknowledgement or �
   for (const text of ['iya kak', '👍', 'jam buka?', undefined]) assert.equal(thanksAgrees(text), false, String(text))
 })
 
-test('socialWithoutQuestion: any thanks, goodbye or yes in a message that asks nothing, whatever other words come with it (send-path-r3-1, send-path-r3-2)', () => {
-  const held = ['makasih bang', 'makasih mba', 'makasih kaka', 'makasih kk', 'makasih om', 'thanks bro', 'makasih bos', 'Makasih kak, semangat',
-    'thanks so much, have a good one', 'Sama2 kak, makasih juga 🙏', 'Oke kak siap, saya tunggu 🙏', 'iya kak betul', 'gapapa kak', 'siap bos',
-    'ok kk', 'okeh kak', 'ok kak nanti saya ke sana', 'siap kak ditunggu kabarnya', 'nggak apa-apa kak', 'ga apa2 kak', '👍 besok ya',
-    'minta alamatnya kak, makasih']
-  for (const text of held) {
-    assert.equal(socialWithoutQuestion(text), true, text)
-    assert.deepEqual(reply('Siap Kak, ditunggu ya. Kami buka Senin–Sabtu pukul 08.00–17.00 WIB.', ['F1'], text).reasons.filter(reason => !reason.startsWith('language')),
-      ['social_message_answered_with_facts'], text)
-  }
-  // A question, with a thanks or not; requests and orders whose only yes-words are as common in them; a greeting's words.
-  for (const text of ['makasih, jam buka berapa?', 'Kak brownies berapa ya? Makasih', 'Kak alamatnya dimana ya, makasih', 'ok kak, jam buka?',
-    'thanks, where is the shop', 'Boleh minta alamatnya kak', 'Kak saya sudah transfer ya', 'mau pesan brownies ya kak', 'Good morning, I would like the address',
-    'Selamat pagi kak', 'Halo kak, tokonya buka jam berapa aja ya?', '', undefined]) {
-    assert.equal(socialWithoutQuestion(text), false, String(text))
-  }
-  assert.deepEqual(reply('Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya Kak.', ['F1'], 'makasih bang, buka jam berapa?'), { ok: true, reasons: [] })
+// Owner decision 2026-09-27: only an answer to a message that asks something may be auto-sent (policy.js).
+const ASKS = ['Halo kak, tokonya buka jam berapa aja ya?', "Hi! Where is your shop located? I'd like to pick up my order.",
+  'Kak, brownies panggang harganya berapa ya?', 'jam berapa buka kak', 'alamatnya dimana', 'di mana tokonya', 'where are you located',
+  'what time do you open', 'how much is the brownie', 'is it open on sunday', 'I would like the address', 'tell me the price',
+  'makasih kak, jam berapa tutup?', 'makasih bang, buka jam berapa', 'jam buka kak？', 'jam ber\u200bapa buka', 'kok belum sampai kak', 'bisakah dikirim hari ini',
+  'mau tanya kak', 'info harga dong kak', 'kak info', 'can you deliver tomorrow',
+  // a request word with something to request, not after "saya" or "I"
+  'bisa kirim ke Bekasi', 'kirim besok bisa', 'boleh minta alamatnya', 'minta alamatnya kak, makasih', 'tolong kirim besok ya', 'please send the menu',
+  // a tag question at the end of a clause, honorifics and particles after it
+  'tokonya buka gak kak', 'ready ga', 'masih ada nggak', 'sudah dikirim belum kak', 'buka hari minggu kan ya', 'buka gak, makasih kak',
+  // a burst asks if one of its messages does
+  'ok makasih kak\njam berapa tutup']
+const ASKS_NOTHING = ['iya kak', 'ok', '👍', 'makasih bang', 'sama2 kak', 'Sama2 kak, makasih juga 🙏', 'gapapa', 'gpp kak', 'betul', 'iya kak betul',
+  'saya tunggu', 'Oke kak siap, saya tunggu 🙏', 'ok kk', 'siap bos', 'saya mau ambil besok', 'ok kak nanti saya ke sana', 'makasih infonya kak',
+  'makasih info nya kak', 'thanks for the info', 'ok makasih kak 🙏', 'Makasih kak, semangat', 'thanks so much, have a good one', 'Selamat pagi kak',
+  '👍 besok ya', 'makasih kak, ditunggu ya', 'thanks, see you!', 'no problem kak', 'iya kak hehe', 'oke kak :D', 'Terima kasih atas bantuannya',
+  // a request word that only says yes, or a statement after "saya" or "I"
+  'boleh kak', 'bisa kak', 'ada kak', 'iya boleh kak', 'tolong ya kak', 'Yes please', 'bisa kak, saya ambil besok', 'saya bisa ambil besok',
+  'I can come at 5', 'minta maaf kak', 'mohon maaf ya kak',
+  // no tag question: a negation alone, after "saya", or not at the end; "apa" reduplicated or after a negation
+  'belum kak', 'gak kak', 'saya belum', 'ga usah kak', 'nggak apa-apa kak', 'ga apa2 kak', 'gak apa kak', 'kapan-kapan mampir kak',
+  '', '...', undefined, null]
+
+test('asksSomething: a question mark, a question word, a request with something to request, or a tag question', () => {
+  for (const text of ASKS) assert.equal(asksSomething(text), true, text)
+  for (const text of ASKS_NOTHING) assert.equal(asksSomething(text), false, String(text))
 })
 
-test('isSocialMessage: a doubling 2 and more honorifics (send-path-r3-1)', () => {
-  for (const text of ['sama2 kak', 'Sama2 kak, makasih juga 🙏', 'makasih2 kak', 'makasih bang', 'thanks bro', 'ok kk', 'siap bos', 'gapapa kak', 'iya kak betul']) {
-    assert.equal(isSocialMessage(text), true, text)
-  }
-  for (const text of ['ok 2 loyang', 'sama 2 loyang', 'jam2 buka']) assert.equal(isSocialMessage(text), false, text)
+test('asksSomething: no thanks asks anything, so a thanks is never auto-answered', () => {
+  for (const text of THANKS_EXAMPLES) assert.equal(asksSomething(text), false, text)
 })
 
-test('socialWithoutQuestion scans a long message in linear time', () => {
-  const adversarial = ['good bye '.repeat(5000) + 'x', 'ok '.repeat(20000), 'x '.repeat(20000) + 'berapa', 'nggak apa '.repeat(5000), 'sama2 '.repeat(10000)]
+test('asksSomething scans a long message once', () => {
+  const adversarial = ['good bye '.repeat(5000) + 'x', 'ok '.repeat(20000), 'x '.repeat(20000) + 'berapa', 'bisa boleh '.repeat(10000),
+    'kak '.repeat(20000) + 'gak', 'apa '.repeat(20000), 'buka gak kak, '.repeat(5000), '🙏'.repeat(20000), 'saya belum '.repeat(10000)]
+  const expected = [false, false, true, false, false, false, true, false, false]
   const started = performance.now()
-  for (let round = 0; round < 5; round++) for (const text of adversarial) socialWithoutQuestion(text)
+  for (let round = 0; round < 5; round++) {
+    for (const [index, text] of adversarial.entries()) assert.equal(asksSomething(text), expected[index], `${index}: ${text.length} chars`)
+  }
   assert.ok(performance.now() - started < 1000, `${Math.round(performance.now() - started)} ms`)
 })
 
@@ -387,7 +310,7 @@ test('guardTriage only checks answers', () => {
   const config = makeConfig()
   assert.equal(guardTriage({ decision: 'escalate', reply: 'Rp 1' }, { knowledge, config }), undefined)
   assert.equal(guardTriage({ decision: 'answer', reply: 'Rp 1', facts_used: ['F5'] }, { knowledge, config }).ok, false)
-  assert.deepEqual(guardTriage({ decision: 'answer', reply: 'Sama-sama, Kak 🙏', facts_used: [] }, { knowledge, config, incomingText: 'ok makasih kak 🙏' }).reasons, ['no_facts_used', 'thanks_back'])
+  assert.deepEqual(guardTriage({ decision: 'answer', reply: 'Sama-sama, Kak 🙏', facts_used: [] }, { knowledge, config, incomingText: 'ok makasih kak 🙏' }).reasons, ['no_facts_used'])
 })
 
 test('replies that carry the owner\'s account or machine details are held; drafts are flagged', () => {

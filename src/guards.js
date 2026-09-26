@@ -190,15 +190,9 @@ export function detectLanguage (text) {
   return 'unknown'
 }
 
-// Two matchers on the customer's message, with opposite safe directions. Both match whole phrases from a vocabulary,
-// so a word that only makes sense inside a phrase never counts alone: "no good" and "oh no" are not a thanks.
-// - isThanks chooses the skip: a thanks right after a closing gets no reply and no notice (policy.js). It is narrow,
-//   since a missed thanks only becomes a draft while a false match could drop a real message.
-// - isSocialMessage holds the answer: whatever it cites, no answer to a thanks, a goodbye or a yes alone is auto-sent
-//   (checkReply). It is broad, since a false match only becomes a draft while a miss could auto-send a promise: it
-//   has no size limit, and it takes any text emoticon and laughter ("iya kak :D", "makasih kak hehe"). A whole-message
-//   vocabulary still misses a word it does not know ("makasih bang"), so socialWithoutQuestion backs it: any thanks,
-//   goodbye or yes in a message that asks nothing holds the answer too.
+// isThanks chooses the skip: a thanks right after a closing gets no reply and no notice (policy.js). It matches whole
+// phrases from a narrow vocabulary, since a missed thanks only becomes a draft while a false match could drop a real
+// message, and a word that only makes sense inside a phrase never counts alone: "no good" and "oh no" are not a thanks.
 //
 // isThanks needs a thanks or goodbye; an acknowledgement ("ok", "iya", "siap") or a 👍 may only go with one, since
 // alone it can be a yes to something our side asked. Greetings are not in it: "Selamat pagi kak" opens a
@@ -218,58 +212,23 @@ const THANKS_PHRASES = {
   fillers: [...HONORIFICS, 'ya', 'yaa', 'deh', 'nih', 'juga', 'banyak', 'again', 'so much', 'very much', 'a lot', 'for your help',
     'for the help', 'for the info', 'infonya', 'you too', 'oh', 'oo', 'wah', 'and']
 }
-// Words that only answer a thanks. Claude's reply is held by them whatever the customer wrote, however the thanks was
-// spelled (checkReply); "Terima kasih sudah menghubungi kami" opens ordinary answers, so a plain thanks is not one. The
-// openers also answer a request ("No problem, kami kirim besok"), so only a reply that starts with one is held.
-// isSocialMessage takes both lists too, so the customer's side never knows fewer of them than the reply's side.
-const THANKS_BACK_PHRASES = ['sama sama', 'sama 2', 'terima kasih kembali', 'terimakasih kembali', 'makasih kembali', 'terima kasih juga',
-  'makasih juga', 'thank you too', 'thanks too', 'you re welcome', 'you are welcome', 'your welcome', 'you re very welcome',
-  'you re most welcome', 'you re so welcome', 'you are very welcome', 'you are most welcome', 'my pleasure', 'senang bisa membantu',
-  'senang dapat membantu', 'senang membantu', 'glad to help', 'glad i could help', 'glad we could help', 'happy to help']
-const THANKS_BACK_OPENERS = ['kembali kasih', 'no problem', 'no worries', 'anytime'] // "kami kembali kasih kabar" is no thanks-back
-
-// isSocialMessage takes all of that, plus what agrees to, arranges or asks for something ("no problem", "see you", a
-// yes alone: "iya kak", "boleh", "please", "lanjut", "gapapa", "👍"; "makasih, ditunggu ya"), greetings next to any of
-// it, other spellings of a thanks, more honorifics, laughter, and repeated letters folded ("makasihh kakk"). A greeting
-// alone is not social: "Selamat pagi kak" is answered like any other message.
-const SOCIAL_PHRASES = {
-  closings: [...THANKS_PHRASES.closings, ...THANKS_BACK_PHRASES, ...THANKS_BACK_OPENERS, 'thank', 'thank u', 'thanks u', 'thank s', 'thx u',
-    'tks', 'mks', 'mksi', 'mksih', 'maksih', 'mkasih', 'makaseh', 'makaci', 'trimakasih', 'trima kasih', 'trmksh', 'trmks', 'tysm',
-    'hatur nuhun', 'nuhun', 'matur nuwun', 'suwun', 'welcome', 'appreciated', 'much appreciated', 'appreciate it', 'i appreciate it',
-    'see you', 'sampai jumpa', 'sampai ketemu', 'hati hati', 'you too'],
-  acknowledgements: [...THANKS_PHRASES.acknowledgements, 'ya', 'yaa', 'y', 'yoi', 'sure', 'boleh', 'mau', 'bisa', 'setuju', 'deal',
-    'sounds good', 'of course', 'mantul', 'please', 'pls', 'plz', 'jadi', 'fix', 'lanjut', 'gas', 'udah', 'sudah', 'yaudah', 'yasudah',
-    'okeh', 'oks', 'betul', 'benar', 'bener', 'gapapa', 'gpp', 'ga apa apa', 'gak apa apa', 'nggak apa apa', 'enggak apa apa', 'tidak apa apa'],
-  greetings: ['selamat pagi', 'selamat siang', 'selamat sore', 'selamat malam', 'pagi', 'siang', 'sore', 'malam', 'good morning',
-    'good afternoon', 'good evening', 'halo', 'hallo', 'hai', 'hi', 'hello', 'hey', 'salam'],
-  fillers: [...THANKS_PHRASES.fillers.filter(phrase => !['ya', 'yaa', 'you too'].includes(phrase)), 'dong', 'lagi', 'soon', 'wow', 'banget',
-    'bgt', 'sekali', 'ditunggu', 'dibantu', 'atas', 'bantuannya', 'informasinya', 'sangat', 'membantu', 'haha',
-    'bang', 'mba', 'kaka', 'kk', 'om', 'bro', 'bos', 'sist']
-}
 
 /**
- * A vocabulary: each phrase, its words folded by `fold` and joined by one space, maps to the bit of its kind. A phrase
- * listed (or folded) under two kinds would take the kind listed last, silently: it throws instead.
+ * A vocabulary: each phrase maps to the bit of its kind. A phrase listed under two kinds would take the kind listed
+ * last, silently: it throws instead.
  */
-function vocabulary (lists, fold = word => word) {
+function vocabulary (lists) {
   const kinds = Object.fromEntries(Object.keys(lists).map((kind, index) => [kind, 1 << index]))
   const phrases = new Map()
   for (const [kind, list] of Object.entries(lists)) {
-    for (const phrase of list.map(entry => entry.split(' ').map(fold).join(' '))) {
+    for (const phrase of list) {
       if (phrases.has(phrase) && phrases.get(phrase) !== kinds[kind]) throw new Error(`guards: "${phrase}" is listed under two kinds`)
       phrases.set(phrase, kinds[kind])
     }
   }
-  return { kinds, phrases, fold, longest: Math.max(...[...phrases.keys()].map(phrase => phrase.split(' ').length)) }
+  return { kinds, phrases, longest: Math.max(...[...phrases.keys()].map(phrase => phrase.split(' ').length)) }
 }
 const THANKS_VOCABULARY = vocabulary(THANKS_PHRASES)
-// Laughter is spelled a hundred ways (hehe, wkwkwk, ahahah, kwkw, lol): matched by its shape, it becomes the one filler
-// "haha". Two syllables at least, so "hi" and "hai" stay greetings.
-const LAUGHTER = /^(?:[aeiou]?(?:h[aeiou]){2,}h?|k?(?:wk)+w?|lol|xd)$/u
-const SOCIAL_VOCABULARY = vocabulary(SOCIAL_PHRASES, word => {
-  const folded = word.replace(/(\p{L})\1+/gu, '$1') // makasihh, kakk, okee
-  return LAUGHTER.test(folded) ? 'haha' : folded
-})
 
 /**
  * The kinds of phrases each way of splitting the words into phrases of the vocabulary uses, as bitmasks; empty if
@@ -277,13 +236,12 @@ const SOCIAL_VOCABULARY = vocabulary(SOCIAL_PHRASES, word => {
  * combination of kinds at each word: linear time and no recursion however long the message is (a recursive split was
  * exponential on "good bye" × 40 + "x", which also splits as "good" + "bye").
  */
-function splitKinds (words, { phrases, longest, fold }) {
-  const folded = words.map(fold)
-  const splits = Array.from({ length: folded.length + 1 }, () => new Set()) // splits[i]: the kinds of words[i..]
-  splits[folded.length].add(0)
-  for (let start = folded.length - 1; start >= 0; start--) {
-    for (let length = 1; length <= Math.min(longest, folded.length - start); length++) {
-      const kind = splits[start + length].size > 0 ? phrases.get(folded.slice(start, start + length).join(' ')) : undefined
+function splitKinds (words, { phrases, longest }) {
+  const splits = Array.from({ length: words.length + 1 }, () => new Set()) // splits[i]: the kinds of words[i..]
+  splits[words.length].add(0)
+  for (let start = words.length - 1; start >= 0; start--) {
+    for (let length = 1; length <= Math.min(longest, words.length - start); length++) {
+      const kind = splits[start + length].size > 0 ? phrases.get(words.slice(start, start + length).join(' ')) : undefined
       if (kind) for (const rest of splits[start + length]) splits[start].add(rest | kind)
     }
   }
@@ -298,13 +256,10 @@ const EMOJI = /[\p{Extended_Pictographic}\p{So}]/gu
 const EMOJI_PARTS = /[\p{Emoji_Modifier}︎️]/gu // skin tones and presentation selectors: 🙏🏽, ❤️
 // Text smileys that are friendly; every other symbol ("ok :(", "-_-", "T_T") is not plain punctuation.
 const SMILEYS = /[:;=]-?(?:[)\]]|[dp](?!\p{L}))|\^_?\^|<3/gu
-// Every text emoticon, friendly or not, for isSocialMessage: next to a yes, ":D", ":p", ":v", "xD", ":(", ":3" or "<3"
-// still leaves a yes, and their letters and digits must not read as content.
-const EMOTICONS = /[:;=]['-]?(?:[()[\]/\\|*3]|[dpvo](?![\p{L}\p{N}]))|\^_*\^|<3|(?<![\p{L}\p{N}])(?:x-?d|-_+-|t_+t)(?![\p{L}\p{N}])/gu
 const PUNCTUATION = /[\s.,!~'’‘"“”–—-]/gu
 
 // A thanks is short: a longer message is content, whatever its words, and a spammed one is rejected before any pass
-// over it. (isSocialMessage has no such limit: there a longer message of social words only is still social.)
+// over it.
 const MAX_THANKS_CHARS = 300
 const MAX_THANKS_TOKENS = 16
 
@@ -337,69 +292,62 @@ export const isThanks = input => readThanks(input) !== undefined
 /** A thanks that also agrees to something ("iya makasih", "👍 thanks"): see readThanks. */
 export const thanksAgrees = input => readThanks(input)?.agrees === true
 
-// Indonesian writes a doubled word with a 2: "sama2", "makasih2", "hati2".
-const foldReduplication = text => text.replace(/(?<![\p{L}\p{N}])(\p{L}{2,})2(?![\p{L}\p{N}])/gu, '$1 $1')
+// asksSomething chooses the auto-send (owner decision, 2026-09-27): only an answer to a message that asks something may
+// go out on its own. A thanks, a yes, "gapapa", "saya tunggu" or "saya mau ambil besok" asks nothing, so a fact cited
+// there only licenses a promise nobody asked for. No list knows every way to thank or agree ("makasih bang", "sama2",
+// "betul"), so this one lists what asks instead: a missed question only costs a draft, and a false one only puts the
+// answer back on the other gates.
+const wordsOf = list => list.split(' ')
+// Ask wherever they stand. Chat questions often have no question mark ("buka jam berapa kak").
+const QUESTION_WORDS = new Set(wordsOf('apa apakah apaan ngapain berapa berapakah brp brapa kapan kapankah kpn dimana dimanakah dmn mana ' +
+  'manakah kemana darimana gimana gmn gmana bagaimana bagaimanakah bgmn kenapa knp napa mengapa siapa siapakah kah kok koq bisakah ' +
+  'bolehkah adakah benarkah betulkah masihkah sudahkah haruskah perlukah mungkinkah maukah tanya nanya ' +
+  'what whats when where wheres which who whos whom whose why how hows does'))
+const QUESTION_PHRASES = new Set(['do you', 'do i', 'did you', 'is there', 'are there', 'is it', 'are you', 'will you', 'may i', 'tell me',
+  'let me know', 'have you', 'should i', 'would like'])
+// Ask only with something to request in their clause, and not after "saya" or "I": alone they say yes ("bisa kak",
+// "boleh", "ada", "tolong ya", "yes please"), and after "I" they state ("saya bisa ambil besok", "I can come at 5").
+const REQUEST_WORDS = new Set(wordsOf('bisa bs boleh blh ada minta mohon tolong tlg please pls plz can could would'))
+const FIRST_PERSON = new Set(wordsOf('saya sy aku ak gue gw gua kami kita i we'))
+// What a clause may hold besides a request word and still only say yes: every word of the thanks vocabulary, more
+// honorifics, particles, and an apology ("minta maaf", "mohon maaf").
+const SOFT_WORDS = new Set([...Object.values(THANKS_PHRASES).flat().flatMap(phrase => phrase.split(' ')),
+  ...wordsOf('kaka kk mba sist bang om bro bos sob bund bunda yah sih dong tuh aja saja lah loh lho maaf')])
+// "info harga kak" asks; "makasih infonya", "makasih info nya" and "thanks for the info" do not.
+const THANKED_FOR = new Set(wordsOf('the for atas untuk buat your makasih kasih thanks thx tq'))
+// A tag at the end of a clause ("buka gak kak", "sudah sampai belum", "masih ada nggak"), after a word it asks about:
+// "belum", "gak kak", "iya kan" and "saya belum" answer. A negation also makes "nggak apa" (no problem) no question.
+const NEGATIONS = new Set(wordsOf('gak ga nggak ngga enggak engga nggk ngak gk tidak tdk ndak nda kagak'))
+const TAGS = new Set([...NEGATIONS, ...wordsOf('belum blm bukan kan')])
 
-/**
- * The customer's words are only social: a thanks, a goodbye or a yes, with honorifics, softeners, laughter and maybe a
- * greeting around it, or emoji with no greeting ("👍", "kak 🙏"). Any emoji, emoticon, symbol or question mark may go
- * with it; a digit (but a doubling 2) or a word outside the vocabulary is content. However long it is: a burst of
- * thanks is still social, and the split is linear.
- */
-export function isSocialMessage (input) {
-  const text = foldReduplication(normalizeText(input).toLowerCase().replace(EMOTICONS, ' '))
-  if (/\p{N}/u.test(text)) return false
-  const words = text.match(/\p{L}+/gu) ?? []
-  const emoji = text.match(EMOJI) ?? []
-  const { closings, acknowledgements, greetings } = SOCIAL_VOCABULARY.kinds
-  return splitKinds(words, SOCIAL_VOCABULARY).some(kinds => (kinds & (closings | acknowledgements)) !== 0 ||
-    (emoji.length > 0 && (kinds & greetings) === 0))
-}
-
-// Chat questions often have no question mark ("buka jam berapa kak"). "Nggak apa-apa" (no problem) asks nothing.
-const QUESTION_WORDS = new Set(['apa', 'apakah', 'berapa', 'brp', 'brapa', 'kapan', 'kpn', 'dimana', 'dmn', 'mana', 'gimana', 'gmn', 'bagaimana',
-  'bgmn', 'kenapa', 'knp', 'mengapa', 'siapa', 'what', 'whats', 'when', 'where', 'which', 'who', 'why', 'how'].map(SOCIAL_VOCABULARY.fold))
-// Yes-words as common in requests and orders as in a yes ("boleh minta alamatnya", "mau pesan", "sudah transfer ya"):
-// anywhere in a message they would hold nearly every message without a question.
-const COMMON_IN_REQUESTS = new Set(['ya', 'yaa', 'y', 'mau', 'bisa', 'jadi', 'udah', 'sudah', 'fix', 'gas', 'lanjut', 'boleh', 'sure', 'deal',
-  'please', 'pls', 'plz'].map(SOCIAL_VOCABULARY.fold))
-
-/** The phrases of a vocabulary found anywhere in the words, the longest first at each word; other words are passed over. */
-function findPhrases (words, { phrases, longest, fold }) {
-  const folded = words.map(fold)
-  const found = []
-  for (let start = 0; start < folded.length;) {
-    let length = Math.min(longest, folded.length - start)
-    while (length > 0 && !phrases.has(folded.slice(start, start + length).join(' '))) length--
-    if (length > 0) found.push(folded.slice(start, start + length).join(' '))
-    start += Math.max(length, 1)
+function clauseAsks (clause) {
+  const tokens = clause.match(/[\p{L}\p{N}]+/gu) ?? []
+  const other = tokens.some(token => !SOFT_WORDS.has(token) && !REQUEST_WORDS.has(token))
+  const asks = (token, index) => {
+    const before = tokens[index - 1]
+    const after = tokens[index + 1]
+    if (before === token || after === token) return false // "apa-apa" (anything), "kapan-kapan" (some time), "mana-mana"
+    if (QUESTION_PHRASES.has(`${token} ${after}`)) return true
+    if (QUESTION_WORDS.has(token)) return !(token === 'apa' && NEGATIONS.has(before))
+    if (token === 'info') return after !== 'nya' && !THANKED_FOR.has(before)
+    return REQUEST_WORDS.has(token) && other && !FIRST_PERSON.has(before)
   }
-  return found
+  if (tokens.some(asks)) return true
+  let last = tokens.length - 1
+  while (last > 0 && SOFT_WORDS.has(tokens[last])) last--
+  const previous = tokens[last - 1]
+  return TAGS.has(tokens[last]) && previous !== undefined && !TAGS.has(previous) && !SOFT_WORDS.has(previous) && !FIRST_PERSON.has(previous)
 }
 
 /**
- * The fail-closed twin of isSocialMessage for the hold: the message thanks, says goodbye or says yes somewhere
- * ("makasih bang", "Sama2 kak, makasih juga", "siap bos, saya tunggu", "👍 besok ya") and asks nothing: no question
- * mark and no question word. A word outside the vocabulary cannot unlock an auto-send here, since no list knows every
- * honorific or every way to say "see you". A greeting's words are its own ("good morning" says no "good").
+ * The customer's message asks something: a question mark, a question word, a request word with something to request,
+ * or a tag question at the end of a clause. A burst asks if any of its messages does. One pass over the text.
  */
-export function socialWithoutQuestion (input) {
-  const text = foldReduplication(normalizeText(input).toLowerCase().replace(EMOTICONS, ' '))
-  if (/[?¿]/.test(text)) return false
-  const words = text.match(/\p{L}+/gu) ?? []
-  const folded = words.map(SOCIAL_VOCABULARY.fold)
-  const asks = (word, index) => QUESTION_WORDS.has(word) && !(word === 'apa' && (folded[index - 1] === 'apa' || folded[index + 1] === 'apa'))
-  if (folded.some(asks)) return false
-  if ((text.match(EMOJI) ?? []).some(symbol => AGREEING_EMOJI.has(symbol))) return true
-  const { closings, acknowledgements } = SOCIAL_VOCABULARY.kinds
-  return findPhrases(words, SOCIAL_VOCABULARY)
-    .some(phrase => (SOCIAL_VOCABULARY.phrases.get(phrase) & (closings | acknowledgements)) !== 0 && !COMMON_IN_REQUESTS.has(phrase))
+export function asksSomething (input) {
+  const text = normalizeText(input).toLowerCase()
+  if (/[?¿؟]/.test(text)) return true // NFKC folds the fullwidth ？
+  return text.split(/[\n.,!;]+/).some(clauseAsks)
 }
-
-// Words are joined by any run of non-letters, none included: "sama-sama", "sama2", "you’re", "youre".
-const phrasePattern = phrase => phrase.replace(/ /g, '[^\\p{L}\\p{N}]*')
-const THANKS_BACK = new RegExp(`(?<![\\p{L}\\p{N}])(?:${THANKS_BACK_PHRASES.map(phrasePattern).join('|')})(?![\\p{L}\\p{N}])|` +
-  `^[^\\p{L}\\p{N}]*(?:${THANKS_BACK_OPENERS.map(phrasePattern).join('|')})(?![\\p{L}\\p{N}])`, 'iu')
 
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 // Indonesian attaches affixes to the very words the list is about (diskonnya, direfund, digratiskan, jaminan), and
@@ -455,19 +403,13 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
   if (/\[F\d+\]/i.test(text)) reasons.push('fact_id_in_reply')
   else if (PLACEHOLDERS.some(pattern => pattern.test(text))) reasons.push('placeholder')
 
-  // Every auto-reply is backed by facts, so a thanks-back, which cites none, only ever goes out as a draft. A fact cited
-  // on a purely social message only licenses a claim or a promise nobody asked for ("besok kami kirim ya" to an "iya
-  // kak" that may agree to something our side offered): held too, and so is one on a thanks or a yes that asks nothing,
-  // whatever other words come with it. So is a reply that answers a thanks in its own words, however the customer
-  // spelled the thanks.
+  // Every auto-reply is backed by facts, so a thanks-back, which cites none, only ever goes out as a draft.
   const cited = Array.isArray(factsUsed) ? factsUsed : []
   if (cited.length === 0) reasons.push('no_facts_used')
   else {
-    if (incomingText !== undefined && (isSocialMessage(incomingText) || socialWithoutQuestion(incomingText))) reasons.push('social_message_answered_with_facts')
     const unknown = cited.filter(id => !knowledge.facts.has(factId(id)))
     if (unknown.length > 0) reasons.push(`unknown_fact:${unknown.join(',')}`)
   }
-  if (THANKS_BACK.test(text)) reasons.push('thanks_back')
 
   const allow = buildAllowList(knowledge, cited)
   const details = extractDetails(text)

@@ -48,7 +48,7 @@ test('console REPL end to end with the keyword brain: echoes are loop-guarded, /
   assert.match(printed, /📝 DRAFT #1 · bob \(bob@console\)/)
   assert.match(printed, /── to bob ──\n {2}│ Terima kasih Kak, saya cek dulu ya\./)
   assert.match(printed, /✅ Sent to bob \(bob@console\) \(draft #1\)/)
-  assert.match(printed, /📝 DRAFT #2 · carol \(carol@console\)[\s\S]*Not auto-sent: thanks_not_auto_sent/, 'a thanks is never auto-sent')
+  assert.match(printed, /📝 DRAFT #2 · carol \(carol@console\)[\s\S]*Not auto-sent: no_question/, 'a thanks asks nothing: never auto-sent')
   assert.match(printed, /── to carol ──\n {2}│ Sama-sama, Kak 🙏\n/, 'the approved thanks-back goes out without the AI marker')
   assert.doesNotMatch(printed, /DRAFT #3/, 'the 🙏 after it is skipped: its echo marked the closing')
   assert.equal(store.chat('alice@console').takeoverUntil, 0, 'the echo of the auto-reply did not look like the owner typing')
