@@ -1,5 +1,5 @@
 // Orchestrator: dedupe, loop guard, takeover, debounce, triage, policy, and the ONE send gate.
-import { guardTriage } from './guards.js'
+import { findPrivateDetails, guardTriage, privateIdentifiersFor } from './guards.js'
 import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice, jidUser } from './owner.js'
 import { decide } from './policy.js'
 
@@ -400,7 +400,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       summary: triage?.summary,
       policyReasons: decision.reasons,
       messageIds: batch.map(message => message.id),
-      lastMessageAt: Math.max(...batch.map(message => message.timestamp)) * 1000 // an owner reply after it answers it
+      lastMessageAt: Math.max(...batch.map(message => message.timestamp)) * 1000, // an owner reply after it answers it
+      privateDetails: findPrivateDetails(triage?.reply ?? '', privateIdentifiersFor(config))
     })
     const notice = await sendToOwner(formatDraftNotice(draft))
     if (!notice.sent) logger.error(`[assistant] draft #${draft.id} could not be posted to self-chat yet; queued for when WhatsApp is back`)

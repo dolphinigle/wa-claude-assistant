@@ -1,3 +1,5 @@
+import os from 'node:os'
+
 // Deterministic checks on a reply before it may be auto-sent. They do not judge meaning; they make sure every
 // concrete detail (number, price, time, duration, percentage, phone, URL, email) is copied from the facts the reply
 // cites in `facts_used`, so a model slip becomes a draft instead of a wrong promise. When unsure they fail, which
@@ -199,10 +201,42 @@ const termPattern = term => term.trim().split(/\s+/)
 export const containsTerm = (haystack, term) =>
   new RegExp(`(?<![\\p{L}\\p{N}])${TERM_PREFIX}${termPattern(term)}${TERM_SUFFIX}(?![\\p{L}\\p{N}])`, 'iu').test(haystack)
 
+const localUsername = () => { try { return os.userInfo().username } catch { return undefined } }
+
+const alphanumeric = text => text.replace(/[^\p{L}\p{N}]+/gu, '')
+
+/**
+ * The CLI adds an environment block to Claude's context that no flag removes: the working directory (with the local
+ * username), the OS and the Claude account's email. A reply must never carry the username, HOME, the app's
+ * directories or `guards.ownerIdentifiers` (e.g. that email: its local part and domain name are checked on their own,
+ * so "name [at] domain [dot] com" is caught too).
+ */
+export function privateIdentifiers (config = {}, { username = localUsername(), home = process.env.HOME } = {}) {
+  const words = new Set(username ? [alphanumeric(username.toLowerCase())] : [])
+  for (const identifier of config.guards?.ownerIdentifiers ?? []) {
+    const [local, domain = ''] = String(identifier).toLowerCase().split('@')
+    const labels = domain.split('.').filter(Boolean)
+    for (const part of [local, ...labels.slice(0, -1)]) words.add(alphanumeric(part)) // the TLD alone says nothing
+  }
+  const paths = [home, config.rootDir, config.paths?.data].filter(path => path && path.length > 1).map(path => path.toLowerCase())
+  return { words: [...words].filter(word => word.length >= 3), paths: [...new Set(paths)] }
+}
+
+/** The identifiers a text mentions: as a word, and one of 6+ characters also with spaces or symbols inside it. */
+export function findPrivateDetails (text, { words = [], paths = [] } = {}) {
+  const lower = normalizeText(text).toLowerCase()
+  const tokens = new Set(lower.match(/[\p{L}\p{N}]+/gu) ?? [])
+  const collapsed = alphanumeric(lower)
+  return [
+    ...paths.filter(path => lower.includes(path)),
+    ...words.filter(word => tokens.has(word) || (word.length >= 6 && collapsed.includes(word)))
+  ]
+}
+
 /**
  * @returns {{ok: boolean, reasons: string[]}}
  */
-export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, maxReplyChars = 600, sensitiveTerms = [] }) {
+export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, maxReplyChars = 600, sensitiveTerms = [], privateIdentifiers: identifiers }) {
   const reasons = []
   const text = normalizeText(reply).trim()
   if (!text) return { ok: false, reasons: ['empty_reply'] }
@@ -241,6 +275,8 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
   for (const term of sensitiveTerms) {
     if (containsTerm(text, term) && !containsTerm(allow.factsLower, term)) reasons.push(`sensitive_term:${term}`)
   }
+  // No value in the reason: it lands in the audit log and in eval reports.
+  if (findPrivateDetails(text, identifiers).length > 0) reasons.push('private_detail')
 
   // Voice says mirror the sender's language; an auto-reply in the other language goes to the owner instead.
   if (incomingText !== undefined) {
@@ -251,8 +287,14 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
   return { ok: reasons.length === 0, reasons }
 }
 
+const identifiersCache = new WeakMap()
+export const privateIdentifiersFor = config => {
+  if (!identifiersCache.has(config)) identifiersCache.set(config, privateIdentifiers(config))
+  return identifiersCache.get(config)
+}
+
 /** Guards for a triage result: only a "simple" reply can be auto-sent, so only it is checked. */
 export function guardTriage (triage, { knowledge, config, incomingText }) {
   if (triage?.category !== 'simple') return undefined
-  return checkReply({ reply: triage.reply, factsUsed: triage.facts_used, incomingText }, { knowledge, ...config.guards })
+  return checkReply({ reply: triage.reply, factsUsed: triage.facts_used, incomingText }, { knowledge, ...config.guards, privateIdentifiers: privateIdentifiersFor(config) })
 }

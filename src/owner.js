@@ -71,6 +71,7 @@ export function formatDraftNotice (draft) {
   const lines = [header, `They wrote: "${draft.excerpt}"`]
   if (draft.summary) lines.push(`Summary: ${draft.summary}`)
   lines.push(draft.draft ? `Draft:\n${draft.draft}` : 'Draft: (none, write your own)')
+  if (draft.privateDetails?.length > 0) lines.push(`⚠️ Check before /ok: the draft mentions your own account or machine details (${draft.privateDetails.join(', ')}).`)
   lines.push(`Why: ${draft.reason}`)
   const blockers = (draft.policyReasons ?? []).filter(reason => !reason.startsWith('category:'))
   if (blockers.length > 0) lines.push(`Not auto-sent: ${blockers.join(', ')}`)

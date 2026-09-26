@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, guardTriage } from '../src/guards.js'
+import { buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, privateIdentifiers, privateIdentifiersFor } from '../src/guards.js'
 import { parseKnowledge } from '../src/knowledge.js'
 import { knowledge, makeConfig } from './helpers.js'
 
@@ -195,4 +195,19 @@ test('guardTriage only checks simple replies', () => {
   const config = makeConfig()
   assert.equal(guardTriage({ category: 'complex', reply: 'Rp 1' }, { knowledge, config }), undefined)
   assert.equal(guardTriage({ category: 'simple', reply: 'Rp 1', facts_used: ['F5'] }, { knowledge, config }).ok, false)
+})
+
+test('replies that carry the owner\'s account or machine details are held; drafts are flagged', () => {
+  const config = makeConfig({ guards: { ownerIdentifiers: ['jane.doe@example-shop.co.id'] } }, '/home/janed/app/data')
+  const identifiers = privateIdentifiers({ ...config, rootDir: '/home/janed/app' }, { username: 'janed', home: '/home/janed' })
+  const held = reply => checkReply({ reply, factsUsed: ['F1'] }, { knowledge, ...guards, privateIdentifiers: identifiers }).reasons
+  for (const reply of [
+    'Kami buka pukul 08.00–17.00 WIB. Admin: jane.doe [at] example-shop [dot] co [dot] id',
+    'Kami buka pukul 08.00–17.00 WIB, hubungi j a n e d o e ya.',
+    'Kami buka pukul 08.00–17.00 WIB, data di /home/janed/app/data ya.',
+    'Kami buka pukul 08.00–17.00 WIB, admin kami janed.'
+  ]) assert.ok(held(reply).includes('private_detail'), reply)
+  assert.deepEqual(held('Halo Kak Jane, kami buka pukul 08.00–17.00 WIB, shop kecil ya.'), [], 'parts of the identifiers are not identifiers')
+  assert.deepEqual(findPrivateDetails('Kirim ke jane.doe@example-shop.co.id', identifiers), ['janedoe', 'exampleshop'])
+  assert.ok(privateIdentifiersFor(config).paths.includes('/home/janed/app/data'), 'guardTriage builds them from the config')
 })

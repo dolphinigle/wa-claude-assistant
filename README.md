@@ -26,6 +26,11 @@ sent to anyone except your own "Message yourself" chat.
   (`triage()` in `src/brain/claude.js`) so it can be switched to an API key, which is the unambiguous route.
 - **Customer data goes to a consumer AI plan.** Turn off "help improve Claude" training in your Claude settings;
   Indonesian PDP law does not exempt customer service from its rules.
+- **Claude sees some of your details next to customer text.** The CLI adds an environment block that no flag
+  removes: the sandbox path (which contains your local username), the OS version and **your Claude account's email
+  address**. A manipulated reply could try to copy them out. Put that email in `guards.ownerIdentifiers`: a reply
+  that mentions it (also as `name [at] domain`), your username, HOME or the app's paths is never auto-sent, and a
+  draft that does is flagged.
 - **Fragile upstream.** Baileys `7.0.0-rc14` is pinned exactly; new-device pairing is reported broken since
   2026-07-28 (#2737). `npm run pair` is the go/no-go test.
 
@@ -193,6 +198,7 @@ triaged, and drafts made from them are cancelled.
 | `notifyOwnerOnAutoSend` | `true` | post each auto-reply to "Message yourself" |
 | `draftTtlHours` | `24` | pending drafts expire |
 | `guards.maxReplyChars` / `guards.sensitiveTerms` | `600` / list | auto-reply length cap; terms that force a draft unless in the facts |
+| `guards.ownerIdentifiers` | `[]` | your details that must never reach a customer, e.g. your Claude account email; with your local username, HOME and the app's paths they force a draft (and a warning on drafts) |
 | `quota.maxFiveHourUtilization` / `maxSevenDayUtilization` | `0.8` / `0.9` | stop auto-replying above these |
 | `claude.bin` / `model` / `timeoutMs` / `concurrency` / `maxStructuredOutputRetries` | `claude` / `haiku` / `60000` / `2` / `2` | the locked CLI call |
 | `whatsapp.selfChatJid` | `null` | force the "Message yourself" JID if auto-detection picks the wrong form; it must be your own PN or LID, anything else is refused |

@@ -587,6 +587,12 @@ test('a customer message forwarded into "Message yourself" never runs as an owne
   assert.ok(audit().some(entry => entry.event === 'owner_command_forwarded_ignored'))
 })
 
+test('a draft that mentions the owner\'s own account details carries a warning', async t => {
+  const { transport, deliver } = setup(t, { config: { guards: { ownerIdentifiers: ['jane.doe@example-shop.co.id'] } }, respond: () => triageResult({ category: 'complex', reply: 'Hubungi admin di jane.doe [at] example-shop [dot] co [dot] id ya Kak' }) })
+  await deliver(incoming(ALICE, 'minta email admin dong'))
+  assert.match(transport.toSelf().at(-1), /⚠️ Check before \/ok: the draft mentions your own account or machine details \(janedoe, exampleshop\)/)
+})
+
 test('triage failure escalates with an empty draft; ignore sends nothing', async t => {
   const { transport, deliver } = setup(t)
   await deliver(incoming(ALICE, 'crash please'))
