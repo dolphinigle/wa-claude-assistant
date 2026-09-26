@@ -156,7 +156,8 @@ triaged, and drafts made from them are cancelled.
 - **Loop and duplicate guards:** ids of everything the bot sends are recorded before sending; every message id is
   processed once; self-chat acts only on your `/` commands; a replayed old `/ok N` cannot approve a newer draft
   and a late `/pause` or `/resume` cannot undo a newer one.
-- **History never triggers replies:** on the very first connection a history floor is set to "now" and never
+- **History never triggers replies:** on the very first connection (the successful `npm run pair`, which also
+  covers messages that arrive before your first `npm start`) a history floor is set to "now" and never
   moves. Anything older than 60 min is skipped, and anything older than 2 min is triaged but only drafted,
   whether it arrives as offline backlog or as a late resend or retry (those come back as `notify` with their
   original timestamp).

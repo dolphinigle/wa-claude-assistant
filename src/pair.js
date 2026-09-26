@@ -4,6 +4,7 @@ import { existsSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadConfig } from './config.js'
+import { Store } from './store.js'
 import { createBaileysLogger, createBaileysSocket, renderQr } from './transport/whatsapp.js'
 import { classifyDisconnect, getMeIds } from './transport/wa-normalize.js'
 
@@ -29,6 +30,16 @@ export function checkExistingLink ({ alreadyLinked, force, authDir }) {
       'To connect anyway: npm run pair -- --force'
     ].join('\n')
   }
+}
+
+/**
+ * Pairing is the first connection: from its 'open' on, WhatsApp queues messages for this device, so the history floor
+ * starts here, not at the first `npm start` (which would skip what arrived in between). Set once, like the transport.
+ */
+export function seedHistoryFloorOnPairing (dataDir, nowMs = Date.now()) {
+  const store = new Store(dataDir)
+  store.seedHistoryFloor(Math.floor(nowMs / 1000))
+  return store.historyFloorTs
 }
 
 function main () {
@@ -78,6 +89,11 @@ function main () {
     sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
       if (qr && !finished) renderQr(qr)
       if (connection === 'open') {
+        try {
+          seedHistoryFloorOnPairing(config.paths.data)
+        } catch (error) {
+          console.log(`(could not record the pairing time in ${config.paths.data}: ${error.message}; messages until the first npm start may be skipped)`)
+        }
         finish(true, `linked and connected as ${getMeIds(sock.user).join(' / ')}${sock.user?.name ? ` (${sock.user.name})` : ''}. Auth kept in ${authDir}.`)
       }
       if (connection === 'close' && !finished) {
