@@ -214,10 +214,10 @@ triaged, and drafts made from them are cancelled.
 ## Model and latency
 
 The brain runs Sonnet (`claude.model: "sonnet"`, `claude-sonnet-5` on 2026-09-26) with thinking off
-(`MAX_THINKING_TOKENS=0`). Each triage is one `claude -p` process: the last eval measured avg 7.7 s from spawn to
-exit, 19 of 20 calls between 4.8 and 8.6 s and one at 39.5 s, 38.0 s of it API time in a single turn, not a
-retry (concurrency 2; about 2 s of each call is CLI start-up). The run before saw avg 7.0 s and max 19.6 s, and
-research had seen about 11 s on a loaded machine, against 4.5–7.8 s for Haiku. An auto-reply therefore usually lands
+(`MAX_THINKING_TOKENS=0`). Each triage is one `claude -p` process: the last eval measured avg 5.7 s from spawn to
+exit, all 20 calls between 4.6 and 8.5 s (concurrency 2; about 2 s of each call is CLI start-up). Earlier runs saw
+avg 7.7 s with one call at 39.5 s (38.0 s of it API time in a single turn, not a retry) and avg 7.0 s with a max of
+19.6 s, and research had seen about 11 s on a loaded machine, against 4.5–7.8 s for Haiku. An auto-reply therefore usually lands
 about 20–25 s after the customer's last message (the 15 s debounce, then the triage), now and then close to a
 minute. `timeoutMs` is 90 s, over twice the slowest call seen, so a structured-output retry still has room; a triage
 that times out is escalated to you. With
@@ -261,21 +261,24 @@ contain session material).
 
 `npm run eval` sends 20 fixtures (Indonesian and English: hours, address, listed and unlisted prices, custom order,
 complaint, unconfirmed transfer, family emergency, friend chat, spam, "ok makasih", prompt injection, XML
-tag breakout, discount, holiday hours, a half-answerable question, and four on the social path: a 🙏 after our own
-closing, a thanks while a delivery request is unanswered, a thanks from "Mama", and `😡😡`) through the real brain,
-the guards and the live-mode policy, with each fixture's history. One fixture = one `claude -p` call. Each fixture
-expects `answer` or `escalate` and marks auto-send as allowed (4: hours, address, listed price, the social "ok
-makasih") or forbidden (the other 16). The key number is FORBIDDEN cases that would have auto-sent.
+tag breakout, discount, holiday hours, a half-answerable question, and four on the social path: a `Selamat pagi kak`
+the day after our own closing, a thanks while a delivery request is unanswered, a thanks from "Mama", and `😡😡`)
+through the real brain, the guards and the live-mode policy, with each fixture's history (its ages, and which of our
+messages were the bot's auto-replies). One fixture = one `claude -p` call. Each fixture expects `answer` or
+`escalate` and marks auto-send as allowed (4: hours, address, listed price, the social "ok makasih") or forbidden
+(the other 16). The key numbers are FORBIDDEN cases that would have auto-sent and escalations the policy skipped
+(a skip reaches nobody, so an `escalate` fixture may only be skipped if it sets `skipOk`); both must be 0.
 
-- [eval/last-run.md](eval/last-run.md), full run on `claude-sonnet-5` with thinking off, the social-path fixtures
-  and the stricter closing checks: **0 forbidden auto-sends**, decision 19/20, **4/4 allowed cases auto-sent**
-  ("ok makasih kak 🙏" got "Sama-sama, Kak 🙏" through the social check), no triage errors. The one decision miss is
-  safe: Sonnet escalated the 🙏 after our own "Sama-sama" (it wanted to answer with an emoji alone, which the prompt
-  rules out), and the policy skips it anyway, so there is no reply and no draft. The unanswered-request thanks, the
-  "Mama" thanks and `😡😡` were all escalated by Sonnet. The report was rescored once with the final policy (the
-  skip after our own closing now holds whatever Claude decided; same prompt and guards, no new calls). Latency: see
-  Model and latency. Raw results are in `eval/last-run.json` for `--rescore`.
-- The run before, 16 fixtures on the same model: decision 16/16, 0 forbidden, 4/4 allowed, avg 7.0 s, max 19.6 s.
+- [eval/last-run.md](eval/last-run.md), full run on `claude-sonnet-5` with thinking off, after the closing rules
+  were tightened (phrases instead of single words, no greeting alone, facts never on a thanks, time-bounded and
+  draft-aware skips, quotes and non-file content in the user turn): **0 forbidden auto-sends**, **0 skipped
+  escalations**, decision **20/20**, **4/4 allowed cases auto-sent** ("ok makasih kak 🙏" got "Sama-sama, Kak 🙏"
+  through the social check), no triage errors. Sonnet escalated `Selamat pagi kak` after yesterday's closing and the
+  policy let the escalation stand. The unanswered-request thanks, the "Mama" thanks and `😡😡` were all escalated.
+  Latency: avg 5.7 s, max 8.5 s. Raw results are in `eval/last-run.json` for `--rescore`.
+- The run before, with a 🙏 after our own closing in place of the greeting fixture (the policy skips that one
+  whatever Claude decides, which the unit tests cover): 0 forbidden, decision 19/20 (Sonnet escalated the 🙏), 4/4
+  allowed, avg 7.7 s, max 39.5 s. The one before, 16 fixtures: decision 16/16, 0 forbidden, 4/4 allowed.
 - Earlier, on Haiku with four categories and a confidence (in git history before the switch, e.g. `f8f9159`):
   category 16/16 with 0 forbidden auto-sends but 2/3 allowed auto-sends, because Haiku answered the English address
   question in Indonesian. [eval/last-run-partial.md](eval/last-run-partial.md) is a 10-fixture subset from that era.

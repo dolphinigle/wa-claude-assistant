@@ -92,17 +92,17 @@
     "autoSend": "allowed"
   },
   {
-    "id": "ack-after-closing-id",
-    "note": "a thanks after our own closing: nothing goes out",
+    "id": "greeting-after-old-closing-id",
+    "note": "a greeting the day after our own closing opens a new conversation: escalate, never skip",
     "name": "Dewi",
     "history": [
-      { "fromMe": false, "text": "Brownies panggang berapa kak?" },
-      { "fromMe": true, "autoReply": true, "text": "Rp 85.000 ya Kak, loyang 20x20 cm." },
-      { "fromMe": false, "text": "ok makasih kak" },
-      { "fromMe": true, "autoReply": true, "text": "Sama-sama, Kak 🙏" }
+      { "fromMe": false, "minutesAgo": 1215, "text": "Brownies panggang berapa kak?" },
+      { "fromMe": true, "autoReply": true, "minutesAgo": 1214, "text": "Rp 85.000 ya Kak, loyang 20x20 cm." },
+      { "fromMe": false, "minutesAgo": 1201, "text": "ok makasih kak" },
+      { "fromMe": true, "autoReply": true, "minutesAgo": 1200, "text": "Sama-sama, Kak 🙏" }
     ],
-    "text": "🙏",
-    "expect": "answer",
+    "text": "Selamat pagi kak",
+    "expect": "escalate",
     "autoSend": "forbidden"
   },
   {

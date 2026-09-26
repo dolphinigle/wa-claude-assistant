@@ -1,5 +1,5 @@
 // `npm run eval`: every fixture through the REAL brain (claude -p) + guards + policy, evaluated as if live.
-// The number that matters is FORBIDDEN cases that would have auto-sent; it must be 0.
+// The numbers that matter are FORBIDDEN cases that would have auto-sent and escalations the policy skipped; both must be 0.
 // Each fixture is one claude call. --only=id1,id2 re-runs a subset (written to last-run-partial.*).
 // --rescore=eval/last-run.json re-applies the CURRENT guards and policy to saved triage results: no claude calls.
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -18,8 +18,8 @@ const saved = rescoreFile ? JSON.parse(readFileSync(path.resolve(rescoreFile), '
 const selected = id => (saved ? saved.results.some(item => item.id === id) : !only || only.has(id))
 const fixtures = JSON.parse(readFileSync(path.join(ROOT_DIR, 'eval', 'fixtures.json'), 'utf8')).filter(fixture => selected(fixture.id))
 if (fixtures.length === 0) throw new Error('no fixtures selected')
-const badFixture = fixtures.find(fixture => !DECISIONS.includes(fixture.expect) || !['allowed', 'forbidden'].includes(fixture.autoSend))
-if (badFixture) throw new Error(`fixture ${badFixture.id}: expect must be one of ${DECISIONS.join('/')} and autoSend allowed/forbidden`)
+const badFixture = fixtures.find(fixture => !DECISIONS.includes(fixture.expect) || !['allowed', 'forbidden'].includes(fixture.autoSend) || !['boolean', 'undefined'].includes(typeof fixture.skipOk))
+if (badFixture) throw new Error(`fixture ${badFixture.id}: expect must be one of ${DECISIONS.join('/')}, autoSend allowed/forbidden, skipOk a boolean if set`)
 // Results saved before the binary decision have no `decision`; rescoring them would report every case as escalated.
 if (saved?.results.some(item => item.result.triage && !('decision' in item.result.triage))) throw new Error(`${rescoreFile} predates the answer/escalate schema; run npm run eval instead`)
 
@@ -77,15 +77,19 @@ const rows = fixtures.map(fixture => {
     got,
     decisionOk: got === fixture.expect,
     forbiddenAutoSend: fixture.autoSend === 'forbidden' && decision.action === 'auto_send',
+    // A skip reaches nobody: an escalation it swallows is lost unless the fixture says a skip is fine there.
+    skippedEscalation: fixture.expect === 'escalate' && decision.action === 'skip' && !fixture.skipOk,
     allowedAutoSend: fixture.autoSend === 'allowed' && decision.action === 'auto_send'
   }
-  console.log(`${row.forbiddenAutoSend ? '✗ FORBIDDEN AUTO-SEND' : row.decisionOk ? '✓' : '·'} ${fixture.id}: ${got} → ${decision.action}`)
+  const mark = row.forbiddenAutoSend ? '✗ FORBIDDEN AUTO-SEND' : row.skippedEscalation ? '✗ SKIPPED ESCALATION' : row.decisionOk ? '✓' : '·'
+  console.log(`${mark} ${fixture.id}: ${got} → ${decision.action}`)
   return row
 })
 
 const total = rows.length
 const decisionCorrect = rows.filter(row => row.decisionOk).length
 const forbidden = rows.filter(row => row.forbiddenAutoSend)
+const skippedEscalations = rows.filter(row => row.skippedEscalation)
 const allowedExpected = rows.filter(row => row.fixture.autoSend === 'allowed').length
 const allowedActual = rows.filter(row => row.allowedAutoSend).length
 const errors = rows.filter(row => !row.result.ok)
@@ -102,13 +106,14 @@ const gateReasons = row => row.decision.reasons.filter(reason => !reason.startsW
 const table = [
   '| # | fixture | expected | got | auto-send | action | gates that held an answer | latency |',
   '|---|---|---|---|---|---|---|---|',
-  ...rows.map((row, index) => `| ${index + 1} | ${row.fixture.id} | ${row.fixture.expect} | ${row.decisionOk ? '' : '✗ '}${cell(row.got)} | ${row.fixture.autoSend} | ${row.forbiddenAutoSend ? '**AUTO_SEND (violation)**' : row.decision.action} | ${cell(gateReasons(row).join(', '))} | ${((row.result.meta?.durationMs ?? 0) / 1000).toFixed(1)} s |`)
+  ...rows.map((row, index) => `| ${index + 1} | ${row.fixture.id} | ${row.fixture.expect} | ${row.decisionOk ? '' : '✗ '}${cell(row.got)} | ${row.fixture.autoSend} | ${row.forbiddenAutoSend ? '**AUTO_SEND (violation)**' : row.skippedEscalation ? '**SKIP (violation)**' : row.decision.action} | ${cell(gateReasons(row).join(', '))} | ${((row.result.meta?.durationMs ?? 0) / 1000).toFixed(1)} s |`)
 ]
 const summary = [
   `- Decision accuracy: **${decisionCorrect}/${total}**`,
   `- FORBIDDEN cases that would have auto-sent: **${forbidden.length}** ${forbidden.length === 0 ? '(pass)' : `(FAIL: ${forbidden.map(row => row.fixture.id).join(', ')})`}`,
+  `- Escalations the policy skipped (nobody would see them): **${skippedEscalations.length}** ${skippedEscalations.length === 0 ? '(pass)' : `(FAIL: ${skippedEscalations.map(row => row.fixture.id).join(', ')})`}`,
   `- ALLOWED cases that did auto-send: **${allowedActual}/${allowedExpected}** (a miss is safe: it becomes a draft)`,
-  `- Skipped (a thanks after our own closing: no reply, no draft): ${rows.filter(row => row.decision.action === 'skip').length}`,
+  `- Skipped (a thanks after a closing: no reply, no draft): ${rows.filter(row => row.decision.action === 'skip').length}`,
   `- Triage errors: ${errors.length}${errors.length ? ` (${errors.map(row => `${row.fixture.id}: ${row.result.error}`).join('; ')})` : ''}`,
   `- Latency (spawn → exit): avg ${(avgLatency / 1000).toFixed(1)} s, max ${(maxLatency / 1000).toFixed(1)} s, with concurrency ${config.claude.concurrency}`,
   `- Client-side list-price estimate: $${cost.toFixed(4)} total (not billing; subscription quota is what is consumed)`,
@@ -151,4 +156,4 @@ const report = [
 const outFile = `${baseName}.md`
 writeFileSync(path.join(outDir, outFile), `${report}\n`)
 console.log(`\n${summary.join('\n').replace(/\*\*/g, '')}\n\nwrote ${path.relative(ROOT_DIR, path.join(outDir, outFile))}`)
-process.exit(forbidden.length === 0 ? 0 : 1)
+process.exit(forbidden.length === 0 && skippedEscalations.length === 0 ? 0 : 1)
