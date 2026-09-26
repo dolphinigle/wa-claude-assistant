@@ -1214,6 +1214,44 @@ test('allowChats: a LID chat matches through its alt or its linked PN record; on
   assert.equal(brain.calls.length, 3)
 })
 
+test('allowChats: the owner\'s reply on a LID of unknown number holds the bot back once the listed contact writes on either form (send-path-r2-4)', async t => {
+  for (const customerOn of ['PN, with the LID as alt', 'the LID, with the PN as alt']) {
+    const { transport, assistant, brain, store, advance, now, audit } = setup(t, { config: { allowChats: ['082222222222'] } })
+    const LID = '111111@lid'
+    const meIds = getMeIds({ id: '6281111111111:7@s.whatsapp.net' })
+    // The echo of the owner's phone reply carries the owner's own number as its alt, which is dropped: no known number.
+    const { message: reply } = normalizeUpsert({ key: { remoteJid: LID, remoteJidAlt: '6281111111111@s.whatsapp.net', id: 'OWN1', fromMe: true },
+      message: { conversation: 'bisa kak, sebentar ya' }, messageTimestamp: Math.floor(now() / 1000) }, { type: 'notify', meIds })
+    assert.equal(reply.chatIdAlt, undefined)
+    await assistant.handleMessage(reply)
+    assert.deepEqual([store.existingChat(LID), audit().filter(entry => entry.event === 'skip_not_allowed').length], [undefined, 1], `${customerOn}: nothing written yet`)
+
+    advance(60 * 1000)
+    const question = customerOn.startsWith('PN')
+      ? incoming(ALICE, 'kak jam berapa buka?', { chatIdAlt: LID, timestamp: Math.floor(now() / 1000) })
+      : incoming(LID, 'kak jam berapa buka?', { chatIdAlt: ALICE, timestamp: Math.floor(now() / 1000) })
+    await assistant.handleMessage(question)
+    await assistant.idle()
+    assert.deepEqual([brain.calls.length, transport.toCustomer().length], [0, 0], `${customerOn}: the owner is mid-conversation`)
+    assert.ok(store.chat(ALICE).takeoverUntil > now() && store.chat(LID).takeoverUntil > now(), customerOn)
+    assert.equal(store.chat(LID).ownerRepliedAt, reply.timestamp * 1000, customerOn)
+  }
+})
+
+test('allowChats: the owner\'s reply on a LID whose number is known and not listed is not held (send-path-r2-4)', async t => {
+  const { transport, deliver, assistant, brain, store, config, now } = setup(t)
+  const LID = '222222@lid'
+  await deliver(incoming(LID, 'halo kak', { chatIdAlt: BOB, timestamp: Math.floor(now() / 1000) })) // links Bob's two forms
+  config.allowChats = ['082222222222']
+  const calls = brain.calls.length
+  await assistant.handleMessage({ id: 'OWN1', chatId: LID, fromMe: true, isSelfChat: false, text: 'iya kak', timestamp: Math.floor(now() / 1000), kind: 'notify' })
+  config.allowChats.push('083333333333') // Bob listed later: the reply was never held, so no takeover shows up
+  await deliver(incoming(BOB, 'kak jam berapa buka?', { chatIdAlt: LID, timestamp: Math.floor(now() / 1000) }))
+  assert.equal(brain.calls.length, calls + 1)
+  assert.equal(transport.toCustomer().length, 1)
+  assert.equal(store.chat(BOB).takeoverUntil ?? 0, 0)
+})
+
 test('allowChats: the send gate refuses another chat, so /ok or /edit of a draft from before the list leaves it pending', async t => {
   for (const mode of ['live', 'shadow']) {
     const { transport, deliver, owner, assistant, store, config, audit } = setup(t, { config: { mode } })

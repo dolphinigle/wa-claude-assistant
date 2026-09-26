@@ -56,6 +56,30 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   const isAllowed = (chatId, chatIdAlt) => isAllowedChat(config, store, chatId, chatIdAlt)
   /** Only the ids: whatever another chat says stays out of the audit log, as it stays out of state.json. */
   const skipNotAllowed = ({ chatId, chatIdAlt }) => store.audit('skip_not_allowed', { chatId, chatIdAlt })
+  // The owner's reply on a LID whose number is not known yet fails the allowChats check (its echo carries the owner's
+  // own number, not the contact's), but it may be the listed contact: then its next message links the two forms, and
+  // the bot must still stay out while the owner talks (send-path-r2-4). So the reply's time is kept here, in memory
+  // only and without its text, and becomes a takeover once a message of an allowed chat names that LID.
+  const heldOwnerReplies = new Map() // LID → epoch seconds of the owner's newest reply there
+  function holdOwnerReply ({ chatId, chatIdAlt, timestamp }) {
+    if (!chatId.endsWith('@lid') || !(timestamp > 0)) return
+    if (store.linkedChatIds(chatId, chatIdAlt).some(id => id.endsWith('@s.whatsapp.net'))) return // its number is known: not listed
+    // Older replies only matter for messages the backlog rules would still take, or a takeover still running.
+    const keepFrom = (now() - Math.max(config.humanTakeoverMinutes, config.backlog.maxAgeMinutes) * MINUTE_MS) / 1000
+    for (const [lid, at] of heldOwnerReplies) if (at < keepFrom || heldOwnerReplies.size >= 1000) heldOwnerReplies.delete(lid)
+    const newest = Math.max(heldOwnerReplies.get(chatId) ?? 0, timestamp)
+    heldOwnerReplies.delete(chatId) // re-inserted last, so the size cap drops the oldest first
+    heldOwnerReplies.set(chatId, newest)
+  }
+  async function takeHeldOwnerReplies ({ chatId, chatIdAlt }) {
+    if (heldOwnerReplies.size === 0) return
+    for (const id of store.linkedChatIds(chatId, chatIdAlt)) {
+      const timestamp = heldOwnerReplies.get(id)
+      if (timestamp === undefined) continue
+      heldOwnerReplies.delete(id)
+      await startTakeover({ chatId, chatIdAlt, timestamp }) // on every form this message links, the LID included
+    }
+  }
   /** A LID chat with no known phone number cannot be matched against phone-number entries: fail closed (drafts). */
   const blocklistUnchecked = chatId => chatId.endsWith('@lid') &&
     !store.linkedChatIds(chatId).some(id => id.endsWith('@s.whatsapp.net')) &&
@@ -160,8 +184,12 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       return
     }
     // With allowChats set, any other chat is ignored before anything is kept about it, not even its message id: the
-    // contact's messages and the owner's own replies there (no takeover) alike. "Message yourself" always works.
-    if (!message.isSelfChat && !isAllowed(message.chatId, message.chatIdAlt)) return skipNotAllowed(message)
+    // contact's messages and the owner's own replies there (no takeover) alike, but for the time of an owner reply on a
+    // LID of unknown number, in memory (holdOwnerReply). "Message yourself" always works.
+    if (!message.isSelfChat && !isAllowed(message.chatId, message.chatIdAlt)) {
+      if (message.fromMe) holdOwnerReply(message)
+      return skipNotAllowed(message)
+    }
     if (store.hasProcessed(message.id)) return
     store.markProcessed(message.id)
     sweepExpiredDrafts()
@@ -174,6 +202,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       store.audit('skip_blocked', { chatId: message.chatId })
       return
     }
+    await takeHeldOwnerReplies(message)
     if (message.fromMe) return startTakeover(message)
 
     // Only a contact's own message carries its alt JID; on the owner's messages the alt can be the owner's own number.
