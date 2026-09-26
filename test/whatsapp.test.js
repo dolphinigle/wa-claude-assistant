@@ -50,17 +50,17 @@ function setup (t, whatsapp = {}) {
   const received = []
   const fatal = []
   let ready = 0
-  let connections = 0
+  const connections = []
   const transport = createWhatsAppTransport({
     config, store, logger: silent, createSocket,
     onMessage: async message => { received.push(message) },
     onReady: () => { ready++ },
-    onConnected: () => { connections++ },
+    onConnected: info => { connections.push(info) },
     onFatal: verdict => { fatal.push(verdict) }
   })
   t.after(() => transport.stop())
   const emit = (event, payload) => sockets.at(-1).ev.emit(event, payload)
-  return { store, transport, sockets, received, fatal, emit, ready: () => ready, connections: () => connections }
+  return { store, transport, sockets, received, fatal, emit, ready: () => ready, connections: () => connections.length, outages: () => connections.map(info => info.outageMs) }
 }
 
 const open = emit => emit('connection.update', { connection: 'open' })
@@ -260,6 +260,38 @@ test('open-then-close loops still give up after maxReconnectAttempts', async t =
   }
   assert.deepEqual(fatal.map(verdict => verdict.reason), ['too_many_reconnects'])
   assert.equal(sockets.length, 3)
+})
+
+test('a network outage is retried past maxReconnectAttempts and reported when the connection is back', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 })
+  const flush = () => new Promise(resolve => setImmediate(resolve))
+  const { transport, sockets, fatal, emit, outages } = setup(t, { maxReconnectAttempts: 2, stableConnectionMs: 1000 })
+  await transport.start()
+  open(emit)
+  emit('connection.update', { receivedPendingNotifications: true })
+  t.mock.timers.tick(1000) // stable
+  closeWith(emit, 408, 'Connection was lost')
+  // Router reboot: every new socket fails at once, like Baileys' mapped ws error (ENOTFOUND → 408), never opening.
+  for (let attempt = 0; attempt < 15; attempt++) {
+    t.mock.timers.tick(60_000)
+    await flush()
+    closeWith(emit, 408, 'WebSocket Error (getaddrinfo ENOTFOUND web.whatsapp.com)')
+  }
+  assert.deepEqual(fatal, [], 'no give-up while nothing ever opened')
+  assert.equal(sockets.length, 16)
+  t.mock.timers.tick(60_000)
+  await flush()
+  open(emit)
+  assert.deepEqual(outages(), [0, 16 * 60_000])
+
+  // The cap still applies to connections that open and drop again before becoming stable.
+  for (let cycle = 0; cycle < 3; cycle++) {
+    closeWith(emit, 428, 'Connection Closed')
+    t.mock.timers.tick(60_000)
+    await flush()
+    open(emit)
+  }
+  assert.deepEqual(fatal.map(verdict => verdict.reason), ['too_many_reconnects'])
 })
 
 test('a connection that stayed up resets the reconnect counter', async t => {

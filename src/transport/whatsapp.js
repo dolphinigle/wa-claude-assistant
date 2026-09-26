@@ -10,6 +10,7 @@ import { backoffMs, classifyDisconnect, extractText, getMeIds, isSelfChatJid, no
 
 const HISTORY_PER_CHAT = 50
 const MAX_META_AI_IDS = 500
+const OFFLINE_LOG_EVERY = 10
 
 export function createBaileysLogger () {
   return pino({ level: process.env.BAILEYS_LOG_LEVEL ?? 'warn' }, pino.destination(2))
@@ -46,7 +47,8 @@ export async function createBaileysSocket ({ authDir, logger, getMessage }) {
  * @param {object} options
  * @param {(message: object) => Promise<void>} options.onMessage  normalized customer/self-chat messages
  * @param {() => void} [options.onReady]  first successful connection of this process
- * @param {() => void} [options.onConnected]  every successful (re)connection, e.g. to re-send failed notices
+ * @param {(info: {outageMs: number}) => void} [options.onConnected]  every successful (re)connection, e.g. to re-send
+ *   failed notices; `outageMs` is how long WhatsApp was unreachable before it (0 on the first connection)
  * @param {(verdict: object) => void} [options.onFatal]  the transport stopped and will not reconnect
  * @param {Function} [options.createSocket]  injectable for tests; defaults to the real Baileys socket
  */
@@ -60,7 +62,9 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
   let connected = false
   let stopped = false
   let announced = false
-  let attempts = 0
+  let failures = 0 // closes since the last stable connection: sets the backoff
+  let flaps = 0 // connections that opened and dropped again before becoming stable: capped by maxReconnectAttempts
+  let downSince = null
   let reconnectTimer
   let watchdogTimer
 
@@ -97,14 +101,21 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
     }, config.whatsapp?.caughtUpWatchdogMs ?? 180_000)
   }
 
-  function scheduleReconnect (verdict) {
-    attempts++
-    if (attempts > (config.whatsapp?.maxReconnectAttempts ?? 10)) {
+  // The cap is for open-then-drop loops (#2810 watchdog, a session WhatsApp keeps closing). A socket that never
+  // opens is a network outage: retried forever at the capped backoff, because giving up would end the process.
+  function scheduleReconnect (verdict, session) {
+    failures++
+    downSince ??= Date.now()
+    if (session?.opened && !session.stable) flaps++
+    const maxFlaps = config.whatsapp?.maxReconnectAttempts ?? 10
+    if (flaps > maxFlaps) {
       stopped = true
-      onFatal?.({ action: 'stop', reason: 'too_many_reconnects', advice: `Gave up after ${attempts - 1} reconnect attempts; last: ${verdict.reason}.` })
+      onFatal?.({ action: 'stop', reason: 'too_many_reconnects', advice: `Gave up after ${maxFlaps} connections in a row opened and dropped again; last: ${verdict.reason}.` })
       return
     }
-    reconnectTimer = setTimeout(connect, verdict.action === 'recreate_now' ? 0 : backoffMs(attempts))
+    const delayMs = verdict.action === 'recreate_now' ? 0 : backoffMs(failures)
+    if (!session?.opened && failures % OFFLINE_LOG_EVERY === 0) logger.warn(`[whatsapp] still offline after ${failures} attempts (last: ${verdict.reason}); retrying every ${delayMs / 1000} s`)
+    reconnectTimer = setTimeout(connect, delayMs)
   }
 
   // Catch-up can be signalled before 'open' (Baileys flushes the offline backlog while it still awaits its post-login
@@ -118,15 +129,18 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
     }
     if (connection === 'open') {
       connected = true
+      session.opened = true
+      const outageMs = downSince === null ? 0 : Date.now() - downSince
+      downSince = null
       setIdentity(socket.user)
       logger.log(`[whatsapp] connected as ${meIds.join(' / ')}; self-chat target ${selfChatJid}`)
       if (!session.caughtUp) armWatchdog(socket)
       if (!announced) { announced = true; onReady?.() }
-      onConnected?.()
+      onConnected?.({ outageMs })
     }
-    // Only a connection that stayed up resets the counter, so open-then-close loops still reach the cap.
+    // Only a connection that stayed up resets the counters, so open-then-close loops still reach the cap.
     if (connected && session.caughtUp && !session.stableTimer) {
-      session.stableTimer = setTimeout(() => { attempts = 0 }, config.whatsapp?.stableConnectionMs ?? 120_000)
+      session.stableTimer = setTimeout(() => { session.stable = true; failures = 0; flaps = 0 }, config.whatsapp?.stableConnectionMs ?? 120_000)
       session.stableTimer.unref?.()
     }
     if (connection === 'close') {
@@ -138,7 +152,7 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       const verdict = classifyDisconnect(error?.output?.statusCode, error?.message)
       logger.warn(`[whatsapp] connection closed: ${verdict.reason}`)
       if (verdict.action === 'stop') { stopped = true; onFatal?.(verdict); return }
-      scheduleReconnect(verdict)
+      scheduleReconnect(verdict, session)
     }
   }
 
@@ -189,7 +203,7 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       metaAiIds.add(node.attrs.id)
       if (metaAiIds.size > MAX_META_AI_IDS) metaAiIds.delete(metaAiIds.values().next().value)
     })
-    sock.ev.on('connection.update', handleConnection(sock, { caughtUp: false, stableTimer: undefined }))
+    sock.ev.on('connection.update', handleConnection(sock, { caughtUp: false, opened: false, stable: false, stableTimer: undefined }))
     sock.ev.on('messages.upsert', handleUpsert)
     sock.ev.on('messaging-history.set', ({ messages = [] }) => { for (const raw of messages) remember(raw) })
   }

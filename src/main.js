@@ -12,6 +12,7 @@ const args = process.argv.slice(2)
 const useConsole = args.includes('--console')
 const useFakeBrain = args.includes('--fake-brain')
 const debounceArg = args.find(arg => arg.startsWith('--debounce='))
+const OUTAGE_NOTICE_MS = 5 * 60 * 1000
 
 // The console demo keeps its own state so it never touches the real WhatsApp state or audit log.
 const overrides = useConsole
@@ -36,7 +37,13 @@ if (useConsole) {
     store,
     onMessage,
     onReady: () => { announce().catch(() => {}) },
-    onConnected: () => { assistant.flushOwnerOutbox().catch(() => {}) },
+    onConnected: ({ outageMs = 0 } = {}) => {
+      // Nobody was told while it lasted: the socket was down. Messages from then arrive as backlog (drafts only).
+      if (outageMs >= OUTAGE_NOTICE_MS) {
+        assistant.announce(`${BOT_PREFIX} ⚠️ WhatsApp was unreachable for ${Math.round(outageMs / 60_000)} min. Messages from that time are drafted, not auto-replied; any older than ${config.backlog.maxAgeMinutes} min were skipped, so check those chats yourself.`).catch(() => {})
+      }
+      assistant.flushOwnerOutbox().catch(() => {})
+    },
     onFatal: verdict => {
       console.error(`\n[whatsapp] STOPPED: ${verdict.reason}. ${verdict.advice ?? ''}`)
       shutdown(1)

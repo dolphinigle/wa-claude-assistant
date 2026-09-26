@@ -189,7 +189,7 @@ triaged, and drafts made from them are cancelled.
 | `quota.maxFiveHourUtilization` / `maxSevenDayUtilization` | `0.8` / `0.9` | stop auto-replying above these |
 | `claude.bin` / `model` / `timeoutMs` / `concurrency` / `maxStructuredOutputRetries` | `claude` / `haiku` / `60000` / `2` / `2` | the locked CLI call |
 | `whatsapp.selfChatJid` | `null` | force the "Message yourself" JID if auto-detection picks the wrong form; it must be your own PN or LID, anything else is refused |
-| `whatsapp.caughtUpWatchdogMs` / `maxReconnectAttempts` / `stableConnectionMs` | `180000` / `10` / `120000` | #2810 watchdog; give up after this many reconnects in a row; a connection caught up and open this long resets the count |
+| `whatsapp.caughtUpWatchdogMs` / `maxReconnectAttempts` / `stableConnectionMs` | `180000` / `10` / `120000` | #2810 watchdog; give up after this many connections in a row that open and drop again before staying caught up and open for `stableConnectionMs`. A network outage (no connection opens at all) is retried every ≤ 60 s for as long as it lasts, and an outage of 5 min or more is reported in "Message yourself" once the connection is back |
 | `timezone` | `Asia/Jakarta` | the `now:` line given to Claude |
 | `knowledgeFile`, `paths.auth`, `paths.data` | `knowledge.md`, `auth`, `data` | relative to the repo |
 
@@ -249,7 +249,8 @@ more work):
 - `--bare` is documented to become the `-p` default, which would break subscription login; the CLI auto-updates
   almost daily. The wrapper reports `not_logged_in` and every triage then escalates to you.
 - `messages.upsert` can stop firing while the socket looks open (#2810); the watchdog recreates the socket if
-  `receivedPendingNotifications` never arrives, and gives up after `maxReconnectAttempts`.
+  `receivedPendingNotifications` never arrives, and gives up after `maxReconnectAttempts` such open-then-drop
+  cycles in a row. There is no process supervisor: after a give-up (or a 401/403/405/440 stop) restart it by hand.
 - Contacts with WhatsApp usernames (`@lid` without a phone alt, #2742) may never arrive; the blocklist cannot match
   them by phone number.
 - Memory/CPU after pairing and history sync are unmeasured. The per-call spawn overhead (~2 s) remains.
