@@ -161,8 +161,9 @@ triaged, and drafts made from them are cancelled.
   whether it arrives as offline backlog or as a late resend or retry (those come back as `notify` with their
   original timestamp).
 - **Accepted messages survive a restart:** a message that was accepted but not yet triaged when the process stopped
-  (or crashed) is triaged again on the next start as backlog (drafts only); one older than 60 min is listed for
-  you in "Message yourself" instead.
+  (or crashed), or that arrived while it was shutting down, is triaged on the next start as backlog (drafts only);
+  one older than 60 min is listed for you in "Message yourself" instead. A `/command` typed during the shutdown is
+  not run (audited only): send it again once the assistant is back.
 - **Notices are never dropped:** a draft, URGENT or other notice that fails because WhatsApp is reconnecting is
   kept in `data/state.json` and re-sent, marked "Delayed", on the next connection.
 - **Blue ticks only after an auto-reply** (`markRead`), never for drafted or escalated messages, and not while the

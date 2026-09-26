@@ -123,9 +123,15 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
 
   // --- inbound ---------------------------------------------------------------------------------------------------
 
+  // Also while stopping: WhatsApp has already sent the delivery receipt and will not deliver a message again, so an
+  // accepted message goes to the inbox (triaged on the next start) instead of being dropped.
   async function handleMessage (message) {
-    if (stopped || !message?.id || !message.chatId) return
+    if (!message?.id || !message.chatId) return
     if (store.isSentByBot(message.id)) return // loop guard: our own sends echo back as fromMe
+    if (stopped && message.isSelfChat) {
+      if (message.fromMe && message.text.trim().startsWith('/')) store.audit('owner_command_during_shutdown', { id: message.id, text: excerpt(message.text, 120) })
+      return
+    }
     if (store.hasProcessed(message.id)) return
     store.markProcessed(message.id)
     sweepExpiredDrafts()
@@ -158,7 +164,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     }
     const accepted = { ...message, isBacklog }
     store.addToInbox(accepted)
-    enqueue(accepted)
+    if (!stopped) enqueue(accepted)
   }
 
   async function handleSelfChat (message, isBacklog) {
@@ -225,6 +231,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   }
 
   function scheduleTriage (chatId) {
+    if (stopped) return // still in the inbox: recoverInbox triages it on the next start
     const state = runtime(chatId)
     clearTimeout(state.timer)
     state.timer = setTimeout(() => {

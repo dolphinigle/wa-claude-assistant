@@ -369,6 +369,37 @@ test('messages accepted but not routed before a stop are triaged again after res
   assert.deepEqual(fourth.store.inboxMessages(), [])
 })
 
+test('a message that arrives while shutdown drains is kept in the inbox and triaged after the restart', async t => {
+  const dir = tempDir(t)
+  const start = () => {
+    const config = makeConfig({ mode: 'live', debounceMs: 10 }, dir)
+    const store = new Store(dir, { logger: silent })
+    const transport = createFakeTransport()
+    const brain = createFakeBrain(byKeyword)
+    const assistant = createAssistant({ config, store, brain, transport, knowledge, logger: silent })
+    t.after(() => assistant.stop())
+    return { store, transport, brain, assistant }
+  }
+  const first = start()
+  const release = first.brain.hold()
+  await first.assistant.handleMessage(incoming(ALICE, 'bisa kue custom?'))
+  await waitFor(() => first.brain.calls.length === 1)
+  const stopping = first.assistant.stop()
+  await first.assistant.handleMessage(incoming(BOB, 'saya sudah transfer, pesanan saya mana?'))
+  await first.assistant.handleMessage({ id: 'CMD1', chatId: 'self', fromMe: true, isSelfChat: true, text: '/pause', timestamp: Math.floor(Date.now() / 1000), kind: 'notify' })
+  release()
+  await stopping
+  assert.equal(first.brain.calls.length, 1, 'nothing new is triaged while stopping')
+  assert.equal(first.store.paused, false, 'no owner command runs while stopping')
+
+  const second = start()
+  assert.deepEqual(second.store.inboxMessages().map(message => message.text).sort(), ['bisa kue custom?', 'saya sudah transfer, pesanan saya mana?'])
+  second.assistant.recoverInbox()
+  await second.assistant.idle()
+  assert.deepEqual(second.brain.calls.map(call => call.chat.name).sort(), ['6282222222222', '6283333333333'])
+  assert.ok(second.transport.toSelf().some(text => /🚨 URGENT #\d/.test(text)))
+})
+
 test('per-chat and per-day rate limits downgrade to drafts', async t => {
   const { transport, deliver, store } = setup(t, { config: { autoSend: { maxPerChatPerHour: 2, maxPerDay: 3 } } })
   for (let index = 0; index < 3; index++) await deliver(incoming(ALICE, `jam buka? ${index}`))
