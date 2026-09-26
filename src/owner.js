@@ -12,13 +12,26 @@ export const HELP_TEXT = `${BOT_PREFIX} Commands (type them here, in "Message yo
 /pause — stop all auto-replies (drafts still arrive)
 /resume — allow auto-replies again
 /status — mode, pending drafts, counters, quota
-/mute <N|name> — never auto-reply in that chat (N = a draft number)
-/unmute <N|name> — undo /mute
+/mute <N|number|name> — never auto-reply in that chat (N = a draft number)
+/unmute <N|number|name> — undo /mute
 /help — this list`
 
 export const excerpt = (text, max = EXCERPT_CHARS) => {
   const flat = String(text ?? '').replace(/\s+/g, ' ').trim()
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
+}
+
+/** The user part of a JID, without the device suffix: 6281234567890 for 6281234567890:3@s.whatsapp.net. */
+export const jidUser = jid => jid.split('@')[0].split(':')[0]
+
+/**
+ * "Name (+62…)" for notices. The name is the sender's own pushName, which anyone can set to "Mama" or a real
+ * customer's name, so the number is always shown next to it (the JID when only a LID is known).
+ */
+export function formatContact (chatId, { name, chatIdAlt } = {}) {
+  const phoneJid = [chatId, chatIdAlt].find(jid => jid?.endsWith('@s.whatsapp.net'))
+  const number = phoneJid ? `+${jidUser(phoneJid)}` : chatId
+  return name ? `${name} (${number})` : number
 }
 
 /** Parses "/cmd ..." into {name, draftId?, body?, target?}; returns null for anything that is not a command. */
@@ -41,7 +54,7 @@ export function parseCommand (input) {
     }
     case 'mute':
     case 'unmute':
-      return rest ? { name, target: rest } : { name: 'usage', usage: `/${name} <N|name>` }
+      return rest ? { name, target: rest } : { name: 'usage', usage: `/${name} <N|number|name>` }
     case 'pause':
     case 'resume':
     case 'status':
@@ -74,7 +87,7 @@ const percent = value => (typeof value === 'number' ? `${Math.round(value * 100)
  */
 export function createOwnerCommands ({ config, store, gate, now = () => Date.now() }) {
   const ttlMs = (config.draftTtlHours ?? 24) * HOUR_MS
-  const chatName = chatId => store.chat(chatId).name ?? chatId
+  const chatName = chatId => formatContact(chatId, store.existingChat(chatId))
   // Drafts whose send is in flight: two self-chat commands run concurrently (Baileys does not await listeners).
   const sending = new Set()
 
@@ -107,13 +120,18 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
   }
 
   function resolveTarget (target) {
-    if (/^\d+$/.test(target)) {
+    if (/^\d{1,6}$/.test(target)) {
       const draft = store.getDraft(Number(target))
       return draft ? { chatId: draft.chatId } : { error: `No draft #${target}.` }
     }
-    const matches = store.findChatsByName(target)
-    if (matches.length === 0) return { error: `No chat named "${target}".` }
-    if (matches.length > 1) return { error: `"${target}" matches ${matches.map(chatName).join(', ')}; be more specific.` }
+    if (target.includes('@')) return store.existingChat(target) ? { chatId: target } : { error: `No chat ${target}.` }
+    const digits = target.replace(/[\s+().-]/g, '')
+    const matches = /^\d{7,}$/.test(digits)
+      ? Object.keys(store.state.chats).filter(chatId => [chatId, store.existingChat(chatId).chatIdAlt].some(jid => jid && jidUser(jid) === digits.replace(/^0/, '62')))
+      : store.findChatsByName(target)
+    if (matches.length === 0) return { error: `No chat matches "${target}".` }
+    // Names are chosen by the senders, so two chats sharing one must be told apart by number or draft number.
+    if (matches.length > 1) return { error: `"${target}" matches ${matches.map(chatName).join(', ')}; use the number or a draft number.` }
     return { chatId: matches[0] }
   }
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createOwnerCommands, formatDraftNotice, parseCommand } from '../src/owner.js'
+import { createOwnerCommands, formatContact, formatDraftNotice, parseCommand } from '../src/owner.js'
 import { Store } from '../src/store.js'
 import { makeConfig, tempDir } from './helpers.js'
 
@@ -104,13 +104,32 @@ test('/pause /resume /mute /unmute /status /help', async t => {
   assert.equal(store.chat('a@s.whatsapp.net').muted, true)
   assert.match(await owner.handle(`/unmute ${draft.id}`), /Unmuted Alice/)
   assert.equal(store.chat('a@s.whatsapp.net').muted, false)
-  assert.match(await owner.handle('/mute nobody'), /No chat named/)
+  assert.match(await owner.handle('/mute nobody'), /No chat matches/)
 
   const status = await owner.handle('/status')
   assert.match(status, /Mode: live/)
   assert.match(status, new RegExp(`#${draft.id} Alice`))
   assert.match(await owner.handle('/help'), /\/edit N <text>/)
   assert.match(await owner.handle('/what'), /Unknown command/)
+})
+
+test('a pushName is never enough: labels carry the number and a shared name must be picked by number', async t => {
+  const { store, owner } = setup(t)
+  const REAL = '6281111111111@s.whatsapp.net'
+  const STRANGER = '123456789012345@lid'
+  store.updateChat(REAL, { name: 'Budi Santoso' })
+  store.updateChat(STRANGER, { name: 'Budi', chatIdAlt: '6289999999999@s.whatsapp.net' })
+  assert.equal(formatContact(STRANGER, store.existingChat(STRANGER)), 'Budi (+6289999999999)')
+  assert.equal(formatContact('55555@lid', { name: 'Mama' }), 'Mama (55555@lid)', 'no phone known: the JID, never the name alone')
+
+  const ambiguous = await owner.handle('/mute Budi')
+  assert.match(ambiguous, /matches Budi Santoso \(\+6281111111111\), Budi \(\+6289999999999\); use the number/)
+  assert.equal(store.chat(REAL).muted, false)
+  assert.equal(store.chat(STRANGER).muted, false)
+  assert.match(await owner.handle('/mute 0811-1111-1111'), /Muted Budi Santoso \(\+6281111111111\)/)
+  assert.equal(store.chat(REAL).muted, true)
+  assert.match(await owner.handle('/mute +62 899 9999 9999'), /Muted Budi \(\+6289999999999\)/, 'a LID chat is found by its phone alt')
+  assert.equal(store.chat(STRANGER).muted, true)
 })
 
 test('draft notice has id, name, excerpt, draft, reason and hints', () => {

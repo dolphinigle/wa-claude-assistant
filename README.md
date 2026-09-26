@@ -121,7 +121,7 @@ start with 🤖 and are ignored.
 | `/no N` | discard draft N |
 | `/pause` · `/resume` | stop / allow all auto-replies (drafts keep coming) |
 | `/status` | mode, pending drafts, auto-replies in the last 24 h, last seen Claude quota, takeovers, muted chats |
-| `/mute <N or name>` · `/unmute …` | no auto-replies in that chat (N = a draft number); drafts keep coming |
+| `/mute <N, number or name>` · `/unmute …` | no auto-replies in that chat (N = a draft number); drafts keep coming. A name matching more than one chat is refused: names are chosen by the senders |
 | `/help` | the list |
 
 A draft notice shows the id, the contact, what they wrote, the draft, why it was not auto-sent, and the hints.
@@ -137,6 +137,8 @@ keeps the bot out of that chat for `humanTakeoverMinutes`: it does not even call
   `rate_limit_event` counts as "quota unknown" and blocks auto-send.
 - **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with a short
   Indonesian/English line saying it is an automated AI reply. Approved drafts carry no marker.
+- **Contacts are shown with their number:** notices say `Name (+62…)`, because the name is the sender's own
+  WhatsApp name and anyone can call themselves "Mama".
 - **Loop and duplicate guards:** ids of everything the bot sends are recorded before sending; every message id is
   processed once; self-chat acts only on your `/` commands; a replayed old `/ok N` cannot approve a newer draft
   and a late `/pause` or `/resume` cannot undo a newer one.
@@ -168,7 +170,7 @@ keeps the bot out of that chat for `humanTakeoverMinutes`: it does not even call
 | `debounceMs` | `15000` | wait for a burst to finish before triage |
 | `backlog.maxAgeMinutes` / `liveWindowMinutes` / `autoSend` | `60` / `2` / `false` | skip messages older than `maxAgeMinutes`; older than `liveWindowMinutes` (or offline) counts as backlog: never auto-replied |
 | `contextMessages` | `8` | earlier messages sent to Claude as `<history>` |
-| `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`); never sent to Claude, never replied to |
+| `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`); never sent to Claude, never replied to (a LID chat matches by the phone number its messages carried) |
 | `disclosure.enabled` / `text` / `sessionGapHours` | `true` / … / `12` | AI disclosure on the first auto-reply per session |
 | `notifyOwnerOnAutoSend` | `true` | post each auto-reply to "Message yourself" |
 | `draftTtlHours` | `24` | pending drafts expire |

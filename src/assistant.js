@@ -1,6 +1,6 @@
 // Orchestrator: dedupe, loop guard, takeover, debounce, triage, policy, and the ONE send gate.
 import { guardTriage } from './guards.js'
-import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatDraftNotice } from './owner.js'
+import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice, jidUser } from './owner.js'
 import { decide } from './policy.js'
 
 const MINUTE_MS = 60 * 1000
@@ -29,12 +29,14 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     if (!chats.has(chatId)) chats.set(chatId, { pending: [], timer: null, generation: 0 })
     return chats.get(chatId)
   }
-  const contactName = chatId => store.chat(chatId).name ?? chatId.split('@')[0]
+  const contactName = chatId => store.chat(chatId).name ?? chatId.split('@')[0] // what Claude sees
+  const contactLabel = chatId => formatContact(chatId, store.existingChat(chatId)) // what the owner sees
 
   // Entries are JIDs or phone numbers (08…, 62…, +62…); pushNames are not accepted because senders choose them.
-  function isBlocked (chatId, chatIdAlt) {
+  // A LID chat's phone number is known only from its messages' alt JID, which is kept on the chat record.
+  function isBlocked (chatId, chatIdAlt = store.existingChat(chatId)?.chatIdAlt) {
     const ids = [chatId, chatIdAlt].filter(Boolean)
-    const users = ids.map(id => id.split('@')[0].split(':')[0])
+    const users = ids.map(jidUser)
     return (config.blocklist ?? []).some(entry => {
       const value = String(entry).trim()
       if (ids.includes(value)) return true
@@ -128,6 +130,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     }
     if (message.fromMe) return startTakeover(message)
 
+    // Only a contact's own message carries its alt JID; on the owner's messages the alt can be the owner's own number.
+    if (message.chatIdAlt && store.existingChat(message.chatId)?.chatIdAlt !== message.chatIdAlt) store.updateChat(message.chatId, { chatIdAlt: message.chatIdAlt })
     if (message.senderName) store.updateChat(message.chatId, { name: message.senderName })
     if (message.timestamp < store.historyFloorTs) {
       store.audit('skip_before_history_floor', { chatId: message.chatId, id: message.id })
@@ -166,7 +170,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const cancelled = store.cancelChatDrafts(message.chatId, 'owner_replied')
     store.audit('human_takeover', { chatId: message.chatId, until, cancelledDrafts: cancelled.map(draft => draft.id) })
     if (cancelled.length > 0) {
-      await sendToOwner(`${BOT_PREFIX} You replied to ${contactName(message.chatId)} yourself: cancelled draft ${cancelled.map(draft => `#${draft.id}`).join(', ')}. The bot stays out of that chat for ${config.humanTakeoverMinutes} min.`)
+      await sendToOwner(`${BOT_PREFIX} You replied to ${contactLabel(message.chatId)} yourself: cancelled draft ${cancelled.map(draft => `#${draft.id}`).join(', ')}. The bot stays out of that chat for ${config.humanTakeoverMinutes} min.`)
     }
   }
 
@@ -234,7 +238,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const ids = list => list.map(message => message.id)
     store.audit('inbox_recovered', { retried: ids(retry), tooOld: ids(tooOld), blocked: ids(blocked) })
     if (tooOld.length === 0) return
-    const lines = tooOld.map(message => `• ${contactName(message.chatId)}: "${excerpt(message.text, 120)}"`)
+    const lines = tooOld.map(message => `• ${contactLabel(message.chatId)}: "${excerpt(message.text, 120)}"`)
     track(sendToOwner(`${BOT_PREFIX} ⚠️ ${tooOld.length} message(s) arrived before the assistant stopped and were never triaged. Please answer them yourself:\n${lines.join('\n')}`))
   }
 
@@ -298,7 +302,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     if (outcome.sent) {
       try { await transport.markRead?.(batch) } catch (error) { logger.warn(`[assistant] markRead failed: ${error.message}`) }
     }
-    const name = contactName(chatId)
+    const name = contactLabel(chatId)
     if (outcome.shadow) {
       await sendToOwner(`${BOT_PREFIX} [SHADOW] Would auto-reply to ${name}\nThey wrote: "${excerpt(batch.map(message => message.text).join(' / '))}"\nReply:\n${text}`)
     } else if (config.notifyOwnerOnAutoSend) {
@@ -310,7 +314,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const triage = result.triage
     const draft = store.createDraft({
       chatId,
-      contactName: contactName(chatId),
+      contactName: contactLabel(chatId),
       action: decision.action,
       category: triage?.category ?? 'error',
       excerpt: excerpt(batch.map(message => message.text).join(' / ')),

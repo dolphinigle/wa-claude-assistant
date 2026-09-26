@@ -353,6 +353,18 @@ test('blocklisted chats are never triaged, and the gate refuses to send to them'
   assert.deepEqual(await assistant.gate.sendToCustomer(ALICE, 'hi'), { sent: false, error: 'chat is blocklisted' })
 })
 
+test('a phone-number block also stops /ok to a LID chat, and notices show the number next to the pushName', async t => {
+  const { transport, deliver, owner, config, audit } = setup(t)
+  const LID = '123456789012345@lid'
+  await deliver(incoming(LID, 'bisa kue custom?', { chatIdAlt: '6281234567890@s.whatsapp.net', senderName: 'Mama' }))
+  assert.match(transport.toSelf()[0], /📝 DRAFT #1 · Mama \(\+6281234567890\)/)
+  config.blocklist = ['081234567890'] // added before a restart
+  await owner('/ok 1')
+  assert.equal(transport.toCustomer().length, 0)
+  assert.match(transport.toSelf().at(-1), /Sending draft #1 failed \(chat is blocklisted\)/)
+  assert.ok(audit().some(entry => entry.event === 'send_refused_blocked'))
+})
+
 test('/ok, /edit and /no from self-chat', async t => {
   const { transport, deliver, owner, store } = setup(t)
   await deliver(incoming(ALICE, 'bisa kue custom?'))

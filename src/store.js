@@ -119,18 +119,19 @@ export class Store {
     return this.state.chats[chatId]
   }
 
+  /** Like chat(), but never creates a record. */
+  existingChat (chatId) { return this.state.chats[chatId] }
+
   updateChat (chatId, patch) {
     Object.assign(this.chat(chatId), patch)
     this.save()
     return this.chat(chatId)
   }
 
-  /** Chats whose saved name matches (case-insensitive, substring). */
+  /** Chats whose saved name contains the query (case-insensitive); an exact name gets no preference. */
   findChatsByName (query) {
     const needle = query.trim().toLowerCase()
-    const all = Object.entries(this.state.chats).filter(([, chat]) => chat.name)
-    const exact = all.filter(([, chat]) => chat.name.toLowerCase() === needle)
-    return (exact.length > 0 ? exact : all.filter(([, chat]) => chat.name.toLowerCase().includes(needle))).map(([chatId]) => chatId)
+    return Object.entries(this.state.chats).filter(([, chat]) => chat.name?.toLowerCase().includes(needle)).map(([chatId]) => chatId)
   }
 
   /** Returns the recorded time, which releaseAutoSend() takes to give the slot back when the send fails. */
