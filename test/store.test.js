@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import fs, { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import path from 'node:path'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 import { deepMerge } from '../src/config.js'
 import { Store, writeFileAtomic } from '../src/store.js'
 import { tempDir } from './helpers.js'
@@ -28,7 +29,7 @@ test('state survives a restart', t => {
   assert.equal(reloaded.createDraft({ chatId: 'c' }).id, draft.id + 1, 'draft counter persists')
 })
 
-test('writes are atomic: temp file + rename, no leftovers, private mode', t => {
+test('writes leave no temp files and use a private mode', t => {
   const dir = tempDir(t)
   const store = new Store(dir)
   for (let index = 0; index < 50; index++) store.markProcessed(`id${index}`)
@@ -37,12 +38,30 @@ test('writes are atomic: temp file + rename, no leftovers, private mode', t => {
   assert.equal(statSync(store.file).mode & 0o777, 0o600)
 })
 
-test('a crash mid-write (stray temp file) leaves the previous state intact', t => {
+test('a stray temp file from an earlier crash is never read', t => {
   const dir = tempDir(t)
   const store = new Store(dir)
   store.seedHistoryFloor(42)
   writeFileSync(path.join(dir, 'state.json.999.1.tmp'), '{"historyFloorTs": 7, "trunc')
   assert.equal(new Store(dir).historyFloorTs, 42)
+})
+
+test('a write that fails halfway leaves the previous state.json intact and removes its temp file', t => {
+  const dir = tempDir(t)
+  const store = new Store(dir)
+  store.seedHistoryFloor(42)
+  const realWriteSync = fs.writeSync
+  // Named imports of node:fs only see a mock after syncBuiltinESMExports().
+  mock.method(fs, 'writeSync', (fd, contents) => { realWriteSync(fd, String(contents).slice(0, 10)); throw new Error('ENOSPC: no space left') })
+  syncBuiltinESMExports()
+  t.after(() => { mock.restoreAll(); syncBuiltinESMExports() })
+  assert.throws(() => store.setPaused(true), /ENOSPC/)
+  mock.restoreAll()
+  syncBuiltinESMExports()
+  const reloaded = new Store(dir)
+  assert.equal(reloaded.historyFloorTs, 42)
+  assert.equal(reloaded.paused, false)
+  assert.deepEqual(readdirSync(dir).filter(name => name.endsWith('.tmp')), [])
 })
 
 test('a corrupt state file is moved aside and state starts fresh', t => {

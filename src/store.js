@@ -1,5 +1,5 @@
 // Persistent state in data/state.json (atomic temp+rename) and an append-only audit log in data/audit.jsonl.
-import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs'
 import path from 'node:path'
 
 const MAX_SENT_BY_BOT = 2000
@@ -22,19 +22,26 @@ const emptyState = () => ({
   ownerOutbox: [],
   ownerNoticeCounter: 0,
   inbox: {},
+  claudeCodeVersion: null,
   lastRateLimit: null
 })
 
+/** Temp file + fsync + rename: `file` holds either the old or the new contents, never a partial write. */
 export function writeFileAtomic (file, contents) {
   const temp = `${file}.${process.pid}.${Date.now()}.tmp`
   const fd = openSync(temp, 'w', 0o600)
   try {
-    writeSync(fd, contents)
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
+    try {
+      writeSync(fd, contents)
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    renameSync(temp, file)
+  } catch (error) {
+    rmSync(temp, { force: true })
+    throw error
   }
-  renameSync(temp, file)
 }
 
 export class Store {
@@ -104,6 +111,9 @@ export class Store {
   /** `at` (epoch ms) is when the owner typed the command, so a replayed older /pause or /resume can be refused. */
   get pauseChangedAt () { return this.state.pauseChangedAt }
   setPaused (paused, at = this.now()) { Object.assign(this.state, { paused, pauseChangedAt: at }); this.save() }
+
+  get claudeCodeVersion () { return this.state.claudeCodeVersion }
+  setClaudeCodeVersion (version) { this.state.claudeCodeVersion = version; this.save() }
 
   get lastRateLimit () { return this.state.lastRateLimit }
   setLastRateLimit (rateLimit) {

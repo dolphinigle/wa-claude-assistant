@@ -1,8 +1,10 @@
 // The one place that talks to Claude: the locked `claude -p` command from docs/implementation-notes.md.
 // Untrusted text reaches the child only through stdin; argv carries trusted flags, the prompt path and the schema.
 import { spawn as nodeSpawn } from 'node:child_process'
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import { writeFileAtomic } from '../store.js'
 import { buildUserTurn } from './prompt.js'
 
 export const CATEGORIES = ['simple', 'complex', 'important', 'ignore']
@@ -36,13 +38,19 @@ export function buildEnv ({ maxStructuredOutputRetries }, parentEnv = process.en
 
 const isEmptyArray = value => Array.isArray(value) && value.length === 0
 
-/** Returns the list of isolation violations in a system/init event; empty means isolated. */
+/**
+ * Returns the list of isolation violations in a system/init event; empty means isolated. Fails closed: a field the
+ * CLI stops reporting (renamed or moved by an update) is a violation, not a pass.
+ */
 export function checkInit (init) {
   const violations = []
   if (!Array.isArray(init.tools) || init.tools.length !== 1 || init.tools[0] !== 'StructuredOutput') violations.push(`tools=${JSON.stringify(init.tools)}`)
-  if (!isEmptyArray(init.mcp_servers)) violations.push(`mcp_servers=${JSON.stringify(init.mcp_servers)}`)
-  if (init.skills !== undefined && !isEmptyArray(init.skills)) violations.push(`skills=${JSON.stringify(init.skills)}`)
-  if (init.slash_commands !== undefined && !isEmptyArray(init.slash_commands)) violations.push(`slash_commands=${JSON.stringify(init.slash_commands)}`)
+  for (const field of ['mcp_servers', 'skills', 'slash_commands']) {
+    if (!isEmptyArray(init[field])) violations.push(`${field}=${JSON.stringify(init[field])}`)
+  }
+  // Only the CLI's own plugins (agents-md, telemetry) may load; anything from a marketplace or a directory is out.
+  if (!Array.isArray(init.plugins) || !init.plugins.every(plugin => /@builtin$/.test(plugin?.source ?? ''))) violations.push(`plugins=${JSON.stringify(init.plugins)}`)
+  if (typeof init.claude_code_version !== 'string' || !init.claude_code_version) violations.push(`claude_code_version=${JSON.stringify(init.claude_code_version)}`)
   if (init.apiKeySource !== 'none') violations.push(`apiKeySource=${JSON.stringify(init.apiKeySource)}`)
   return violations
 }
@@ -80,20 +88,25 @@ function createLimiter (concurrency) {
   return task => new Promise((resolve, reject) => { waiting.push({ task, resolve, reject }); next() })
 }
 
-/** Renders prompts/triage-system.md with the knowledge injected; returns the written file path. */
+/**
+ * Renders prompts/triage-system.md with the knowledge injected; returns the written file path. The name is the
+ * content's hash and the write is atomic: `npm start`, selftest and eval share data/, and a selftest after editing
+ * knowledge.md must not change (or half-write) the prompt the running bot's guards were built against.
+ */
 export function renderSystemPrompt ({ promptsDir, outDir, knowledgeText }) {
   const template = readFileSync(path.join(promptsDir, 'triage-system.md'), 'utf8')
   if (!template.includes('{{KNOWLEDGE}}')) throw new Error('triage-system.md must contain {{KNOWLEDGE}}')
+  const prompt = template.replace('{{KNOWLEDGE}}', () => knowledgeText)
   mkdirSync(outDir, { recursive: true, mode: 0o700 })
-  const file = path.join(outDir, 'triage-system.txt')
-  writeFileSync(file, template.replace('{{KNOWLEDGE}}', () => knowledgeText))
+  const file = path.join(outDir, `triage-system.${createHash('sha256').update(prompt).digest('hex').slice(0, 12)}.txt`)
+  writeFileAtomic(file, prompt)
   return file
 }
 
 /**
  * @returns {{ triage: (input: {chat, history, messages}) => Promise<{ok: boolean, triage?: object, error?: string, rateLimit?: object, meta: object}> }}
  */
-export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now = () => Date.now(), logger = console }) {
+export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now = () => Date.now(), logger = console, killGraceMs = KILL_GRACE_MS }) {
   const claude = config.claude
   const dataDir = config.paths.data
   const sandboxDir = path.join(dataDir, 'claude-sandbox')
@@ -137,7 +150,7 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
         failure ??= reason
         if (child.exitCode !== null || child.signalCode !== null) return
         child.kill('SIGTERM')
-        killTimer ??= setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS)
+        killTimer ??= setTimeout(() => child.kill('SIGKILL'), killGraceMs)
       }
       const timeout = setTimeout(() => kill('timeout'), claude.timeoutMs)
 
@@ -145,6 +158,7 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
         if (!line.trim()) return
         let event
         try { event = JSON.parse(line) } catch { return }
+        if (!event || typeof event !== 'object') return // e.g. a bare `null` line
         if (event.type === 'system' && event.subtype === 'init') {
           init = event
           meta.model = event.model
@@ -163,8 +177,9 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
         stdoutBuffer += chunk
         let newline
         while ((newline = stdoutBuffer.indexOf('\n')) !== -1) {
-          handleLine(stdoutBuffer.slice(0, newline))
-          stdoutBuffer = stdoutBuffer.slice(newline + 1)
+          const line = stdoutBuffer.slice(0, newline)
+          stdoutBuffer = stdoutBuffer.slice(newline + 1) // before handling, so a line is never handled twice
+          handleLine(line)
         }
       })
       child.stderr.setEncoding('utf8')
@@ -172,12 +187,7 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
       // EPIPE when the child dies before reading stdin is reported through 'close'; don't crash on it.
       child.stdin.on('error', () => {})
 
-      const finish = (exitCode, signal) => {
-        if (settled) return
-        settled = true
-        children.delete(child)
-        clearTimeout(timeout)
-        clearTimeout(killTimer)
+      const settle = (exitCode, signal) => {
         if (stdoutBuffer) handleLine(stdoutBuffer)
         Object.assign(meta, {
           durationMs: now() - startedAt,
@@ -208,6 +218,20 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
           return
         }
         resolve({ ok: true, triage: result.structured_output, rateLimit, meta })
+      }
+
+      // Must always resolve: an unsettled triage would also hold its limiter slot forever.
+      const finish = (exitCode, signal) => {
+        if (settled) return
+        settled = true
+        children.delete(child)
+        clearTimeout(timeout)
+        clearTimeout(killTimer)
+        try {
+          settle(exitCode, signal)
+        } catch (error) {
+          resolve({ ok: false, error: `internal: ${error.message}`, rateLimit, meta })
+        }
       }
 
       child.on('error', error => { failure ??= `spawn_failed: ${error.message}`; finish(null, null) })

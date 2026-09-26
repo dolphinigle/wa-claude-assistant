@@ -208,6 +208,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     } catch (error) {
       result = { ok: false, error: `brain_threw: ${error.message}`, meta: {} }
     }
+    noteClaudeVersion(result.meta?.claudeCodeVersion)
     if (stopped) return
     if (generation !== state.generation) {
       store.audit('triage_discarded_stale', { chatId, ids: [...batchIds] })
@@ -220,6 +221,17 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     } finally {
       store.removeFromInbox([...batchIds])
     }
+  }
+
+  // The CLI auto-updates almost daily through the shared binary, and an update can change what the init assertions
+  // see; the owner is told once per change so selftest/eval get re-run (docs/implementation-notes.md).
+  function noteClaudeVersion (version) {
+    const previous = store.claudeCodeVersion
+    if (!version || version === previous) return
+    store.setClaudeCodeVersion(version)
+    if (!previous) return
+    store.audit('claude_version_changed', { from: previous, to: version })
+    track(sendToOwner(`${BOT_PREFIX} ℹ️ The claude CLI updated itself from ${previous} to ${version}. Run \`npm run selftest\` (and \`npm run eval\`) to re-check isolation and triage.`))
   }
 
   /**

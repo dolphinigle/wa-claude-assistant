@@ -57,8 +57,10 @@ flowchart LR
 - **Claude isolation.** `src/brain/claude.js` runs the exact locked command from the implementation notes: no shell,
   an explicit minimal env (an `ANTHROPIC_API_KEY` in your shell is never passed on), an empty sandbox cwd, no tools
   but `StructuredOutput`, no MCP, no settings, no session files. The contact's text reaches Claude only on stdin,
-  XML-escaped inside `<message>`. Every call asserts the `init` event (tools, MCP, skills, `apiKeySource: "none"`)
-  and fails closed otherwise. A failed triage is escalated to you, never auto-sent.
+  XML-escaped inside `<message>`. Every call asserts the `init` event (tools, MCP, skills, slash commands, only
+  `@builtin` plugins, a reported CLI version, `apiKeySource: "none"`) and fails closed otherwise, also when the CLI
+  stops reporting a field. A failed triage is escalated to you, never auto-sent; a CLI version change is reported
+  to you once, so you can re-run `npm run selftest`.
 - **Guards before auto-send** (`src/guards.js`): every number, price, time, phone, URL and email in the reply must
   appear in the `## Facts` section (`Rp 85.000`, `85rb` and `85.000` are the same amount; `08.00`, `8 AM` and
   `jam 8` the same hour); `facts_used` must name existing facts; no placeholders, no fact ids, a length cap, no

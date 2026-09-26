@@ -4,16 +4,16 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { buildArgs, buildEnv, checkInit, createClaudeBrain, validateTriage } from '../src/brain/claude.js'
+import { parseKnowledge } from '../src/knowledge.js'
 import { knowledge, makeConfig, tempDir } from './helpers.js'
 
 const FAKE_CLAUDE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-claude.mjs')
 chmodSync(FAKE_CLAUDE, 0o755)
 const NOW = Date.UTC(2026, 8, 26, 3, 0)
 
-function brainFor (t, claudeOverrides = {}) {
-  const dataDir = tempDir(t)
+function brainFor (t, claudeOverrides = {}, { dataDir = tempDir(t), knowledge: brainKnowledge = knowledge, killGraceMs } = {}) {
   const config = makeConfig({ claude: { bin: FAKE_CLAUDE, timeoutMs: 5000, ...claudeOverrides } }, dataDir)
-  return createClaudeBrain({ config, knowledge, now: () => Date.now(), logger: { warn () {} } })
+  return createClaudeBrain({ config, knowledge: brainKnowledge, now: () => Date.now(), logger: { warn () {} }, killGraceMs })
 }
 const ask = (brain, text, name = 'Sari') => brain.triage({ chat: { name }, history: [], messages: [{ text, timestamp: NOW / 1000 }] })
 
@@ -35,12 +35,21 @@ test('locked env: explicit allow-list, API key never inherited', () => {
 })
 
 test('checkInit and validateTriage', () => {
-  const init = { tools: ['StructuredOutput'], mcp_servers: [], skills: [], slash_commands: [], apiKeySource: 'none' }
+  const init = {
+    tools: ['StructuredOutput'], mcp_servers: [], skills: [], slash_commands: [], apiKeySource: 'none', claude_code_version: '2.1.283',
+    plugins: [{ name: 'agents-md', path: 'builtin', source: 'agents-md@builtin' }, { name: 'telemetry', path: 'builtin', source: 'telemetry@builtin' }]
+  }
   assert.deepEqual(checkInit(init), [])
   assert.equal(checkInit({ ...init, tools: ['StructuredOutput', 'Bash'] }).length, 1)
   assert.equal(checkInit({ ...init, mcp_servers: [{ name: 'x' }] }).length, 1)
   assert.equal(checkInit({ ...init, apiKeySource: 'ANTHROPIC_API_KEY' }).length, 1)
   assert.equal(checkInit({ ...init, skills: ['x'], slash_commands: ['/y'] }).length, 2)
+  // Fails closed when an update renames or moves a field instead of reporting it empty.
+  const { skills, slash_commands: slashCommands, ...moved } = init
+  assert.deepEqual(checkInit({ ...moved, capabilities: { skills: ['x'], slash_commands: ['/y'] } }), ['skills=undefined', 'slash_commands=undefined'])
+  assert.deepEqual(checkInit({ ...init, plugins: [...init.plugins, { name: 'evil', source: 'evil@marketplace' }] }).map(violation => violation.split('=')[0]), ['plugins'])
+  assert.deepEqual(checkInit({ ...init, plugins: undefined }).map(violation => violation.split('=')[0]), ['plugins'])
+  assert.deepEqual(checkInit({ ...init, claude_code_version: undefined }), ['claude_code_version=undefined'])
   assert.deepEqual(validateTriage({ category: 'simple', confidence: 1, reply: '', reason: '', summary: '', facts_used: [] }), [])
   assert.deepEqual(validateTriage({ category: 'maybe', confidence: 2, reply: 1, facts_used: 'F1' }), ['category', 'confidence', 'reply', 'reason', 'summary', 'facts_used'])
 })
@@ -92,6 +101,9 @@ const failures = [
   ['bad_init_tools', /^isolation_assertion_failed: tools=/],
   ['bad_init_apikey', /^isolation_assertion_failed: apiKeySource=/],
   ['nonzero_exit', /^exit_3$/],
+  ['no_init', /^no_init_event$/],
+  ['no_result', /^no_result_event$/],
+  ['null_tail', /^no_result_event$/],
   ['not_logged_in', /^not_logged_in$/],
   ['unknown_scenario_exit', /^exit_2$/]
 ]
@@ -113,6 +125,29 @@ test('timeout: SIGTERM and a timeout error', async t => {
   assert.equal(result.error, 'timeout')
   assert.equal(result.meta.signal, 'SIGTERM')
   assert.ok(Date.now() - started < 3000)
+})
+
+test('a child that ignores SIGTERM is SIGKILLed after the grace period', async t => {
+  const started = Date.now()
+  const result = await ask(brainFor(t, { timeoutMs: 300 }, { killGraceMs: 200 }), 'SCENARIO:ignore_sigterm')
+  assert.equal(result.error, 'timeout')
+  assert.equal(result.meta.signal, 'SIGKILL')
+  assert.ok(Date.now() - started < 3000)
+})
+
+test('a `null` JSON line is skipped, not a crash, and the result after it still counts', async t => {
+  const result = await ask(brainFor(t), 'SCENARIO:null_line')
+  assert.equal(result.ok, true, result.error)
+})
+
+test('each knowledge version gets its own prompt file: a second process cannot rewrite the running one\'s', async t => {
+  const dataDir = tempDir(t)
+  const running = brainFor(t, {}, { dataDir })
+  const edited = brainFor(t, {}, { dataDir, knowledge: parseKnowledge('## Facts\n- [F1] NEW KNOWLEDGE\n') })
+  assert.notEqual(running.systemPromptFile, edited.systemPromptFile)
+  assert.ok(readFileSync(running.systemPromptFile, 'utf8').includes('[F5] Brownies panggang'))
+  assert.ok(!readFileSync(running.systemPromptFile, 'utf8').includes('NEW KNOWLEDGE'))
+  assert.equal(brainFor(t, {}, { dataDir }).systemPromptFile, running.systemPromptFile, 'same content, same file')
 })
 
 test('"not logged in" inside a successful reply is not mistaken for a login failure', async t => {

@@ -12,6 +12,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 const init = {
   type: 'system', subtype: 'init', cwd: process.cwd(), tools: ['StructuredOutput'], mcp_servers: [], skills: [], slash_commands: [],
+  plugins: [{ name: 'agents-md', path: 'builtin', source: 'agents-md@builtin' }, { name: 'telemetry', path: 'builtin', source: 'telemetry@builtin' }],
   apiKeySource: 'none', model: 'claude-haiku-fake', claude_code_version: '0.0.0-fake'
 }
 const rateLimit = {
@@ -68,6 +69,23 @@ switch (scenario) {
     process.stdout.write('this is not json\n')
     out(init); out(rateLimit)
     process.stdout.write(JSON.stringify(result())) // final line without a newline
+    break
+  case 'no_init':
+    out(rateLimit); out(result())
+    break
+  case 'no_result':
+    out(init); out(rateLimit)
+    break
+  case 'null_line':
+    out(init); process.stdout.write('null\n'); out(rateLimit); out(result())
+    break
+  case 'null_tail':
+    out(init); out(rateLimit); process.stdout.write('null')
+    break
+  case 'ignore_sigterm':
+    process.on('SIGTERM', () => {})
+    out(init)
+    setInterval(() => {}, 1000)
     break
   case 'write_sandbox':
     writeFileSync('leaked.txt', 'x')

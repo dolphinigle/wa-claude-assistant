@@ -334,6 +334,20 @@ test('a late /resume cannot undo a newer /pause; a late /ok cannot approve a new
   assert.equal(store.getDraft(1).status, 'pending')
 })
 
+test('the owner is told once when the claude CLI version changes', async t => {
+  let version = '2.1.283'
+  const { transport, deliver, audit } = setup(t, { respond: () => triageResult({ category: 'ignore' }, { meta: { claudeCodeVersion: version } }) })
+  await deliver(incoming(ALICE, 'ok makasih'))
+  await deliver(incoming(BOB, 'ok makasih'))
+  assert.deepEqual(transport.toSelf(), [], 'the first version seen is only recorded')
+  version = '2.1.290'
+  await deliver(incoming(ALICE, 'siap kak'))
+  await deliver(incoming(BOB, 'siap kak'))
+  assert.equal(transport.toSelf().length, 1)
+  assert.match(transport.toSelf()[0], /updated itself from 2\.1\.283 to 2\.1\.290.*npm run selftest/)
+  assert.equal(audit().filter(entry => entry.event === 'claude_version_changed').length, 1)
+})
+
 test('groups, status and newsletters never reach the brain (raw Baileys shapes through the normalizer)', async t => {
   const { assistant, brain } = setup(t)
   const meIds = getMeIds({ id: '6281111111111:7@s.whatsapp.net' })
