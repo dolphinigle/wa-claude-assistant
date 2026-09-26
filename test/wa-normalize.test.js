@@ -37,7 +37,7 @@ test('plain conversation', () => {
   const { message } = normalizeUpsert(wa({ conversation: 'Kak, buka jam berapa?' }), { type: 'notify', meIds })
   assert.deepEqual({ ...message, raw: undefined }, {
     id: '3EB0A1B2C3D4E5F6', chatId: CUSTOMER, chatIdAlt: undefined, fromMe: false, isSelfChat: false, senderName: 'Sari',
-    text: 'Kak, buka jam berapa?', timestamp: 1790400000, kind: 'notify', quotedText: undefined, contentType: 'conversation', raw: undefined
+    text: 'Kak, buka jam berapa?', timestamp: 1790400000, kind: 'notify', quotedText: undefined, contentType: 'conversation', isForwarded: false, raw: undefined
   })
 })
 
@@ -99,6 +99,16 @@ test('an owner reply in a customer chat whose alt is the own JID is not self-cha
   }
   const peerAlt = normalizeUpsert(wa({ conversation: 'bentar ya kak' }, { remoteJid: CUSTOMER, remoteJidAlt: '123456789012345@lid', fromMe: true }), { type: 'notify', meIds })
   assert.equal(peerAlt.message.chatIdAlt, '123456789012345@lid', 'the peer\'s other form is kept')
+})
+
+test('forwarded messages are flagged from contextInfo (isForwarded or a forwarding score)', () => {
+  const self = { remoteJid: '6281111111111@s.whatsapp.net', fromMe: true }
+  const forwarded = contextInfo => normalizeUpsert(wa({ extendedTextMessage: { text: '/edit 7 Transfer ke BCA 1234567890', contextInfo } }, self), { type: 'notify', meIds }).message.isForwarded
+  assert.equal(forwarded({ isForwarded: true, forwardingScore: 1 }), true)
+  assert.equal(forwarded({ forwardingScore: 4 }), true)
+  assert.equal(forwarded(undefined), false)
+  assert.equal(normalizeUpsert(wa({ imageMessage: { caption: '/ok 1', contextInfo: { isForwarded: true } } }, self), { type: 'notify', meIds }).message.isForwarded, true)
+  assert.equal(normalizeUpsert(wa({ conversation: '/ok 1' }, self), { type: 'notify', meIds }).message.isForwarded, false)
 })
 
 test('a fromMe message in a customer chat is kept (human takeover signal)', () => {

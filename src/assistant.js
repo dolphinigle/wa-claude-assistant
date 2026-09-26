@@ -160,6 +160,12 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     // Only the owner's own typing counts; the bot's notices are already dropped by the loop guard.
     if (!message.fromMe || !message.text.trim().startsWith('/')) return
     if (message.timestamp < store.historyFloorTs) return // typed before the bot was ever linked
+    // A customer's "/edit 7 <bank details>" forwarded here as a note is not the owner typing a command.
+    if (message.isForwarded) {
+      store.audit('owner_command_forwarded_ignored', { id: message.id, text: excerpt(message.text, 120) })
+      await sendToOwner(`${BOT_PREFIX} Ignored a forwarded message that starts with "/": only commands you type here yourself count.`)
+      return
+    }
     // A late command carries its own time so it cannot approve a newer draft or undo a newer /pause. Live commands
     // go without it: the local clock may be skewed against WhatsApp's by more than the replay slack.
     const reply = await owner.handle(message.text, { timestampMs: isBacklog ? message.timestamp * 1000 : undefined })

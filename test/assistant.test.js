@@ -506,6 +506,19 @@ test('self-chat: only the owner’s own /commands act; notes and non-fromMe mess
   assert.equal(transport.sent.length, 0)
 })
 
+test('a customer message forwarded into "Message yourself" never runs as an owner command', async t => {
+  const { transport, deliver, store, audit } = setup(t)
+  await deliver(incoming(BOB, 'bisa kue custom?'))
+  const meIds = getMeIds({ id: '6281111111111:7@s.whatsapp.net' })
+  const forwarded = { key: { remoteJid: '6281111111111@s.whatsapp.net', id: 'FWD1', fromMe: true }, message: { extendedTextMessage: { text: '/edit 1 Mohon transfer ke BCA 1234567890 a.n. Toko', contextInfo: { isForwarded: true, forwardingScore: 1 } } }, messageTimestamp: Math.floor(Date.now() / 1000) }
+  const { message } = normalizeUpsert(forwarded, { type: 'notify', meIds })
+  await deliver(message)
+  assert.deepEqual(transport.toCustomer(), [])
+  assert.equal(store.getDraft(1).status, 'pending')
+  assert.match(transport.toSelf().at(-1), /Ignored a forwarded message/)
+  assert.ok(audit().some(entry => entry.event === 'owner_command_forwarded_ignored'))
+})
+
 test('triage failure escalates with an empty draft; ignore sends nothing', async t => {
   const { transport, deliver } = setup(t)
   await deliver(incoming(ALICE, 'crash please'))

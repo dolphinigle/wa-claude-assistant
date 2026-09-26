@@ -119,7 +119,8 @@ switch to whatsapp-web.js 1.34.7 with local patches.
 ## Owner commands
 
 Type these in **"Message yourself"**. Only your own messages that start with `/` count; the bot's own notices
-start with 🤖 and are ignored.
+start with 🤖 and are ignored, and so is anything you forward there (a customer's message that starts with
+`/edit 7 …` is not your command).
 
 | Command | Effect |
 |---|---|

@@ -19,12 +19,14 @@ export function classifyJid (jid) {
 
 export function extractText (message) {
   const content = normalizeMessageContent(message)
-  if (!content) return { text: undefined, contentType: undefined, quotedText: undefined }
+  if (!content) return { text: undefined, contentType: undefined, quotedText: undefined, isForwarded: false }
   const text = content.conversation ?? content.extendedTextMessage?.text ?? content.imageMessage?.caption ??
     content.videoMessage?.caption ?? content.documentMessage?.caption
-  const contextInfo = content.extendedTextMessage?.contextInfo ?? content.imageMessage?.contextInfo ?? content.videoMessage?.contextInfo
+  const contentType = getContentType(content)
+  const contextInfo = typeof content[contentType] === 'object' ? content[contentType]?.contextInfo : undefined
   const quotedText = contextInfo?.quotedMessage ? extractText(contextInfo.quotedMessage).text : undefined
-  return { text: text ?? undefined, contentType: getContentType(content), quotedText: quotedText ?? undefined }
+  const isForwarded = Boolean(contextInfo?.isForwarded || contextInfo?.forwardingScore > 0)
+  return { text: text ?? undefined, contentType, quotedText: quotedText ?? undefined, isForwarded }
 }
 
 export function toEpochSeconds (timestamp) {
@@ -59,7 +61,7 @@ export function normalizeUpsert (raw, { type, meIds }) {
   const isSelfChat = isSelfChatJid(key.remoteJid, meIds)
   const chatIdAlt = key.remoteJidAlt && !isSelfChatJid(key.remoteJidAlt, meIds) ? key.remoteJidAlt : undefined
   const isCiphertext = !raw.message && raw.messageStubType === WAMessageStubType.CIPHERTEXT
-  const { text, contentType, quotedText } = extractText(raw.message)
+  const { text, contentType, quotedText, isForwarded } = extractText(raw.message)
   const message = {
     id: key.id,
     chatId: key.remoteJid,
@@ -72,6 +74,7 @@ export function normalizeUpsert (raw, { type, meIds }) {
     kind: type === 'notify' ? 'notify' : 'append',
     quotedText,
     contentType,
+    isForwarded, // someone else's words: never an owner command, even in "Message yourself"
     raw
   }
   // Anything the owner sends in a customer chat (voice note, sticker, reaction, even one we cannot decrypt) is a

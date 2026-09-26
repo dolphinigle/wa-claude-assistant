@@ -144,6 +144,16 @@ test('an owner command typed in a customer chat (own PN as alt) is a takeover an
   assert.equal(sockets[0].sent[0].jid, OWNER_PN)
 })
 
+test('a forwarded /command in self-chat does not re-point the notices', async t => {
+  const { transport, sockets, emit } = setup(t)
+  await transport.start()
+  open(emit)
+  emit('messages.upsert', { type: 'notify', messages: [raw(OWNER_LID, { extendedTextMessage: { text: '/help', contextInfo: { isForwarded: true } } }, { key: { remoteJid: OWNER_LID, id: 'F1', fromMe: true } })] })
+  await sleep(5)
+  await transport.sendToSelf('🤖 hi', { messageId: 'N1' })
+  assert.equal(sockets[0].sent[0].jid, OWNER_PN)
+})
+
 test('sendToSelf refuses a target that is not an own JID', async t => {
   const { transport, sockets, emit } = setup(t, { selfChatJid: CUSTOMER })
   await transport.start()

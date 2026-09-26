@@ -174,7 +174,7 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       // The phone's own form of the self-chat JID (PN vs LID is unverified) is the best target for notices. Only a
       // real command counts, so other traffic on an own JID cannot re-point the notices.
       const { message } = normalized
-      if (message.fromMe && isSelfChatJid(message.chatId, meIds) && !config.whatsapp?.selfChatJid && isKnownCommand(message.text)) selfChatJid = message.chatId
+      if (message.fromMe && !message.isForwarded && isSelfChatJid(message.chatId, meIds) && !config.whatsapp?.selfChatJid && isKnownCommand(message.text)) selfChatJid = message.chatId
       try {
         await onMessage(normalized.message)
       } catch (error) {
