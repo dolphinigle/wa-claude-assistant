@@ -4,7 +4,7 @@
 // --rescore=eval/last-run.json re-applies the CURRENT guards and policy to saved triage results: no claude calls.
 import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { createClaudeBrain } from '../src/brain/claude.js'
+import { createClaudeBrain, DECISIONS } from '../src/brain/claude.js'
 import { loadConfig, ROOT_DIR } from '../src/config.js'
 import { guardTriage } from '../src/guards.js'
 import { loadKnowledge } from '../src/knowledge.js'
@@ -18,6 +18,10 @@ const saved = rescoreFile ? JSON.parse(readFileSync(path.resolve(rescoreFile), '
 const selected = id => (saved ? saved.results.some(item => item.id === id) : !only || only.has(id))
 const fixtures = JSON.parse(readFileSync(path.join(ROOT_DIR, 'eval', 'fixtures.json'), 'utf8')).filter(fixture => selected(fixture.id))
 if (fixtures.length === 0) throw new Error('no fixtures selected')
+const badFixture = fixtures.find(fixture => !DECISIONS.includes(fixture.expect) || !['allowed', 'forbidden'].includes(fixture.autoSend))
+if (badFixture) throw new Error(`fixture ${badFixture.id}: expect must be one of ${DECISIONS.join('/')} and autoSend allowed/forbidden`)
+// Results saved before the binary decision have no `decision`; rescoring them would report every case as escalated.
+if (saved?.results.some(item => item.result.triage && !('decision' in item.result.triage))) throw new Error(`${rescoreFile} predates the answer/escalate schema; run npm run eval instead`)
 
 const config = loadConfig()
 const knowledge = loadKnowledge(config.paths.knowledge)
@@ -55,23 +59,23 @@ const rows = fixtures.map(fixture => {
     rateLimit: result.rateLimit,
     isBacklog: false
   })
-  const category = result.triage?.category ?? `ERROR(${result.error})`
+  const got = result.triage?.decision ?? `ERROR(${result.error})`
   const row = {
     fixture,
     result,
     guard,
     decision,
-    category,
-    categoryOk: fixture.expect.includes(category),
+    got,
+    decisionOk: got === fixture.expect,
     forbiddenAutoSend: fixture.autoSend === 'forbidden' && decision.action === 'auto_send',
     allowedAutoSend: fixture.autoSend === 'allowed' && decision.action === 'auto_send'
   }
-  console.log(`${row.forbiddenAutoSend ? '✗ FORBIDDEN AUTO-SEND' : row.categoryOk ? '✓' : '·'} ${fixture.id}: ${category} (${result.triage?.confidence ?? '-'}) → ${decision.action}`)
+  console.log(`${row.forbiddenAutoSend ? '✗ FORBIDDEN AUTO-SEND' : row.decisionOk ? '✓' : '·'} ${fixture.id}: ${got} → ${decision.action}`)
   return row
 })
 
 const total = rows.length
-const categoryCorrect = rows.filter(row => row.categoryOk).length
+const decisionCorrect = rows.filter(row => row.decisionOk).length
 const forbidden = rows.filter(row => row.forbiddenAutoSend)
 const allowedExpected = rows.filter(row => row.fixture.autoSend === 'allowed').length
 const allowedActual = rows.filter(row => row.allowedAutoSend).length
@@ -79,18 +83,20 @@ const errors = rows.filter(row => !row.result.ok)
 const latencies = rows.map(row => row.result.meta?.durationMs).filter(Number.isFinite)
 const avgLatency = latencies.length ? Math.round(latencies.reduce((sum, ms) => sum + ms, 0) / latencies.length) : 0
 const maxLatency = latencies.length ? Math.max(...latencies) : 0
+const thinking = config.claude.maxThinkingTokens === 0 ? 'off' : config.claude.maxThinkingTokens === null ? 'CLI default' : `MAX_THINKING_TOKENS=${config.claude.maxThinkingTokens}`
 const cost = rows.reduce((sum, row) => sum + (row.result.meta?.costUsd ?? 0), 0)
 const firstMeta = rows.find(row => row.result.meta?.model)?.result.meta ?? {}
 const lastRate = rows.map(row => row.result.rateLimit).filter(Boolean).at(-1)
 
 const cell = text => String(text ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ')
+const gateReasons = row => row.decision.reasons.filter(reason => !reason.startsWith('decision:') && reason !== 'all_gates_passed')
 const table = [
-  '| # | fixture | expected | got | conf | auto-send | action | why not auto / guard | latency |',
-  '|---|---|---|---|---|---|---|---|---|',
-  ...rows.map((row, index) => `| ${index + 1} | ${row.fixture.id} | ${row.fixture.expect.join(' or ')} | ${row.categoryOk ? '' : '✗ '}${cell(row.category)} | ${row.result.triage?.confidence ?? '-'} | ${row.fixture.autoSend} | ${row.forbiddenAutoSend ? '**AUTO_SEND (violation)**' : row.decision.action} | ${cell(row.decision.reasons.filter(reason => !reason.startsWith('category:')).join(', '))} | ${((row.result.meta?.durationMs ?? 0) / 1000).toFixed(1)} s |`)
+  '| # | fixture | expected | got | auto-send | action | gates that held an answer | latency |',
+  '|---|---|---|---|---|---|---|---|',
+  ...rows.map((row, index) => `| ${index + 1} | ${row.fixture.id} | ${row.fixture.expect} | ${row.decisionOk ? '' : '✗ '}${cell(row.got)} | ${row.fixture.autoSend} | ${row.forbiddenAutoSend ? '**AUTO_SEND (violation)**' : row.decision.action} | ${cell(gateReasons(row).join(', '))} | ${((row.result.meta?.durationMs ?? 0) / 1000).toFixed(1)} s |`)
 ]
 const summary = [
-  `- Category accuracy: **${categoryCorrect}/${total}**`,
+  `- Decision accuracy: **${decisionCorrect}/${total}**`,
   `- FORBIDDEN cases that would have auto-sent: **${forbidden.length}** ${forbidden.length === 0 ? '(pass)' : `(FAIL: ${forbidden.map(row => row.fixture.id).join(', ')})`}`,
   `- ALLOWED cases that did auto-send: **${allowedActual}/${allowedExpected}** (a miss is safe: it becomes a draft)`,
   `- Triage errors: ${errors.length}${errors.length ? ` (${errors.map(row => `${row.fixture.id}: ${row.result.error}`).join('; ')})` : ''}`,
@@ -103,11 +109,12 @@ const details = rows.map(row => [
   '',
   `Message: ${cell(excerpt(row.fixture.text, 240))}`,
   '',
-  `- category ${row.category}, confidence ${row.result.triage?.confidence ?? '-'}, facts_used ${JSON.stringify(row.result.triage?.facts_used ?? [])}`,
+  `- decision ${row.got}, facts_used ${JSON.stringify(row.result.triage?.facts_used ?? [])}`,
   `- action **${row.decision.action}**; reasons: ${row.decision.reasons.join(', ')}`,
-  row.guard ? `- guards: ${row.guard.ok ? 'pass' : row.guard.reasons.join(', ')}` : '- guards: not run (not simple)',
+  row.guard ? `- guards: ${row.guard.ok ? 'pass' : row.guard.reasons.join(', ')}` : '- guards: not run (escalated)',
   `- reply: ${cell(row.result.triage?.reply || '(empty)')}`,
   `- reason: ${cell(row.result.triage?.reason ?? row.result.error)}`,
+  `- summary: ${cell(row.result.triage?.summary ?? '-')}`,
   ''
 ].join('\n'))
 
@@ -115,7 +122,7 @@ const report = [
   baseName === 'last-run' ? '# Eval: last full run' : '# Eval: partial re-run',
   '',
   ...(saved ? [`> Rescored ${new Date().toISOString()} with the current guards and policy from the saved triage results (no new claude calls).`, ''] : []),
-  `Run ${startedAt.toISOString()}${baseName === 'last-run' ? '' : ` (subset: ${fixtures.map(fixture => fixture.id).join(', ')})`} · model \`${firstMeta.model ?? config.claude.model}\` · claude ${firstMeta.claudeCodeVersion ?? '?'} · ${total} ${saved ? 'saved' : 'real'} \`claude -p\` results from \`src/brain/claude.js\`, then \`guards.js\` and \`policy.js\` evaluated as live mode on a fresh chat (min confidence ${config.autoSend.minConfidence}, quota limit ${config.quota.maxFiveHourUtilization}).`,
+  `Run ${startedAt.toISOString()}${baseName === 'last-run' ? '' : ` (subset: ${fixtures.map(fixture => fixture.id).join(', ')})`} · model \`${firstMeta.model ?? config.claude.model}\` (alias \`${config.claude.model}\`, thinking ${thinking}) · claude ${firstMeta.claudeCodeVersion ?? '?'} · ${total} ${saved ? 'saved' : 'real'} \`claude -p\` results from \`src/brain/claude.js\`, then \`guards.js\` and \`policy.js\` evaluated as live mode on a fresh chat (quota limit ${config.quota.maxFiveHourUtilization}).`,
   '',
   '## Summary',
   '',

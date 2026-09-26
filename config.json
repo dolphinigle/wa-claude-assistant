@@ -2,7 +2,6 @@
   "mode": "shadow",
   "autoSend": {
     "enabled": true,
-    "minConfidence": 0.85,
     "maxPerChatPerHour": 3,
     "maxPerDay": 30
   },

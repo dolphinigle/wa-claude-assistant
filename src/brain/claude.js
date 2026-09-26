@@ -7,7 +7,7 @@ import path from 'node:path'
 import { writeFileAtomic } from '../store.js'
 import { buildUserTurn } from './prompt.js'
 
-export const CATEGORIES = ['simple', 'complex', 'important', 'ignore']
+export const DECISIONS = ['answer', 'escalate']
 const KILL_GRACE_MS = 5000
 const EXIT_DRAIN_MS = 1000
 const MAX_STDERR_CHARS = 4000
@@ -64,8 +64,7 @@ export function checkInit (init) {
 export function validateTriage (value) {
   const errors = []
   if (value === null || typeof value !== 'object') return ['not an object']
-  if (!CATEGORIES.includes(value.category)) errors.push('category')
-  if (typeof value.confidence !== 'number' || !(value.confidence >= 0 && value.confidence <= 1)) errors.push('confidence')
+  if (!DECISIONS.includes(value.decision)) errors.push('decision')
   for (const key of ['reply', 'reason', 'summary']) if (typeof value[key] !== 'string') errors.push(key)
   if (!Array.isArray(value.facts_used) || !value.facts_used.every(id => typeof id === 'string')) errors.push('facts_used')
   return errors

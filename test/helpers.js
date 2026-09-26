@@ -26,16 +26,16 @@ export const okRateLimit = { status: 'allowed', fiveHourUtilization: 0.1, sevenD
 
 export const triageResult = (triage, extra = {}) => ({
   ok: true,
-  triage: { confidence: 0.95, reason: 'test', summary: 'test', facts_used: [], reply: '', ...triage },
+  triage: { reply: '', facts_used: [], reason: 'test', summary: 'test', ...triage },
   rateLimit: okRateLimit,
   meta: {},
   ...extra
 })
 
-export const SIMPLE_HOURS = { category: 'simple', reply: 'Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya Kak.', facts_used: ['F1'] }
+export const ANSWER_HOURS = { decision: 'answer', reply: 'Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya Kak.', facts_used: ['F1'] }
 
 /** Brain whose answer is chosen by `respond(input)`; `gate` lets a test hold a triage in flight. */
-export function createFakeBrain (respond = () => triageResult(SIMPLE_HOURS)) {
+export function createFakeBrain (respond = () => triageResult(ANSWER_HOURS)) {
   const calls = []
   let gate = null
   return {

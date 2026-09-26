@@ -37,10 +37,13 @@ test('console REPL end to end with the keyword brain: echoes are loop-guarded, /
   await settle()
   input.write('me: /ok 1\n')
   await settle()
+  input.write('carol: ok makasih kak\n')
+  await settle()
 
   assert.match(printed, /── to alice ──\n {2}│ 🤖 Balasan otomatis/)
   assert.match(printed, /📝 DRAFT #1 · bob \(bob@console\)/)
   assert.match(printed, /── to bob ──\n {2}│ Terima kasih Kak, saya cek dulu ya\./)
   assert.match(printed, /✅ Sent to bob \(bob@console\) \(draft #1\)/)
+  assert.match(printed, /── to carol ──\n {2}│ 🤖 Balasan otomatis[^\n]*\n {2}│ \n {2}│ Sama-sama, Kak 🙏/, 'a social thanks is answered without facts')
   assert.equal(store.chat('alice@console').takeoverUntil, 0, 'the echo of the auto-reply did not look like the owner typing')
 })

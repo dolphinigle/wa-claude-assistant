@@ -62,14 +62,17 @@ test('checkInit and validateTriage', () => {
   assert.deepEqual(checkInit({ ...init, plugins: [...init.plugins, { name: 'evil', source: 'evil@marketplace' }] }).map(violation => violation.split('=')[0]), ['plugins'])
   assert.deepEqual(checkInit({ ...init, plugins: undefined }).map(violation => violation.split('=')[0]), ['plugins'])
   assert.deepEqual(checkInit({ ...init, claude_code_version: undefined }), ['claude_code_version=undefined'])
-  assert.deepEqual(validateTriage({ category: 'simple', confidence: 1, reply: '', reason: '', summary: '', facts_used: [] }), [])
-  assert.deepEqual(validateTriage({ category: 'maybe', confidence: 2, reply: 1, facts_used: 'F1' }), ['category', 'confidence', 'reply', 'reason', 'summary', 'facts_used'])
+  assert.deepEqual(validateTriage({ decision: 'answer', reply: '', facts_used: [], reason: '', summary: '' }), [])
+  assert.deepEqual(validateTriage({ decision: 'escalate', reply: '', facts_used: [], reason: '', summary: '' }), [])
+  assert.deepEqual(validateTriage({ decision: 'maybe', reply: 1, facts_used: 'F1' }), ['decision', 'reply', 'reason', 'summary', 'facts_used'])
+  // The four-category shape of the earlier schema is not a decision: it fails closed instead of being guessed at.
+  assert.deepEqual(validateTriage({ category: 'simple', confidence: 1, reply: 'x', reason: '', summary: '', facts_used: ['F1'] }), ['decision'])
 })
 
 test('success: structured output, rate limit and meta are returned', async t => {
   const result = await ask(brainFor(t), 'jam buka? SCENARIO:success')
   assert.equal(result.ok, true, result.error)
-  assert.equal(result.triage.category, 'simple')
+  assert.equal(result.triage.decision, 'answer')
   assert.deepEqual(result.rateLimit, { status: 'allowed', fiveHourUtilization: 0.42, sevenDayUtilization: 0.24, resetsAt: 1790419800 })
   assert.equal(result.meta.model, 'claude-sonnet-fake')
   assert.equal(result.meta.claudeCodeVersion, '0.0.0-fake')
@@ -102,14 +105,16 @@ test('the rendered system prompt contains the knowledge and the schema has the e
   const result = await ask(brain, 'SCENARIO:echo')
   const argv = JSON.parse(result.triage.reason).argv
   const schema = JSON.parse(argv[argv.indexOf('--json-schema') + 1])
-  assert.deepEqual(schema.required, ['category', 'confidence', 'reply', 'reason', 'facts_used', 'summary'])
+  assert.deepEqual(schema.required, ['decision', 'reply', 'facts_used', 'reason', 'summary'])
+  assert.deepEqual(Object.keys(schema.properties), schema.required, 'every field is required, nothing else exists')
+  assert.deepEqual(schema.properties.decision.enum, ['answer', 'escalate'])
   assert.equal(schema.additionalProperties, false)
 })
 
 const failures = [
   ['is_error', /^is_error: api_error API Error: 500/],
   ['missing_structured', /^missing_structured_output$/],
-  ['invalid_output', /^invalid_structured_output: category, confidence/],
+  ['invalid_output', /^invalid_structured_output: decision, reason, summary, facts_used$/],
   ['bad_init_tools', /^isolation_assertion_failed: tools=/],
   ['bad_init_apikey', /^isolation_assertion_failed: apiKeySource=/],
   ['nonzero_exit', /^exit_3$/],

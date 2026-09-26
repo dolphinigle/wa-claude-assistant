@@ -331,8 +331,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       text: excerpt(batch.map(message => message.text).join(' / '), 300),
       ok: result.ok,
       error: result.error,
-      category: triage?.category,
-      confidence: triage?.confidence,
+      decision: triage?.decision,
       factsUsed: triage?.facts_used,
       reply: triage?.reply,
       guard,
@@ -343,7 +342,6 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       meta: result.meta
     })
 
-    if (decision.action === 'ignore') return
     if (decision.action === 'auto_send') return autoSend(chatId, batch, triage, decision, generation)
     return postDraft(chatId, batch, result, decision)
   }
@@ -364,7 +362,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const outcome = await sendToCustomer(chatId, text, { quotedRaw: last.raw, source: 'auto_send' })
     if (!outcome.sent && !outcome.shadow) {
       store.releaseAutoSend(chatId, slot)
-      return postDraft(chatId, batch, { ok: true, triage }, { action: 'escalate', reasons: [...decision.reasons, `send_failed:${outcome.error}`] })
+      const reasons = [...decision.reasons.filter(reason => reason !== 'all_gates_passed'), `send_failed:${outcome.error}`]
+      return postDraft(chatId, batch, { ok: true, triage }, { action: 'escalate', reasons })
     }
     if (needsDisclosure) store.updateChat(chatId, { [disclosureKey]: now() })
     if (outcome.sent) await markReadUnlessOpen(chatId, batch)
@@ -376,7 +375,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     }
   }
 
-  /** Blue ticks say "seen": never while a draft or URGENT of this chat is still waiting for the owner. */
+  /** Blue ticks say "seen": never while a draft of this chat is still waiting for the owner. */
   async function markReadUnlessOpen (chatId, batch) {
     const chatIds = store.linkedChatIds(chatId)
     const open = store.pendingDrafts().filter(draft => chatIds.includes(draft.chatId))
@@ -387,13 +386,12 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     try { await transport.markRead?.(batch) } catch (error) { logger.warn(`[assistant] markRead failed: ${error.message}`) }
   }
 
+  /** Every escalation, whether Claude chose it or a gate stopped its answer, is a draft for /ok, /edit or /no. */
   async function postDraft (chatId, batch, result, decision) {
     const triage = result.triage
     const draft = store.createDraft({
       chatId,
       contactName: contactLabel(chatId),
-      action: decision.action,
-      category: triage?.category ?? 'error',
       excerpt: excerpt(batch.map(message => message.text).join(' / ')),
       draft: triage?.reply?.trim() ?? '',
       reason: triage?.reason ?? `Triage failed (${result.error}); nothing was sent.`,

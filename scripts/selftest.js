@@ -32,9 +32,10 @@ check('rate_limit_event captured', Boolean(result.rateLimit), JSON.stringify(res
 check('sandbox cwd still empty', readdirSync(brain.sandboxDir).length === 0)
 if (result.ok) {
   const guard = guardTriage(result.triage, { knowledge, config, incomingText: message })
-  console.log(`\ntriage: ${result.triage.category} (${result.triage.confidence}) facts ${JSON.stringify(result.triage.facts_used)}`)
+  console.log(`\ntriage: ${result.triage.decision} facts ${JSON.stringify(result.triage.facts_used)}`)
   console.log(`reply: ${result.triage.reply}`)
-  console.log(`guards: ${guard ? (guard.ok ? 'pass' : guard.reasons.join(', ')) : 'n/a (not simple)'}`)
+  console.log(`reason: ${result.triage.reason}`)
+  console.log(`guards: ${guard ? (guard.ok ? 'pass' : guard.reasons.join(', ')) : 'n/a (escalated)'}`)
   console.log(`latency: ${(result.meta.durationMs / 1000).toFixed(1)} s`)
 }
 

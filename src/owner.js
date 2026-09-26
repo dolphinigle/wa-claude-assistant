@@ -65,15 +65,14 @@ export function parseCommand (input) {
   }
 }
 
+/** One format for every escalation: Claude's summary and reason say why it needs the owner, the gates why an answer was held. */
 export function formatDraftNotice (draft) {
-  const urgent = draft.action === 'escalate'
-  const header = urgent ? `${BOT_PREFIX} 🚨 URGENT #${draft.id} · ${draft.contactName}` : `${BOT_PREFIX} 📝 DRAFT #${draft.id} · ${draft.contactName}`
-  const lines = [header, `They wrote: "${draft.excerpt}"`]
+  const lines = [`${BOT_PREFIX} 📝 DRAFT #${draft.id} · ${draft.contactName}`, `They wrote: "${draft.excerpt}"`]
   if (draft.summary) lines.push(`Summary: ${draft.summary}`)
   lines.push(draft.draft ? `Draft:\n${draft.draft}` : 'Draft: (none, write your own)')
   if (draft.privateDetails?.length > 0) lines.push(`⚠️ Check before /ok: the draft mentions your own account or machine details (${draft.privateDetails.join(', ')}).`)
   lines.push(`Why: ${draft.reason}`)
-  const blockers = (draft.policyReasons ?? []).filter(reason => !reason.startsWith('category:'))
+  const blockers = (draft.policyReasons ?? []).filter(reason => !reason.startsWith('decision:'))
   if (blockers.length > 0) lines.push(`Not auto-sent: ${blockers.join(', ')}`)
   if (blockers.includes('blocklist_unchecked')) lines.push(`Number unknown, so the blocklist cannot match it by phone number. To exclude this contact, add "${draft.chatId}" to blocklist.`)
   lines.push(draft.draft ? `Reply: /ok ${draft.id} · /edit ${draft.id} <text> · /no ${draft.id}` : `Reply: /edit ${draft.id} <text> · /no ${draft.id}`)

@@ -315,8 +315,8 @@ export const privateIdentifiersFor = config => {
   return identifiersCache.get(config)
 }
 
-/** Guards for a triage result: only a "simple" reply can be auto-sent, so only it is checked. */
+/** Guards for a triage result: only an "answer" can be auto-sent, so only it is checked. */
 export function guardTriage (triage, { knowledge, config, incomingText }) {
-  if (triage?.category !== 'simple') return undefined
+  if (triage?.decision !== 'answer') return undefined
   return checkReply({ reply: triage.reply, factsUsed: triage.facts_used, incomingText }, { knowledge, ...config.guards, privateIdentifiers: privateIdentifiersFor(config) })
 }

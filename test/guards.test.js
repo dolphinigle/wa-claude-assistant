@@ -213,10 +213,11 @@ test('language detection and the mirror-language guard', () => {
   assert.equal(checkReply({ reply: 'Hi Kak! We are at Jl. Contoh Raya No. 12, Coblong, Bandung.', factsUsed: ['F2'], incomingText: 'Where is the shop?' }, { knowledge }).ok, true)
 })
 
-test('guardTriage only checks simple replies', () => {
+test('guardTriage only checks answers', () => {
   const config = makeConfig()
-  assert.equal(guardTriage({ category: 'complex', reply: 'Rp 1' }, { knowledge, config }), undefined)
-  assert.equal(guardTriage({ category: 'simple', reply: 'Rp 1', facts_used: ['F5'] }, { knowledge, config }).ok, false)
+  assert.equal(guardTriage({ decision: 'escalate', reply: 'Rp 1' }, { knowledge, config }), undefined)
+  assert.equal(guardTriage({ decision: 'answer', reply: 'Rp 1', facts_used: ['F5'] }, { knowledge, config }).ok, false)
+  assert.equal(guardTriage({ decision: 'answer', reply: 'Sama-sama, Kak 🙏', facts_used: [] }, { knowledge, config, incomingText: 'ok makasih kak 🙏' }).ok, true)
 })
 
 test('replies that carry the owner\'s account or machine details are held; drafts are flagged', () => {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { decide } from '../src/policy.js'
-import { makeConfig, okRateLimit, SIMPLE_HOURS, triageResult } from './helpers.js'
+import { ANSWER_HOURS, makeConfig, okRateLimit, triageResult } from './helpers.js'
 
 const config = makeConfig()
 const NOW = Date.UTC(2026, 8, 26, 3, 0)
@@ -17,14 +17,22 @@ const baseContext = () => ({
   isBacklog: false
 })
 
-test('simple with every gate passing auto-sends', () => {
-  assert.deepEqual(decide(triageResult(SIMPLE_HOURS), baseContext()).action, 'auto_send')
+test('an answer with every gate passing auto-sends', () => {
+  assert.deepEqual(decide(triageResult(ANSWER_HOURS), baseContext()), { action: 'auto_send', reasons: ['decision:answer', 'all_gates_passed'] })
 })
 
-test('categories map to actions', () => {
-  assert.equal(decide(triageResult({ category: 'complex' }), baseContext()).action, 'draft')
-  assert.equal(decide(triageResult({ category: 'important' }), baseContext()).action, 'escalate')
-  assert.equal(decide(triageResult({ category: 'ignore' }), baseContext()).action, 'ignore')
+test('escalate always escalates, whatever the gates say', () => {
+  const ctx = baseContext()
+  ctx.paused = true
+  ctx.rateLimit = undefined
+  assert.deepEqual(decide(triageResult({ decision: 'escalate' }), ctx), { action: 'escalate', reasons: ['decision:escalate'] })
+  assert.deepEqual(decide(triageResult({ decision: 'escalate' }), baseContext()).action, 'escalate')
+})
+
+test('anything but "answer" escalates: an unknown or old-schema decision never auto-sends', () => {
+  for (const triage of [{ decision: 'maybe' }, { decision: undefined, category: 'simple', confidence: 1, reply: 'x', facts_used: ['F1'] }]) {
+    assert.equal(decide(triageResult(triage), baseContext()).action, 'escalate')
+  }
 })
 
 test('triage failure fails closed to escalate, never auto-send', () => {
@@ -35,10 +43,9 @@ test('triage failure fails closed to escalate, never auto-send', () => {
   }
 })
 
-// Each row breaks exactly one gate; every one must downgrade a simple reply to a draft with that reason.
+// Each row breaks exactly one gate; every one must turn an answer into an escalation that names that gate.
 const blockers = [
   ['auto_send_disabled', ctx => { ctx.config = makeConfig({ autoSend: { enabled: false } }) }],
-  ['low_confidence', ctx => {}, { confidence: 0.84 }],
   ['guard:unsupported_amount:1', ctx => { ctx.guard = { ok: false, reasons: ['unsupported_amount:1'] } }],
   ['guards_not_run', ctx => { ctx.guard = undefined }],
   ['paused', ctx => { ctx.paused = true }],
@@ -56,12 +63,13 @@ const blockers = [
   ['quota_seven_day:0.95', ctx => { ctx.rateLimit = { ...okRateLimit, sevenDayUtilization: 0.95 } }]
 ]
 
-for (const [reason, mutate, triagePatch = {}] of blockers) {
-  test(`simple is drafted when ${reason}`, () => {
+for (const [reason, mutate] of blockers) {
+  test(`an answer is escalated when ${reason}`, () => {
     const ctx = baseContext()
     mutate(ctx)
-    const decision = decide(triageResult({ ...SIMPLE_HOURS, ...triagePatch }), ctx)
-    assert.equal(decision.action, 'draft')
+    const decision = decide(triageResult(ANSWER_HOURS), ctx)
+    assert.equal(decision.action, 'escalate')
+    assert.equal(decision.reasons[0], 'decision:answer')
     assert.ok(decision.reasons.some(item => item.startsWith(reason)), `${decision.reasons} should include ${reason}`)
   })
 }
@@ -71,18 +79,12 @@ test('an expired takeover window and backlog with autoSend allowed do not block'
   ctx.chat.takeoverUntil = NOW - 1
   ctx.isBacklog = true
   ctx.config = makeConfig({ backlog: { autoSend: true } })
-  assert.equal(decide(triageResult(SIMPLE_HOURS), ctx).action, 'auto_send')
+  assert.equal(decide(triageResult(ANSWER_HOURS), ctx).action, 'auto_send')
 })
 
-test('confidence exactly at the threshold passes; allowed_warning quota passes', () => {
+test('allowed_warning quota passes; there is no confidence gate', () => {
   const ctx = baseContext()
   ctx.rateLimit = { ...okRateLimit, status: 'allowed_warning' }
-  assert.equal(decide(triageResult({ ...SIMPLE_HOURS, confidence: 0.85 }), ctx).action, 'auto_send')
-})
-
-test('non-simple categories ignore the gates entirely', () => {
-  const ctx = baseContext()
-  ctx.paused = true
-  ctx.rateLimit = undefined
-  assert.equal(decide(triageResult({ category: 'important' }), ctx).action, 'escalate')
+  assert.equal(decide(triageResult(ANSWER_HOURS), ctx).action, 'auto_send')
+  assert.equal(config.autoSend.minConfidence, undefined)
 })

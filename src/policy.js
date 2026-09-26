@@ -1,5 +1,6 @@
-// PURE routing decision. Auto-send needs every gate to pass; anything else becomes a draft for the owner.
-// Shadow mode is not decided here: the send gate in assistant.js turns an approved send into a notice.
+// PURE routing decision. Claude either answers or escalates. An answer is auto-sent only if every gate passes; a
+// failed gate escalates it instead, with the gates as reasons for the owner. Shadow mode is not decided here: the send
+// gate in assistant.js turns an approved send into a notice.
 
 const QUOTA_OK_STATUSES = new Set(['allowed', 'allowed_warning'])
 
@@ -15,20 +16,16 @@ const QUOTA_OK_STATUSES = new Set(['allowed', 'allowed_warning'])
  * @param {number} ctx.autoSendsLastDay
  * @param {{status?: string, fiveHourUtilization?: number, sevenDayUtilization?: number}} [ctx.rateLimit]
  * @param {boolean} ctx.isBacklog
- * @returns {{action: 'auto_send'|'draft'|'escalate'|'ignore', reasons: string[]}}
+ * @returns {{action: 'auto_send'|'escalate', reasons: string[]}}
  */
 export function decide (result, ctx) {
   if (!result?.ok || !result.triage) return { action: 'escalate', reasons: [`triage_failed:${result?.error ?? 'unknown'}`] }
-  const { category, confidence } = result.triage
-
-  if (category === 'ignore') return { action: 'ignore', reasons: ['category:ignore'] }
-  if (category === 'important') return { action: 'escalate', reasons: ['category:important'] }
-  if (category !== 'simple') return { action: 'draft', reasons: [`category:${category}`] }
+  const { decision } = result.triage
+  if (decision !== 'answer') return { action: 'escalate', reasons: [`decision:${decision}`] }
 
   const { config, chat = {}, rateLimit } = ctx
   const blockers = []
   if (!config.autoSend?.enabled) blockers.push('auto_send_disabled')
-  if (!(confidence >= config.autoSend.minConfidence)) blockers.push(`low_confidence:${confidence}<${config.autoSend.minConfidence}`)
   if (!ctx.guard) blockers.push('guards_not_run')
   else if (!ctx.guard.ok) blockers.push(...ctx.guard.reasons.map(reason => `guard:${reason}`))
   if (ctx.paused) blockers.push('paused')
@@ -49,6 +46,6 @@ export function decide (result, ctx) {
     if (quota.maxSevenDayUtilization !== undefined && !(rateLimit.sevenDayUtilization < quota.maxSevenDayUtilization)) blockers.push(`quota_seven_day:${rateLimit.sevenDayUtilization}`)
   }
 
-  if (blockers.length > 0) return { action: 'draft', reasons: ['category:simple', ...blockers] }
-  return { action: 'auto_send', reasons: ['category:simple', 'all_gates_passed'] }
+  if (blockers.length > 0) return { action: 'escalate', reasons: ['decision:answer', ...blockers] }
+  return { action: 'auto_send', reasons: ['decision:answer', 'all_gates_passed'] }
 }

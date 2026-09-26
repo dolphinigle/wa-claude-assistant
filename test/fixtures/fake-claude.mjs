@@ -20,7 +20,7 @@ const rateLimit = {
   type: 'rate_limit_event',
   rate_limit_info: { status: 'allowed', resetsAt: 1790419800, unifiedWindows: { five_hour: { utilization: 0.42, resetsAt: 1790419800 }, seven_day: { utilization: 0.24, resetsAt: 1790913600 } } }
 }
-const triage = { category: 'simple', confidence: 0.95, reply: 'Kami buka Senin–Sabtu pukul 08.00–17.00 WIB.', reason: 'hours question', facts_used: ['F1'], summary: 'asks opening hours' }
+const triage = { decision: 'answer', reply: 'Kami buka Senin–Sabtu pukul 08.00–17.00 WIB.', facts_used: ['F1'], reason: 'hours question', summary: 'asks opening hours' }
 const result = extra => ({ type: 'result', subtype: 'success', is_error: false, num_turns: 2, total_cost_usd: 0.002, duration_ms: 1234, result: JSON.stringify(triage), structured_output: triage, ...extra })
 
 switch (scenario) {
@@ -44,7 +44,7 @@ switch (scenario) {
     out(init); out(rateLimit); out({ type: 'result', subtype: 'error_max_structured_output_retries', is_error: false, terminal_reason: 'structured_output_retry_exhausted' })
     break
   case 'invalid_output':
-    out(init); out(rateLimit); out(result({ structured_output: { category: 'maybe', confidence: 2, reply: 'x' } }))
+    out(init); out(rateLimit); out(result({ structured_output: { decision: 'maybe', category: 'simple', confidence: 1, reply: 'x' } }))
     break
   case 'bad_init_tools':
     out({ ...init, tools: ['StructuredOutput', 'Bash'] })

@@ -1,15 +1,13 @@
 # wa-claude-assistant
 
 **Experimental prototype. Not production software.** A local Node 22 service that links to **your own** WhatsApp
-account as a linked device (Baileys) and, for each incoming 1:1 text message, asks Claude (the official Claude Code
-CLI, headless, on your own subscription) for a triage decision:
+account as a linked device (Baileys) and, for each incoming 1:1 text message, asks Claude (Sonnet, through the official
+Claude Code CLI, headless, on your own subscription) for one of two decisions:
 
 | Claude says | What happens |
 |---|---|
-| `simple`: fully answered by `knowledge.md` facts | **auto-reply**, only if every gate passes (see Safety defaults); otherwise a draft |
-| `complex`: needs your judgment | a **draft** is posted to your "Message yourself" chat for `/ok`, `/edit` or `/no` |
-| `important`: payment problem, complaint, emergency, manipulation | an **URGENT** notice with a draft in "Message yourself" |
-| `ignore`: spam, "ok makasih" | nothing (audit log only) |
+| `answer`: the whole reply is backed by the facts it cites from `knowledge.md`, or it is a purely social "thanks" answered with a thanks, and nothing needs your judgment | **auto-reply**, only if every gate passes (see Safety defaults); if any gate fails, it is escalated instead and the notice names the gates |
+| `escalate`: everything else: friends and family, complaints, payments, custom requests, anything not in the facts, spam and wrong numbers, manipulation attempts, and any triage that failed | a notice in your "Message yourself" chat with Claude's one-line summary, why, and a suggested draft for `/ok`, `/edit` or `/no` |
 
 Groups, status updates, newsletters, broadcast lists and Meta AI are ignored. It starts in **shadow mode**: nothing is
 sent to anyone except your own "Message yourself" chat.
@@ -45,10 +43,10 @@ flowchart LR
   WA[("WhatsApp")] <-->|linked device| T["transport/whatsapp.js<br/>Baileys adapter"]
   T -->|normalized text messages| A["assistant.js<br/>dedupe · loop guard · takeover · debounce"]
   A -->|"burst + last 8 messages"| B["brain/claude.js<br/>claude -p, stdin only, isolated"]
-  B -->|"triage JSON + quota"| G["guards.js<br/>facts-only details"]
+  B -->|"answer / escalate + quota"| G["guards.js<br/>facts-only details"]
   G --> P["policy.js<br/>pure decide()"]
-  P -->|auto_send| S{{"send gate<br/>shadow mode stops here"}}
-  P -->|draft / escalate| N["notice to 'Message yourself'"]
+  P -->|"answer, every gate passed"| S{{"send gate<br/>shadow mode stops here"}}
+  P -->|"escalate, or a gate failed"| N["notice to 'Message yourself'"]
   A -->|"/ok /edit /no …"| O["owner.js"]
   O --> S
   S --> T
@@ -77,8 +75,8 @@ flowchart LR
   no question and no digits, every word from a small social vocabulary (`ok makasih kak 🙏` → `Sama-sama, Kak 🙏`;
   `ok`, `siap` and `iya` may close the customer's message but not the reply). No placeholders, no fact ids, a length
   cap, no sensitive terms (discount, voucher, gift, refund, bank account …, including affixed forms like
-  `diskonnya`, `direfund`) unless the cited facts contain them, and the reply must be in the sender's language. Any failure turns the reply
-  into a draft with the reason.
+  `diskonnya`, `direfund`) unless the cited facts contain them, and the reply must be in the sender's language. Any failure escalates the
+  answer, with the reason in the notice.
 
 ## Setup
 
@@ -142,7 +140,10 @@ start with 🤖 and are ignored, and so is anything you forward there (a custome
 | `/mute <N, number or name>` · `/unmute …` | no auto-replies in that chat (N = a draft number); drafts keep coming. A name matching more than one chat is refused: names are chosen by the senders |
 | `/help` | the list |
 
-A draft notice shows the id, the contact, what they wrote, the draft, why it was not auto-sent, and the hints.
+Every escalation uses one notice format: `📝 DRAFT #N · contact`, what they wrote, Claude's one-line summary, the
+suggested draft, Claude's reason, the gates that held back an answer (`Not auto-sent: …`, e.g. `guard:unsupported_amount:150000`
+or `triage_failed:timeout`), and the hints. There is no separate "urgent" format: the summary and reason say what it
+is about (a family emergency reads as one).
 Pending drafts expire after 24 h. Replying yourself in a customer's chat cancels that chat's pending drafts and
 keeps the bot out of that chat for `humanTakeoverMinutes`: it does not even call Claude for it. This covers both
 addressing forms of the chat (phone number and LID), which WhatsApp can mix within one conversation. A reply of yours
@@ -153,8 +154,7 @@ triaged, and drafts made from them are cancelled.
 ## Safety defaults
 
 - **Shadow mode** by default; live mode is an explicit `config.local.json` change.
-- **Auto-send needs all of:** mode live, `autoSend.enabled`, category `simple`, confidence ≥ 0.85, guards pass,
-  not paused, chat not muted or blocklisted, no human takeover, ≤ 3 auto-replies per chat per hour and ≤ 30 per day,
+- **Auto-send needs all of:** mode live, `autoSend.enabled`, decision `answer`, guards pass, not paused, chat not muted or blocklisted, no human takeover, ≤ 3 auto-replies per chat per hour and ≤ 30 per day,
   Claude quota known with 5-hour utilization < 0.8 and 7-day < 0.9, and the message is not offline backlog. A missing
   `rate_limit_event` counts as "quota unknown" and blocks auto-send.
 - **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with a short
@@ -173,11 +173,13 @@ triaged, and drafts made from them are cancelled.
   (or crashed), or that arrived while it was shutting down, is triaged on the next start as backlog (drafts only);
   one older than 60 min is listed for you in "Message yourself" instead. A `/command` typed during the shutdown is
   not run (audited only): send it again once the assistant is back.
-- **Notices are never dropped:** a draft, URGENT or other notice that fails because WhatsApp is reconnecting is
+- **Notices are never dropped:** a draft or other notice that fails because WhatsApp is reconnecting is
   kept in `data/state.json` and re-sent, marked "Delayed", on the next connection.
-- **Blue ticks only after an auto-reply** (`markRead`), never for drafted or escalated messages, and not while the
-  chat still has a draft or URGENT waiting for you (an auto-answered "jam berapa tutup?" does not mark read a chat
+- **Blue ticks only after an auto-reply** (`markRead`), never for escalated messages, and not while the chat still has
+  a draft waiting for you (an auto-answered "jam berapa tutup?" does not mark read a chat
   whose "saya sudah transfer" is still unanswered).
+- **Pending drafts from the four-category version** (before the answer/escalate switch) stay in `data/state.json` and
+  still work with `/ok`, `/edit`, `/no` and `/status`.
 - **Burst handling:** messages in the same chat within 15 s are triaged together; a message that arrives while a
   triage is running discards that result and re-triages the whole burst.
 - Everything is logged to `data/audit.jsonl`; state is in `data/state.json` (atomic temp+rename writes).
@@ -200,7 +202,6 @@ research and uses more of your subscription quota. Re-run `npm run eval` after c
 |---|---|---|
 | `mode` | `"shadow"` | `shadow` never messages anyone but you; `live` really sends |
 | `autoSend.enabled` | `true` | `false` = drafts only, even in live mode |
-| `autoSend.minConfidence` | `0.85` | minimum Claude confidence for an auto-reply |
 | `autoSend.maxPerChatPerHour` / `maxPerDay` | `3` / `30` | rolling-window caps (shadow would-sends count too) |
 | `humanTakeoverMinutes` | `30` | bot stays out of a chat after you type in it |
 | `debounceMs` | `15000` | wait for a burst to finish before triage |
@@ -292,12 +293,12 @@ Prototype limits of this code:
 - Text only: incoming media without a caption, edits and deletions (`messages.update`) are ignored; no typing
   indicator. Your own replies from the phone start the human takeover whatever they are (voice note, sticker,
   photo, reaction).
-- Drafts can still over-promise or invent details (e.g. "we don't have sugar-free options"): that is why complex
-  and important replies always wait for you.
+- Drafts can still over-promise or invent details (e.g. "we don't have sugar-free options"): that is why escalations
+  always wait for you.
 - The guards check concrete details, not meaning: a wrong statement without numbers ("we deliver to Jakarta") can
   pass, and so can a detail moved to the wrong item inside one cited fact ("brownies keep 1 month" citing F12,
-  where 1 month is the cookies'). The category rules, the confidence threshold and shadow mode are the defense
-  there.
+  where 1 month is the cookies'). The prompt's rule to answer only what the facts fully cover, the social-vocabulary
+  check for replies without facts, and shadow mode are the defense there. There is no self-reported confidence score (owner decision).
 - The in-memory history per chat starts empty after a restart (plus whatever history sync delivers), and state is a
   single JSON file: fine for one owner, not for volume.
 - Only one process may run per `auth/`: a second copy replaces the first, which gets status 440 and stops rather

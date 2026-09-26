@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { writeFileSync } from 'node:fs'
+import path from 'node:path'
 import { test } from 'node:test'
 import { createOwnerCommands, formatContact, formatDraftNotice, parseCommand } from '../src/owner.js'
 import { Store } from '../src/store.js'
@@ -33,7 +35,7 @@ function setup (t, { mode = 'live', sendResult, sendDelayMs = 0 } = {}) {
     }
   }
   const owner = createOwnerCommands({ config, store, gate, now })
-  const draft = store.createDraft({ chatId: 'a@s.whatsapp.net', contactName: 'Alice', action: 'draft', excerpt: 'custom cake?', draft: 'Baik Kak, saya cek dulu.', reason: 'custom order' })
+  const draft = store.createDraft({ chatId: 'a@s.whatsapp.net', contactName: 'Alice', excerpt: 'custom cake?', draft: 'Baik Kak, saya cek dulu.', reason: 'custom order' })
   store.updateChat('a@s.whatsapp.net', { name: 'Alice' })
   return { store, owner, sends, draft, advance: ms => { clock += ms }, now }
 }
@@ -132,11 +134,36 @@ test('a pushName is never enough: labels carry the number and a shared name must
   assert.equal(store.chat(STRANGER).muted, true)
 })
 
-test('draft notice has id, name, excerpt, draft, reason and hints', () => {
-  const notice = formatDraftNotice({ id: 7, contactName: 'Sari', action: 'escalate', excerpt: 'sudah transfer', draft: 'Baik Kak', reason: 'payment issue', summary: 'transfer not confirmed', policyReasons: ['category:important'] })
-  assert.match(notice, /^🤖 🚨 URGENT #7 · Sari/)
-  for (const part of ['They wrote: "sudah transfer"', 'Draft:\nBaik Kak', 'Why: payment issue', '/ok 7', '/edit 7 <text>', '/no 7']) assert.ok(notice.includes(part), part)
-  const empty = formatDraftNotice({ id: 8, contactName: 'X', action: 'draft', excerpt: 'e', draft: '', reason: 'r', policyReasons: ['category:simple', 'guard:unsupported_amount:1'] })
-  assert.ok(!empty.includes('/ok 8'))
-  assert.match(empty, /Not auto-sent: guard:unsupported_amount:1/)
+test('one notice format: id, name, excerpt, summary, draft, reason, held gates and hints', () => {
+  const notice = formatDraftNotice({ id: 7, contactName: 'Sari', excerpt: 'sudah transfer', draft: 'Baik Kak', reason: 'payment issue', summary: 'transfer not confirmed', policyReasons: ['decision:escalate'] })
+  assert.equal(notice, [
+    '🤖 📝 DRAFT #7 · Sari',
+    'They wrote: "sudah transfer"',
+    'Summary: transfer not confirmed',
+    'Draft:\nBaik Kak',
+    'Why: payment issue',
+    'Reply: /ok 7 · /edit 7 <text> · /no 7'
+  ].join('\n'))
+  const held = formatDraftNotice({ id: 8, contactName: 'X', excerpt: 'e', draft: '', reason: 'r', policyReasons: ['decision:answer', 'guard:unsupported_amount:1', 'paused'] })
+  assert.ok(!held.includes('/ok 8'))
+  assert.match(held, /Not auto-sent: guard:unsupported_amount:1, paused/)
+})
+
+test('a pending draft saved by the four-category version still works with /ok and /status', async t => {
+  const dir = tempDir(t)
+  const createdAt = Date.UTC(2026, 8, 26, 2, 0)
+  writeFileSync(path.join(dir, 'state.json'), JSON.stringify({
+    version: 1,
+    draftCounter: 1,
+    drafts: { 1: { id: 1, status: 'pending', createdAt, chatId: 'a@s.whatsapp.net', contactName: 'Alice (+62811)', action: 'escalate', category: 'important', excerpt: 'sudah transfer', draft: 'Baik Kak, saya cek dulu.', reason: 'payment', summary: 'paid', policyReasons: ['category:important'], messageIds: ['M1'], lastMessageAt: createdAt } },
+    chats: { 'a@s.whatsapp.net': { name: 'Alice', muted: false, takeoverUntil: 0, autoSendTimes: [], lastDisclosureAt: 0, shadowDisclosureAt: 0 } }
+  }))
+  const store = new Store(dir, { now: () => createdAt + 60_000 })
+  const sends = []
+  const gate = { async sendToCustomer (chatId, text) { sends.push([chatId, text]); return { sent: true, id: 'X' } } }
+  const owner = createOwnerCommands({ config: makeConfig({ mode: 'live' }), store, gate, now: () => createdAt + 60_000 })
+  assert.match(await owner.handle('/status'), /Pending drafts: #1 Alice/)
+  assert.match(await owner.handle('/ok 1'), /Sent to Alice/)
+  assert.deepEqual(sends, [['a@s.whatsapp.net', 'Baik Kak, saya cek dulu.']])
+  assert.equal(store.createDraft({ chatId: 'b' }).id, 2)
 })
