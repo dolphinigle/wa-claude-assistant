@@ -21,6 +21,7 @@ const emptyState = () => ({
   pauseChangedAt: 0,
   ownerOutbox: [],
   ownerNoticeCounter: 0,
+  inbox: {},
   lastRateLimit: null
 })
 
@@ -149,6 +150,22 @@ export class Store {
     const at = this.now()
     return this.state.autoSendLog.filter(ts => at - ts < windowMs).length
   }
+
+  // --- inbound messages accepted but not routed yet --------------------------
+
+  /** Kept until triage has decided, so a restart or crash between accepting and routing cannot lose it silently. */
+  addToInbox ({ id, chatId, chatIdAlt, senderName, text, timestamp, kind, isBacklog }) {
+    this.state.inbox[id] = { id, chatId, chatIdAlt, senderName, text, timestamp, kind, isBacklog, acceptedAt: this.now() }
+    this.save()
+  }
+
+  removeFromInbox (ids) {
+    const present = ids.filter(id => id in this.state.inbox)
+    for (const id of present) delete this.state.inbox[id]
+    if (present.length > 0) this.save()
+  }
+
+  inboxMessages () { return Object.values(this.state.inbox).sort((a, b) => a.timestamp - b.timestamp) }
 
   // --- owner notices that could not be delivered ---------------------------
 

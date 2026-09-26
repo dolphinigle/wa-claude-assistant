@@ -44,6 +44,7 @@ if (useConsole) {
   })
 }
 assistant = createAssistant({ config, store, brain, transport, knowledge })
+assistant.recoverInbox()
 
 console.log(`wa-claude-assistant · transport: ${transport.name} · brain: ${brain.name} · mode: ${config.mode.toUpperCase()} · data: ${config.paths.data}`)
 if (config.mode === 'live') console.log('LIVE MODE: auto-replies WILL be sent to customers. Set "mode": "shadow" to stop.')

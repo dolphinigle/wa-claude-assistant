@@ -137,7 +137,9 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       store.audit('skip_backlog_too_old', { chatId: message.chatId, id: message.id, kind: message.kind, ageMinutes: Math.round(ageMs / MINUTE_MS) })
       return
     }
-    enqueue({ ...message, isBacklog })
+    const accepted = { ...message, isBacklog }
+    store.addToInbox(accepted)
+    enqueue(accepted)
   }
 
   async function handleSelfChat (message, isBacklog) {
@@ -157,6 +159,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     store.updateChat(message.chatId, { takeoverUntil: Math.max(chat.takeoverUntil ?? 0, until) })
     const state = runtime(message.chatId)
     state.generation++ // discards any in-flight triage for this chat
+    store.removeFromInbox(state.pending.map(pending => pending.id))
     state.pending = []
     clearTimeout(state.timer)
     state.timer = null
@@ -184,6 +187,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const chat = store.chat(chatId)
     if (chat.takeoverUntil > now()) {
       store.audit('skip_during_takeover', { chatId, ids: state.pending.map(message => message.id) })
+      store.removeFromInbox(state.pending.map(message => message.id))
       state.pending = []
       return
     }
@@ -207,7 +211,31 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     }
     state.pending = state.pending.filter(message => !batchIds.has(message.id))
     if (result.rateLimit) store.setLastRateLimit(result.rateLimit)
-    await route(chatId, batch, result, generation)
+    try {
+      await route(chatId, batch, result, generation)
+    } finally {
+      store.removeFromInbox([...batchIds])
+    }
+  }
+
+  /**
+   * Messages accepted before a restart or crash but never routed (dedupe state is already on disk, so WhatsApp will
+   * not deliver them again): triage them again as backlog (drafts only), or list them for the owner if too old.
+   */
+  function recoverInbox () {
+    const unfinished = store.inboxMessages()
+    if (unfinished.length === 0) return
+    const maxAgeMs = config.backlog.maxAgeMinutes * MINUTE_MS
+    const blocked = unfinished.filter(message => isBlocked(message.chatId, message.chatIdAlt)) // blocklist changed
+    const tooOld = unfinished.filter(message => !blocked.includes(message) && now() - message.timestamp * 1000 > maxAgeMs)
+    const retry = unfinished.filter(message => !blocked.includes(message) && !tooOld.includes(message))
+    store.removeFromInbox([...blocked, ...tooOld].map(message => message.id))
+    for (const message of retry) enqueue({ ...message, isBacklog: true })
+    const ids = list => list.map(message => message.id)
+    store.audit('inbox_recovered', { retried: ids(retry), tooOld: ids(tooOld), blocked: ids(blocked) })
+    if (tooOld.length === 0) return
+    const lines = tooOld.map(message => `• ${contactName(message.chatId)}: "${excerpt(message.text, 120)}"`)
+    track(sendToOwner(`${BOT_PREFIX} ⚠️ ${tooOld.length} message(s) arrived before the assistant stopped and were never triaged. Please answer them yourself:\n${lines.join('\n')}`))
   }
 
   async function route (chatId, batch, result, generation) {
@@ -306,6 +334,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   return {
     handleMessage,
     flushOwnerOutbox,
+    recoverInbox,
     gate,
     owner,
     /** Resolves when no debounce timer is pending and no triage/send is running (for tests and shutdown). */

@@ -206,6 +206,51 @@ test('a notice that goes through again also flushes the queued ones', async t =>
   assert.ok(transport.toSelf().some(text => text.includes('Delayed notice') && text.includes('URGENT #1')))
 })
 
+test('messages accepted but not routed before a stop are triaged again after restart, or listed if too old', async t => {
+  const dir = tempDir(t)
+  let clock = Date.now()
+  const now = () => clock
+  const start = (debounceMs, respond = byKeyword) => {
+    const config = makeConfig({ mode: 'live', debounceMs }, dir)
+    const store = new Store(dir, { now, logger: silent })
+    const transport = createFakeTransport()
+    const brain = createFakeBrain(respond)
+    const assistant = createAssistant({ config, store, brain, transport, knowledge, now, logger: silent })
+    t.after(() => assistant.stop())
+    return { store, transport, brain, assistant }
+  }
+  const first = start(60_000)
+  await first.assistant.handleMessage(incoming(BOB, 'saya sudah transfer, pesanan saya mana?', { timestamp: Math.floor(clock / 1000) }))
+  await first.assistant.stop() // restart during the debounce
+
+  const second = start(10)
+  const release = second.brain.hold()
+  second.assistant.recoverInbox()
+  await waitFor(() => second.brain.calls.length === 1)
+  const stopping = second.assistant.stop() // shutdown kills claude while the triage is in flight
+  release()
+  await stopping
+  assert.equal(second.transport.sent.length, 0)
+
+  const third = start(10)
+  third.assistant.recoverInbox()
+  await third.assistant.idle()
+  assert.deepEqual(third.brain.calls.map(call => call.messages.map(message => message.text)), [['saya sudah transfer, pesanan saya mana?']])
+  assert.match(third.transport.toSelf()[0], /🚨 URGENT #1/)
+  assert.ok(third.store.getDraft(1).policyReasons.includes('category:important'))
+  assert.deepEqual(third.store.inboxMessages(), [])
+
+  await third.assistant.handleMessage(incoming(ALICE, 'bisa kue custom?', { timestamp: Math.floor(clock / 1000) }))
+  await third.assistant.stop()
+  clock += 2 * 60 * 60 * 1000
+  const fourth = start(10)
+  fourth.assistant.recoverInbox()
+  await fourth.assistant.idle()
+  assert.equal(fourth.brain.calls.length, 0)
+  assert.match(fourth.transport.toSelf()[0], /⚠️ 1 message\(s\) arrived before the assistant stopped[\s\S]*"bisa kue custom\?"/)
+  assert.deepEqual(fourth.store.inboxMessages(), [])
+})
+
 test('per-chat and per-day rate limits downgrade to drafts', async t => {
   const { transport, deliver, store } = setup(t, { config: { autoSend: { maxPerChatPerHour: 2, maxPerDay: 3 } } })
   for (let index = 0; index < 3; index++) await deliver(incoming(ALICE, `jam buka? ${index}`))
