@@ -40,7 +40,8 @@
   "whatsapp": {
     "selfChatJid": null,
     "caughtUpWatchdogMs": 180000,
-    "maxReconnectAttempts": 10
+    "maxReconnectAttempts": 10,
+    "stableConnectionMs": 120000
   },
   "timezone": "Asia/Jakarta",
   "knowledgeFile": "knowledge.md",

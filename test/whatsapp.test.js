@@ -205,3 +205,50 @@ test('a placeholder-resend answer is a replay; stubs past maxAge are not re-requ
   assert.deepEqual(sockets[0].resends.map(key => key.id), ['NEW'])
   assert.deepEqual(received.map(message => [message.id, message.kind]), [['NEW', 'append']])
 })
+
+test('catch-up signalled before open: no watchdog, so a healthy socket is not recycled', async t => {
+  const { transport, sockets, emit } = setup(t, { caughtUpWatchdogMs: 20 })
+  await transport.start()
+  emit('connection.update', { connection: 'connecting', receivedPendingNotifications: false })
+  emit('connection.update', { receivedPendingNotifications: true })
+  open(emit)
+  await sleep(60)
+  assert.equal(sockets.length, 1)
+  assert.deepEqual(sockets[0].ended, [])
+})
+
+test('the offline flush before open already sees the own ids and the history floor', async t => {
+  const { store, transport, received, emit } = setup(t)
+  await transport.start()
+  assert.ok(store.historyFloorTs > 0, 'seeded when the socket is created')
+  emit('messages.upsert', { type: 'append', messages: [raw(OWNER_PN, { conversation: '/status' }, { key: { remoteJid: OWNER_PN, id: 'EARLY', fromMe: true } })] })
+  await sleep(5)
+  assert.deepEqual(received.map(message => [message.id, message.isSelfChat]), [['EARLY', true]])
+})
+
+test('open-then-close loops still give up after maxReconnectAttempts', async t => {
+  const { transport, sockets, fatal, emit } = setup(t, { maxReconnectAttempts: 2 })
+  await transport.start()
+  for (let cycle = 0; cycle < 3; cycle++) {
+    open(emit)
+    emit('connection.update', { receivedPendingNotifications: true })
+    closeWith(emit, 515, 'restart required')
+    await sleep(10)
+  }
+  assert.deepEqual(fatal.map(verdict => verdict.reason), ['too_many_reconnects'])
+  assert.equal(sockets.length, 3)
+})
+
+test('a connection that stayed up resets the reconnect counter', async t => {
+  const { transport, sockets, fatal, emit } = setup(t, { maxReconnectAttempts: 1, stableConnectionMs: 20 })
+  await transport.start()
+  for (let cycle = 0; cycle < 3; cycle++) {
+    open(emit)
+    emit('connection.update', { receivedPendingNotifications: true })
+    await sleep(40)
+    closeWith(emit, 515, 'restart required')
+    await sleep(10)
+  }
+  assert.deepEqual(fatal, [])
+  assert.equal(sockets.length, 4)
+})

@@ -80,44 +80,63 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
   }
   const findRaw = key => history.get(key.remoteJid)?.find(item => item.id === key.id)?.raw
 
-  const armWatchdog = () => {
+  const setIdentity = user => {
+    const ids = getMeIds(user)
+    if (ids.length === 0) return
+    meIds = ids
+    selfChatJid ??= meIds[0]
+  }
+
+  // Baileys #2810: the socket can look open while messages.upsert never fires. No catch-up signal → recreate.
+  const armWatchdog = socket => {
     clearTimeout(watchdogTimer)
-    // Baileys #2810: the socket can look open while messages.upsert never fires. No catch-up signal → recreate.
     watchdogTimer = setTimeout(() => {
       logger.warn('[whatsapp] no receivedPendingNotifications after connect; recreating the socket (#2810 watchdog)')
-      sock?.end(new Error('caught-up watchdog'))
+      socket.end(new Error('caught-up watchdog'))
     }, config.whatsapp?.caughtUpWatchdogMs ?? 180_000)
   }
 
-  const handleConnection = ({ connection, lastDisconnect, qr, receivedPendingNotifications }) => {
+  function scheduleReconnect (verdict) {
+    attempts++
+    if (attempts > (config.whatsapp?.maxReconnectAttempts ?? 10)) {
+      stopped = true
+      onFatal?.({ action: 'stop', reason: 'too_many_reconnects', advice: `Gave up after ${attempts - 1} reconnect attempts; last: ${verdict.reason}.` })
+      return
+    }
+    reconnectTimer = setTimeout(connect, verdict.action === 'recreate_now' ? 0 : backoffMs(attempts))
+  }
+
+  // Catch-up can be signalled before 'open' (Baileys flushes the offline backlog while it still awaits its post-login
+  // round trips), so each socket remembers it; otherwise 'open' would arm a watchdog that nothing disarms.
+  const handleConnection = (socket, session) => ({ connection, lastDisconnect, qr, receivedPendingNotifications }) => {
+    if (socket !== sock) return // late events of a socket that was already replaced
     if (qr) renderQr(qr)
+    if (receivedPendingNotifications === true) {
+      session.caughtUp = true
+      clearTimeout(watchdogTimer)
+    }
     if (connection === 'open') {
       connected = true
-      attempts = 0
-      meIds = getMeIds(sock.user)
-      selfChatJid ??= meIds[0]
-      // First connect ever: start from now so history sync and old offline messages never trigger replies.
-      store.seedHistoryFloor(Math.floor(Date.now() / 1000))
+      setIdentity(socket.user)
       logger.log(`[whatsapp] connected as ${meIds.join(' / ')}; self-chat target ${selfChatJid}`)
-      armWatchdog()
+      if (!session.caughtUp) armWatchdog(socket)
       if (!announced) { announced = true; onReady?.() }
     }
-    if (receivedPendingNotifications === true) clearTimeout(watchdogTimer)
+    // Only a connection that stayed up resets the counter, so open-then-close loops still reach the cap.
+    if (connected && session.caughtUp && !session.stableTimer) {
+      session.stableTimer = setTimeout(() => { attempts = 0 }, config.whatsapp?.stableConnectionMs ?? 120_000)
+      session.stableTimer.unref?.()
+    }
     if (connection === 'close') {
       connected = false
       clearTimeout(watchdogTimer)
+      clearTimeout(session.stableTimer)
       if (stopped) return
       const error = lastDisconnect?.error
       const verdict = classifyDisconnect(error?.output?.statusCode, error?.message)
       logger.warn(`[whatsapp] connection closed: ${verdict.reason}`)
       if (verdict.action === 'stop') { stopped = true; onFatal?.(verdict); return }
-      attempts++
-      if (attempts > (config.whatsapp?.maxReconnectAttempts ?? 10)) {
-        stopped = true
-        onFatal?.({ action: 'stop', reason: 'too_many_reconnects', advice: `Gave up after ${attempts - 1} reconnect attempts; last: ${verdict.reason}.` })
-        return
-      }
-      reconnectTimer = setTimeout(connect, verdict.action === 'recreate_now' ? 0 : backoffMs(attempts))
+      scheduleReconnect(verdict)
     }
   }
 
@@ -154,10 +173,13 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       sock = await createSocket({ authDir: config.paths.auth, logger: baileysLogger, getMessage: async key => findRaw(key)?.message })
     } catch (error) {
       logger.error(`[whatsapp] socket setup failed: ${error.message}`)
-      attempts++
-      reconnectTimer = setTimeout(connect, backoffMs(attempts))
+      scheduleReconnect({ action: 'recreate_backoff', reason: 'socket_setup_failed' })
       return
     }
+    // Before any event: the offline backlog can be flushed before 'open'. First connect ever starts the history
+    // floor at now, so history sync and old offline messages never trigger replies. Linked creds already know us.
+    store.seedHistoryFloor(Math.floor(Date.now() / 1000))
+    setIdentity(sock.user)
     // The owner's own prompts to Meta AI arrive with the own JID as remoteJid and look exactly like self-chat
     // (#2822); only the stanza's @bot recipient tells them apart, and Baileys drops it from the key.
     sock.ws?.on?.('CB:message', node => {
@@ -165,7 +187,7 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       metaAiIds.add(node.attrs.id)
       if (metaAiIds.size > MAX_META_AI_IDS) metaAiIds.delete(metaAiIds.values().next().value)
     })
-    sock.ev.on('connection.update', handleConnection)
+    sock.ev.on('connection.update', handleConnection(sock, { caughtUp: false, stableTimer: undefined }))
     sock.ev.on('messages.upsert', handleUpsert)
     sock.ev.on('messaging-history.set', ({ messages = [] }) => { for (const raw of messages) remember(raw) })
   }

@@ -171,7 +171,7 @@ keeps the bot out of that chat for `humanTakeoverMinutes`: it does not even call
 | `quota.maxFiveHourUtilization` / `maxSevenDayUtilization` | `0.8` / `0.9` | stop auto-replying above these |
 | `claude.bin` / `model` / `timeoutMs` / `concurrency` / `maxStructuredOutputRetries` | `claude` / `haiku` / `60000` / `2` / `2` | the locked CLI call |
 | `whatsapp.selfChatJid` | `null` | force the "Message yourself" JID if auto-detection picks the wrong form |
-| `whatsapp.caughtUpWatchdogMs` / `maxReconnectAttempts` | `180000` / `10` | #2810 watchdog; give up after this many reconnects |
+| `whatsapp.caughtUpWatchdogMs` / `maxReconnectAttempts` / `stableConnectionMs` | `180000` / `10` / `120000` | #2810 watchdog; give up after this many reconnects in a row; a connection caught up and open this long resets the count |
 | `timezone` | `Asia/Jakarta` | the `now:` line given to Claude |
 | `knowledgeFile`, `paths.auth`, `paths.data` | `knowledge.md`, `auth`, `data` | relative to the repo |
 
