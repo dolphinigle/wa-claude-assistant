@@ -1,5 +1,5 @@
 // Orchestrator: dedupe, loop guard, takeover, debounce, triage, policy, and the ONE send gate.
-import { findPrivateDetails, guardTriage, isSocialMessage, privateIdentifiersFor } from './guards.js'
+import { findPrivateDetails, guardTriage, isThanks, privateIdentifiersFor } from './guards.js'
 import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice, jidUser } from './owner.js'
 import { decide } from './policy.js'
 
@@ -104,8 +104,11 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     }
   }
 
-  /** The only path to a customer. Shadow mode stops here. */
-  async function sendToCustomer (chatId, text, { quotedRaw, source, draftId } = {}) {
+  /**
+   * The only path to a customer. Shadow mode stops here. `closingReply`: the owner's /ok or /edit of a thanks draft,
+   * whose message id marks the chat closed for the thanks after it (policy.js).
+   */
+  async function sendToCustomer (chatId, text, { quotedRaw, source, draftId, closingReply = false } = {}) {
     if (!chatId || !text?.trim()) return { sent: false, error: 'nothing to send' }
     if (isBlocked(chatId)) {
       store.audit('send_refused_blocked', { chatId, source })
@@ -115,11 +118,16 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       store.audit('shadow_send_suppressed', { chatId, source, draftId, text })
       return { sent: false, shadow: true }
     }
+    // Marked before sending: the echo can arrive before send() resolves, and a send that throws may still have been
+    // delivered. The transport sends under this id (Baileys: the key.id of the message, of its echo and of the result
+    // the history keeps); the returned id is marked too, for a transport that picks its own.
     const messageId = transport.generateId?.()
-    if (messageId) store.markSentByBot(messageId) // before sending: the echo can arrive before send() resolves
+    if (messageId) store.markSentByBot(messageId)
+    if (messageId && closingReply) store.markClosingReply(messageId)
     try {
       const sent = await transport.send(chatId, text, { quotedRaw, messageId })
       store.markSentByBot(sent?.id)
+      if (closingReply) store.markClosingReply(sent?.id)
       store.audit('sent_to_customer', { chatId, source, draftId, id: sent?.id, text })
       return { sent: true, id: sent?.id }
     } catch (error) {
@@ -329,8 +337,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const triage = result.triage
     const incomingText = batch.map(message => message.text).join('\n')
     const attachments = [...new Set(batch.map(message => message.attachment).filter(Boolean))]
-    // Only a thanks, ack or goodbye: its auto-reply or its resolved draft closes the chat for the session.
-    const closing = attachments.length === 0 && isSocialMessage(incomingText)
+    // A thanks without a file: however the owner resolves its draft, that closes the chat for the session (owner.js).
+    const closing = attachments.length === 0 && isThanks(incomingText)
     const guard = guardTriage(triage, { knowledge, config, incomingText })
     const decision = decide(result, {
       config,
@@ -338,14 +346,13 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       incomingText,
       attachments,
       quoted: batch.map(message => message.quotedText).filter(Boolean),
-      history: history.map(item => (item.fromMe ? { ...item, autoReply: store.isAutoReply(item.id) } : item)),
+      history: history.map(item => (item.fromMe ? { ...item, closing: store.isClosingReply(item.id) } : item)),
       paused: store.paused,
       chat: {
         muted: linkedChats(chatId).some(record => record.muted),
         blocked: isBlocked(chatId),
         blocklistUnchecked: blocklistUnchecked(chatId),
         takeoverUntil: takeoverUntil(chatId),
-        openDrafts: openDrafts(chatId),
         lastClosingAt: lastClosingAt(chatId)
       },
       now: now(),
@@ -388,16 +395,14 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
 
     // Counted before the first await, so another chat's triage finishing during this send sees the slot as taken.
     // Counted in shadow too, so shadow mode shows what the rate limits would do.
-    const slot = store.recordAutoSend(chatId, { perChat: !closing })
+    const slot = store.recordAutoSend(chatId)
     const outcome = await sendToCustomer(chatId, text, { quotedRaw: last.raw, source: 'auto_send' })
     if (!outcome.sent && !outcome.shadow) {
-      store.releaseAutoSend(chatId, slot, { perChat: !closing })
+      store.releaseAutoSend(chatId, slot)
       const reasons = [...decision.reasons.filter(reason => reason !== 'all_gates_passed'), `send_failed:${outcome.error}`]
       return postDraft(chatId, batch, { ok: true, triage }, { action: 'escalate', reasons }, closing)
     }
-    if (outcome.sent) store.markAutoReply(outcome.id)
     if (needsDisclosure) store.updateChat(chatId, { [disclosureKey]: now() })
-    if (closing) store.updateChat(chatId, { lastClosingAt: lastMessageAt(batch) }) // shadow too, like the rate limits
     if (outcome.sent) await markReadUnlessOpen(chatId, batch)
     const name = contactLabel(chatId)
     if (outcome.shadow) {

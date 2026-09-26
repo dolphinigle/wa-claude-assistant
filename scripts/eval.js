@@ -18,8 +18,9 @@ const saved = rescoreFile ? JSON.parse(readFileSync(path.resolve(rescoreFile), '
 const selected = id => (saved ? saved.results.some(item => item.id === id) : !only || only.has(id))
 const fixtures = JSON.parse(readFileSync(path.join(ROOT_DIR, 'eval', 'fixtures.json'), 'utf8')).filter(fixture => selected(fixture.id))
 if (fixtures.length === 0) throw new Error('no fixtures selected')
-const badFixture = fixtures.find(fixture => !DECISIONS.includes(fixture.expect) || !['allowed', 'forbidden'].includes(fixture.autoSend) || !['boolean', 'undefined'].includes(typeof fixture.skipOk))
-if (badFixture) throw new Error(`fixture ${badFixture.id}: expect must be one of ${DECISIONS.join('/')}, autoSend allowed/forbidden, skipOk a boolean if set`)
+const badFixture = fixtures.find(fixture => !DECISIONS.includes(fixture.expect) || !['allowed', 'forbidden'].includes(fixture.autoSend) ||
+  !['boolean', 'undefined'].includes(typeof fixture.skipOk) || !['number', 'undefined'].includes(typeof fixture.closingMinutesAgo))
+if (badFixture) throw new Error(`fixture ${badFixture.id}: expect must be one of ${DECISIONS.join('/')}, autoSend allowed/forbidden, skipOk a boolean and closingMinutesAgo a number if set`)
 // Results saved before the binary decision have no `decision`; rescoring them would report every case as escalated.
 if (saved?.results.some(item => item.result.triage && !('decision' in item.result.triage))) throw new Error(`${rescoreFile} predates the answer/escalate schema; run npm run eval instead`)
 
@@ -28,8 +29,9 @@ const knowledge = loadKnowledge(config.paths.knowledge)
 const startedAt = saved ? new Date(saved.runAt) : new Date()
 const baseName = saved ? path.basename(rescoreFile, '.json') : only ? 'last-run-partial' : 'last-run'
 const outDir = saved ? path.dirname(path.resolve(rescoreFile)) : path.join(ROOT_DIR, 'eval')
-// History one minute apart, or `minutesAgo` for an older message (a closing from yesterday); `autoReply` marks the
-// bot's own replies. The same ages go to Claude and, at scoring time, to the policy.
+// History one minute apart, or `minutesAgo` for an older message (a closing from yesterday); `closing` marks our reply
+// sent as the owner's /ok of a thanks draft, and `closingMinutesAgo` is when the thanks it closed arrived. The same ages
+// go to Claude and, at scoring time, to the policy; Claude never sees the `closing` flags.
 const timedHistory = (fixture, nowSeconds) =>
   (fixture.history ?? []).map((item, index, all) => ({ ...item, timestamp: nowSeconds - 60 * (item.minutesAgo ?? all.length - index) }))
 
@@ -50,8 +52,8 @@ else writeFileSync(path.join(outDir, `${baseName}.json`), `${JSON.stringify({ ru
 const rows = fixtures.map(fixture => {
   const { result } = results.find(item => item.id === fixture.id)
   const guard = guardTriage(result.triage, { knowledge, config, incomingText: fixture.text })
-  // A quiet day with no open drafts: only the triage, the guards, the fixture's history and the quota can stop an
-  // auto-send (or skip a thanks that follows a closing).
+  // A quiet day: only the triage, the guards, the fixture's history and closing, and the quota can stop an auto-send
+  // (or skip a thanks that follows a closing).
   const now = Date.now()
   const decision = decide(result, {
     config,
@@ -61,7 +63,7 @@ const rows = fixtures.map(fixture => {
     quoted: [],
     history: timedHistory(fixture, Math.floor(now / 1000)),
     paused: false,
-    chat: { muted: false, blocked: false, takeoverUntil: 0, openDrafts: [], lastClosingAt: 0 },
+    chat: { muted: false, blocked: false, takeoverUntil: 0, lastClosingAt: fixture.closingMinutesAgo === undefined ? 0 : now - fixture.closingMinutesAgo * 60_000 },
     now,
     chatAutoSendsLastHour: 0,
     autoSendsLastDay: 0,
@@ -134,9 +136,9 @@ const details = rows.map(row => [
 ].join('\n'))
 
 const report = [
-  baseName === 'last-run' ? '# Eval: last full run' : '# Eval: partial re-run',
+  `${baseName === 'last-run' ? '# Eval: last full run' : '# Eval: partial re-run'}${saved ? ', rescored' : ''}`,
   '',
-  ...(saved ? [`> Rescored ${new Date().toISOString()} with the current guards and policy from the saved triage results (no new claude calls).`, ''] : []),
+  ...(saved ? [`> Rescore of the saved run: ${new Date().toISOString()}, the current guards and policy applied to the saved triage results of ${startedAt.toISOString()} (no new claude calls).`, ''] : []),
   `Run ${startedAt.toISOString()}${baseName === 'last-run' ? '' : ` (subset: ${fixtures.map(fixture => fixture.id).join(', ')})`} · model \`${firstMeta.model ?? config.claude.model}\` (alias \`${config.claude.model}\`, thinking ${thinking}) · claude ${firstMeta.claudeCodeVersion ?? '?'} · ${total} ${saved ? 'saved' : 'real'} \`claude -p\` results from \`src/brain/claude.js\`, then \`guards.js\` and \`policy.js\` evaluated as live mode on a fresh chat (quota limit ${config.quota.maxFiveHourUtilization}).`,
   '',
   '## Summary',

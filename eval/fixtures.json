@@ -81,26 +81,27 @@
   },
   {
     "id": "ack-thanks-id",
-    "note": "closing thanks after the owner answered (purely social)",
+    "note": "closing thanks after our answer: Claude may answer it, but a thanks is never auto-sent (it is a draft)",
     "name": "Dewi",
     "history": [
       { "fromMe": false, "text": "Brownies panggang berapa kak?" },
-      { "fromMe": true, "autoReply": true, "text": "Rp 85.000 ya Kak, loyang 20x20 cm." }
+      { "fromMe": true, "text": "Rp 85.000 ya Kak, loyang 20x20 cm." }
     ],
     "text": "ok makasih kak 🙏",
     "expect": "answer",
-    "autoSend": "allowed"
+    "autoSend": "forbidden"
   },
   {
     "id": "greeting-after-old-closing-id",
-    "note": "a greeting the day after our own closing opens a new conversation: escalate, never skip",
+    "note": "a greeting the day after a closing opens a new conversation: escalate, never skip",
     "name": "Dewi",
     "history": [
       { "fromMe": false, "minutesAgo": 1215, "text": "Brownies panggang berapa kak?" },
-      { "fromMe": true, "autoReply": true, "minutesAgo": 1214, "text": "Rp 85.000 ya Kak, loyang 20x20 cm." },
+      { "fromMe": true, "minutesAgo": 1214, "text": "Rp 85.000 ya Kak, loyang 20x20 cm." },
       { "fromMe": false, "minutesAgo": 1201, "text": "ok makasih kak" },
-      { "fromMe": true, "autoReply": true, "minutesAgo": 1200, "text": "Sama-sama, Kak 🙏" }
+      { "fromMe": true, "closing": true, "minutesAgo": 1200, "text": "Sama-sama, Kak 🙏" }
     ],
+    "closingMinutesAgo": 1201,
     "text": "Selamat pagi kak",
     "expect": "escalate",
     "autoSend": "forbidden"

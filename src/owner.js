@@ -91,9 +91,10 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
   const chatName = chatId => formatContact(chatId, store.existingChat(chatId))
   // Drafts whose send is in flight: two self-chat commands run concurrently (Baileys does not await listeners).
   const sending = new Set()
-  // Whatever the owner did with a thanks (sent it, edited it, discarded it) closes the chat for the session, like a
-  // closing the bot sent: the next 🙏 is skipped instead of drafted again. It is dated by the thanks, not the command:
-  // what our side sent after the thanks (the edited text itself, another draft) stays newer, so an "iya" to it is held.
+  // Whatever the owner did with a thanks (sent it, edited it, discarded it, shadow included) closes the chat for the
+  // session: the next 🙏 is skipped instead of drafted again (policy.js). It is dated by the thanks, not the command:
+  // what our side sent after the thanks (another draft, a message typed on the phone) stays newer and reopens the chat.
+  // The reply sent by /ok or /edit is recognised by its message id instead (sendToCustomer's `closingReply`).
   const resolveClosing = draft => {
     if (!draft.closing) return
     const thanksAt = draft.lastMessageAt ?? draft.createdAt
@@ -115,7 +116,7 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
     sending.add(draft.id) // claimed before the first await
     let outcome
     try {
-      outcome = await gate.sendToCustomer(draft.chatId, text, { source: status, draftId: draft.id })
+      outcome = await gate.sendToCustomer(draft.chatId, text, { source: status, draftId: draft.id, closingReply: Boolean(draft.closing) })
     } finally {
       sending.delete(draft.id)
     }

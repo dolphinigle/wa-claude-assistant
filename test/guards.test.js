@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, isSocialMessage, isSocialReply, privateIdentifiers, privateIdentifiersFor } from '../src/guards.js'
+import { buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, isThanks, privateIdentifiers, privateIdentifiersFor } from '../src/guards.js'
 import { parseKnowledge } from '../src/knowledge.js'
 import { knowledge, makeConfig } from './helpers.js'
 
@@ -175,106 +175,65 @@ test('structural checks: empty, length, placeholders, fact ids, facts_used', () 
   assert.ok(check('Buka Senin–Sabtu', ['F1', 'F99']).reasons.includes('unknown_fact:F99'))
 })
 
-test('a reply without facts passes only in a purely social exchange', () => {
-  const social = (reply, incomingText) => checkReply({ reply, factsUsed: [], incomingText }, { knowledge, ...guards })
-  for (const [incoming, reply] of [
+test('a reply without facts never passes, a thanks-back included: a thanks is only ever drafted', () => {
+  const reply = (text, factsUsed, incomingText) => checkReply({ reply: text, factsUsed, incomingText }, { knowledge, ...guards })
+  for (const [incoming, text] of [
     ['ok makasih kak 🙏', 'Sama-sama, Kak 🙏'],
-    ['Siap kak, terima kasih banyak ya', 'Terima kasih kembali, Kak. Semoga harinya menyenangkan 😊'],
     ['thanks!', "You're welcome! Have a nice day."],
-    ['👍', 'Sama-sama ya Kak'],
-    ['🙏🏽', 'Terima kasih juga, Kak ❤️'],
-    ['bye, thanks', 'Thank you too! Take care.'],
-    ['makasih kak, selamat siang', 'Sama-sama, Kak. Selamat siang 🙏'], // a greeting may go with a thanks
-    ['Thank you so much :)', "You're welcome!"]
-  ]) assert.deepEqual(social(reply, incoming), { ok: true, reasons: [] }, `${incoming} → ${reply}`)
-
-  for (const [incoming, reply] of [
-    ['ok makasih kak', 'Sama-sama Kak, kami kirim ke Jakarta juga ya'], // a claim without a fact
-    ['ok makasih kak', 'Oke kak, siap'], // agrees to whatever was asked before
-    ['bisa kirim ke Jakarta?', 'Sama-sama Kak'], // the customer asked something
-    ['makasih, besok jam 9 ya', 'Sama-sama Kak'], // and set a time
-    ['ok makasih kak', 'Sama-sama Kak, ditunggu jam 9 ya'],
-    ['ok makasih kak', 'Sama-sama, gratis ongkir ya'],
-    [undefined, 'Sama-sama Kak'], // the customer's text is not known: fail closed
-    // yes-answers and promises made of friendly words
-    ['makasih kak 🙏', 'Dibantu ya kak 🙏'],
-    ['makasih kak', 'Ya kak, ditunggu ya 🙏'],
-    ['makasih kak', 'Ya kak'],
-    ['thanks', 'We have it! Have a great day.'],
-    ['thanks', 'Thank you, we have it for you'],
-    ['thanks', 'No problem, see you soon!'],
-    ['ok kak siap', 'Ditunggu ya Kak 🙏'], // confirms a pickup nobody approved
-    ['ok', 'See you soon!'],
-    ['ok kak siap', 'Sampai jumpa lagi ya Kak'],
-    ['makasih kak', 'Sama-sama 👍'], // 👍 agrees
-    ['🙏', '👍'], // no words at all
-    ['🙏', '🙏'],
-    // no closing on the customer's side: angry emoji, bare punctuation, a bare honorific, a request
-    ['😡', 'Sama-sama, Kak 🙏'],
-    ['😡😡', 'Sama-sama ya Kak 🙏'],
-    ['👎', 'Sama-sama ya Kak'],
-    ['💩 💩', 'Sama-sama Kak'],
-    ['makasih kak 😡', 'Sama-sama Kak'],
-    ['!!!', 'Sama-sama Kak'],
-    ['...', 'Sama-sama Kak'],
-    ['', 'Sama-sama Kak'],
-    ['kak', 'Sama-sama Kak'],
-    ['dibantu ya kak', 'Sama-sama Kak'],
-    ['ditunggu ya kak', 'Sama-sama Kak'],
-    // a greeting alone opens a conversation, and friendly words out of their phrase complain
-    ['Selamat pagi kak', 'Terima kasih, Kak. Selamat pagi 🙏'],
-    ['halo kak', 'Sama-sama Kak'],
-    ['Pagi kak 🙏', 'Sama-sama Kak 🙏'],
-    ['too much', "You're welcome!"],
-    ['no good', "You're welcome!"],
-    ['ok :(', 'Sama-sama Kak']
-  ]) assert.ok(social(reply, incoming).reasons.includes('no_facts_used'), `${incoming} → ${reply}`)
+    ['🙏', 'Terima kasih juga, Kak ❤️'],
+    [undefined, 'Sama-sama Kak']
+  ]) {
+    assert.deepEqual(reply(text, [], incoming), { ok: false, reasons: ['no_facts_used'] }, `${incoming} → ${text}`)
+    assert.deepEqual(reply(text, undefined, incoming).reasons, ['no_facts_used'], 'facts_used missing')
+  }
+  // A thanks answered with a cited fact is checked like any answer: the policy holds it, not the guards.
+  assert.deepEqual(reply('Sama-sama, Kak 🙏', ['F1'], 'makasih kak'), { ok: true, reasons: [] })
+  assert.deepEqual(reply('Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya Kak.', ['F1'], 'ok kak, jam buka?'), { ok: true, reasons: [] })
 })
 
-test('the customer side is matched as phrases: a greeting alone, or a friendly word out of its phrase, is no thanks', () => {
-  for (const text of ['ok makasih kak 🙏', 'makasih banyak ya kak', 'thank you very much', 'thanks a lot!', 'thank you too', 'no problem kak',
-    'see you soon', 'sampai jumpa lagi kak', 'hati-hati ya kak', 'oh ok kak', 'good night', 'makasih kak, selamat malam', 'Great, thanks!',
-    'ok kak :)', 'makasih:)', 'mksh kak ^^', 'sip 👌', '🙏🏽', 'Terima kasih kembali kak ❤️']) {
-    assert.equal(isSocialMessage(text), true, text)
-  }
-  for (const text of ['Selamat pagi kak', 'halo kak', 'hai', 'hello', 'good morning', 'pagi kak', 'selamat malam kak', 'Pagi kak 🙏', 'halo kak 🙏',
-    'no good', 'too much', 'it was too much', 'oh no', 'no no no', 'so bad', 'wow', 'wah', 'ya kak', 'infonya kak', 'selamat ya kak',
-    'ok :(', 'ok -_-', 'T_T', 'makasih *kak*', 'ok kak :/',
-    // a bare day part next to an "ok" picks a time; only "selamat sore" or "good morning" greets
-    'ok kak sore ya', 'siap kak malam ya', 'iya kak siang ya 🙏', 'ok kak pagi ya', 'ok morning', 'ok sore']) {
-    assert.equal(isSocialMessage(text), false, text)
+test('isThanks: a thanks or goodbye, with acknowledgements, honorifics and friendly emoji around it', () => {
+  for (const text of ['ok makasih kak 🙏', 'makasih banyak ya kak', 'Terima kasih', 'terimakasih kak', 'thank you very much', 'thanks a lot!',
+    'thank you too', 'thanks, you too!', 'sama-sama kak', "you're welcome", 'Terima kasih kembali kak ❤️', 'bye, thanks', 'good bye',
+    'dadah kak', 'take care', 'good night kak', 'have a nice day kak', 'semoga harinya menyenangkan ya kak', 'makasih kak, sehat selalu',
+    'siap kak, terima kasih', 'iya makasih ya kak', 'Great, thanks!', 'ok makasih kak 👍', 'makasih:)', 'mksh kak ^^', 'thx', 'tq kak',
+    'wah makasih banyak kak 🙏', 'oh ok, makasih kak', 'cheers', 'makasih infonya kak', 'thanks for the help', '  Makasih  Kak!!  ',
+    // friendly emoji alone, with skin tones and presentation selectors
+    '🙏', '🙏🏽', '🙏🙏🙏', '❤️', '😊', '🥰 🙏']) {
+    assert.equal(isThanks(text), true, text)
   }
 })
 
-test('a long message is never a closing, and costs little to reject: no backtracking, no recursion', () => {
-  assert.equal(isSocialMessage('good bye '.repeat(15)), true, '30 words may still close')
-  for (const text of ['good bye '.repeat(15) + 'kak', 'good bye '.repeat(40) + 'x', 'ok '.repeat(20000), 'ok '.repeat(12000) + 'tolong refund ke rekening saya']) {
-    assert.equal(isSocialMessage(text), false, `${text.length} chars`)
+test('isThanks: an acknowledgement or 👍 alone, a greeting, a question, digits or any other symbol is no thanks', () => {
+  for (const text of [
+    // acknowledgements alone can be a yes to something our side asked
+    'ok', 'oke kak', 'iya kak', 'siap', 'siap kak', 'baik kak', 'noted', 'yes', 'ya kak', 'sip 👌', '👍', '👍👍', '🙏👍', 'ok 🙏', '🙏 kak',
+    // greetings open a conversation, alone or next to a thanks
+    'Selamat pagi kak', 'halo kak', 'hai', 'hello', 'hi', 'good morning', 'Pagi kak 🙏', 'makasih kak, selamat siang', 'halo, thanks',
+    // phrases that agree to, arrange or ask for something
+    'no problem kak', 'no worries', 'anytime', 'welcome', 'my pleasure', 'happy to help', 'you too', 'see you', 'see you soon',
+    'sampai jumpa lagi kak', 'hati-hati ya kak', 'makasih lagi dong', 'makasih kak, ditunggu ya', 'thanks, besok ya', 'ok kak sore ya',
+    'no thanks', 'wow thanks',
+    // friendly words out of their phrase, angry or other emoji, bare punctuation, symbols, digits, questions
+    'no good', 'oh no', 'too much', 'so bad', 'kak', 'wah', '😡', '😡😡', '👎', '💩', 'makasih kak 😡', '🔥', '!!!', '...', '', ' ',
+    'ok :(', 'ok -_-', 'T_T', 'makasih *kak*', 'ok kak :/', ':)', 'makasih 2 ya', 'sama2 kak', 'makasih kak?', 'thanks¿', '٣ makasih',
+    'makasih kak, saya sudah transfer', 'thanks, is it open?', undefined, null
+  ]) {
+    assert.equal(isThanks(text), false, String(text))
   }
-  assert.equal(isSocialReply('sama sama '.repeat(20000)), false)
-  // "good bye" splits two ways ("good" + "bye"), so backtracking tried 2^14 splits of this one before failing on "x".
+})
+
+test('isThanks: a long message is no thanks and costs little to reject: no backtracking, no recursion', () => {
+  assert.equal(isThanks('good bye '.repeat(8)), true, '16 words may still be a thanks')
+  assert.equal(isThanks('good bye '.repeat(8) + 'kak'), false, '17 are not')
+  assert.equal(isThanks('🙏'.repeat(17)), false)
+  const adversarial = ['good bye '.repeat(5000) + 'x', 'makasih '.repeat(5000), 'ok '.repeat(20000), 'ok '.repeat(12000) + 'tolong refund ke rekening saya',
+    'good bye '.repeat(7) + 'x', '🙏'.repeat(20000)]
   const started = performance.now()
-  for (let i = 0; i < 100; i++) isSocialMessage('good bye '.repeat(14) + 'x')
-  assert.ok(performance.now() - started < 1000, `${Math.round(performance.now() - started)} ms`)
-})
-
-test('a thanks answered with facts fails: nobody asked for them, and a fact licenses a promise', () => {
-  const check = (reply, factsUsed, incomingText) => checkReply({ reply, factsUsed, incomingText }, { knowledge, ...guards })
-  for (const [incoming, reply, facts] of [
-    ['ok makasih kak 🙏', 'Sama-sama kak, besok kami kirim ya', ['F3']],
-    ['thanks!', "Thanks! We're open now", ['F1']],
-    ['makasih kak', 'Sama-sama kak, pesanannya pasti kami siapkan tepat waktu ya', ['F9']],
-    ['ok kak', 'Siap kak, sudah kami catat pesanannya ya', ['F13']],
-    ['makasih kak', 'Sama-sama, Kak 🙏', ['F1']]
-  ]) assert.ok(check(reply, facts, incoming).reasons.includes('social_message_answered_with_facts'), `${incoming} → ${reply}`)
-  assert.deepEqual(check('Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya Kak.', ['F1'], 'ok kak, jam buka?'), { ok: true, reasons: [] }, 'a question with its thanks is no social message')
-})
-
-test('the customer side may acknowledge; the reply side is a closed set of closings', () => {
-  assert.equal(isSocialMessage('ok kak siap 👍'), true, 'acknowledgements close the customer\'s message')
-  assert.equal(isSocialReply('Oke kak, siap'), false, 'but never the reply')
-  assert.equal(isSocialReply('Ya kak, sama-sama'), false, 'a leading yes is not a closing')
-  assert.equal(isSocialReply('Sama-sama Kak, semoga harinya menyenangkan ya'), true, '"ya" may soften a head or a wish')
+  for (let round = 0; round < 50; round++) {
+    for (const text of adversarial) assert.equal(isThanks(text), false, `${text.length} chars`)
+  }
+  const elapsed = performance.now() - started
+  assert.ok(elapsed < 1000, `${Math.round(elapsed)} ms`)
 })
 
 test('a sensitive term that appears in the facts is allowed', () => {
@@ -297,7 +256,7 @@ test('guardTriage only checks answers', () => {
   const config = makeConfig()
   assert.equal(guardTriage({ decision: 'escalate', reply: 'Rp 1' }, { knowledge, config }), undefined)
   assert.equal(guardTriage({ decision: 'answer', reply: 'Rp 1', facts_used: ['F5'] }, { knowledge, config }).ok, false)
-  assert.equal(guardTriage({ decision: 'answer', reply: 'Sama-sama, Kak 🙏', facts_used: [] }, { knowledge, config, incomingText: 'ok makasih kak 🙏' }).ok, true)
+  assert.deepEqual(guardTriage({ decision: 'answer', reply: 'Sama-sama, Kak 🙏', facts_used: [] }, { knowledge, config, incomingText: 'ok makasih kak 🙏' }).reasons, ['no_facts_used'])
 })
 
 test('replies that carry the owner\'s account or machine details are held; drafts are flagged', () => {

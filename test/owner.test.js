@@ -95,6 +95,15 @@ test('resolving a thanks draft closes the chat as of the thanks; resolving any o
   assert.equal(store.chat('b@s.whatsapp.net').lastClosingAt, now() - 25 * 60_000, 'an older thanks never moves it back')
 })
 
+test('the reply sent for a thanks draft is marked as its closing; any other draft\'s is not', async t => {
+  const { store, owner, sends, draft } = setup(t)
+  const thanks = store.createDraft({ chatId: 'b@s.whatsapp.net', contactName: 'Bob', excerpt: 'makasih kak', draft: 'Sama-sama, Kak 🙏', closing: true, lastMessageAt: 1 })
+  const edited = store.createDraft({ chatId: 'b@s.whatsapp.net', contactName: 'Bob', excerpt: '🙏', draft: 'Sama-sama', closing: true, lastMessageAt: 2 })
+  const old = store.createDraft({ chatId: 'c@s.whatsapp.net', contactName: 'Carol', excerpt: 'ok', draft: 'Siap', lastMessageAt: 3 }) // before the flag: none
+  for (const command of [`/ok ${draft.id}`, `/ok ${thanks.id}`, `/edit ${edited.id} Sama-sama ya Kak`, `/ok ${old.id}`]) await owner.handle(command)
+  assert.deepEqual(sends.map(send => send.meta.closingReply), [false, true, true, false])
+})
+
 test('shadow mode: approving a thanks draft closes the chat like a send would', async t => {
   const { store, owner, now } = setup(t, { mode: 'shadow' })
   const { id } = store.createDraft({ chatId: 'b@s.whatsapp.net', contactName: 'Bob', draft: 'Sama-sama, Kak 🙏', closing: true })

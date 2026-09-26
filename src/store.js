@@ -4,7 +4,7 @@ import path from 'node:path'
 
 const MAX_SENT_BY_BOT = 2000
 const MAX_PROCESSED = 5000
-const MAX_AUTO_REPLIES = 2000
+const MAX_CLOSING_REPLIES = 2000
 const MAX_AUTO_SEND_LOG = 500
 const MAX_OWNER_OUTBOX = 50
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -16,7 +16,7 @@ const emptyState = () => ({
   drafts: {},
   chats: {},
   sentByBot: [],
-  autoReplies: [],
+  closingReplies: [],
   processed: [],
   autoSendLog: [],
   historyFloorTs: 0,
@@ -49,7 +49,7 @@ export function writeFileAtomic (file, contents) {
 export class Store {
   constructor (dataDir, { now = () => Date.now(), logger = console, limits = {} } = {}) {
     this.dataDir = dataDir
-    this.limits = { sentByBot: MAX_SENT_BY_BOT, processed: MAX_PROCESSED, autoReplies: MAX_AUTO_REPLIES, ...limits }
+    this.limits = { sentByBot: MAX_SENT_BY_BOT, processed: MAX_PROCESSED, closingReplies: MAX_CLOSING_REPLIES, ...limits }
     this.file = path.join(dataDir, 'state.json')
     this.auditFile = path.join(dataDir, 'audit.jsonl')
     this.now = now
@@ -57,14 +57,15 @@ export class Store {
     mkdirSync(dataDir, { recursive: true, mode: 0o700 })
     this.state = this.#load()
     this.sentByBotSet = new Set(this.state.sentByBot)
-    this.autoReplySet = new Set(this.state.autoReplies)
+    this.closingReplySet = new Set(this.state.closingReplies)
     this.processedSet = new Set(this.state.processed)
   }
 
   #load () {
     if (!existsSync(this.file)) return emptyState()
     try {
-      const { lastProcessedTs, ...saved } = JSON.parse(readFileSync(this.file, 'utf8'))
+      // autoReplies: the bot's own replies, kept while it could auto-send a closing (until 2026-09-26); nothing reads them.
+      const { lastProcessedTs, autoReplies, ...saved } = JSON.parse(readFileSync(this.file, 'utf8'))
       // Before the floor existed, a watermark moved with live traffic; it is still a valid (later) floor.
       return { ...emptyState(), historyFloorTs: lastProcessedTs ?? 0, ...saved }
     } catch (error) {
@@ -96,9 +97,12 @@ export class Store {
   isSentByBot (id) { return this.sentByBotSet.has(id) }
   markSentByBot (id) { this.#remember(this.state.sentByBot, this.sentByBotSet, id, this.limits.sentByBot); this.save() }
 
-  /** The bot's own auto-replies, as opposed to what the owner typed or approved: only after one may a thanks be closed. */
-  isAutoReply (id) { return this.autoReplySet.has(id) }
-  markAutoReply (id) { this.#remember(this.state.autoReplies, this.autoReplySet, id, this.limits.autoReplies); this.save() }
+  /**
+   * Our messages sent as the owner's /ok or /edit of a thanks draft: a thanks after one, with nothing else in between,
+   * is skipped. Message ids are unique across chats, so this holds on both addressing forms (PN and LID) of a contact.
+   */
+  isClosingReply (id) { return this.closingReplySet.has(id) }
+  markClosingReply (id) { this.#remember(this.state.closingReplies, this.closingReplySet, id, this.limits.closingReplies); this.save() }
 
   hasProcessed (id) { return this.processedSet.has(id) }
   markProcessed (id) { this.#remember(this.state.processed, this.processedSet, id, this.limits.processed); this.save() }
@@ -175,23 +179,20 @@ export class Store {
     return Object.entries(this.state.chats).filter(([, chat]) => chat.name?.toLowerCase().includes(needle)).map(([chatId]) => chatId)
   }
 
-  /**
-   * Returns the recorded time, which releaseAutoSend() takes to give the slot back when the send fails. A social
-   * closing (`perChat: false`) counts toward the daily total only; the policy limits it per chat on its own.
-   */
-  recordAutoSend (chatId, { perChat = true } = {}) {
+  /** Returns the recorded time, which releaseAutoSend() takes to give the slot back when the send fails. */
+  recordAutoSend (chatId) {
     const at = this.now()
     const chat = this.chat(chatId)
-    if (perChat) chat.autoSendTimes = [...chat.autoSendTimes.filter(ts => at - ts < DAY_MS), at]
+    chat.autoSendTimes = [...chat.autoSendTimes.filter(ts => at - ts < DAY_MS), at]
     this.state.autoSendLog = [...this.state.autoSendLog.filter(ts => at - ts < DAY_MS), at].slice(-MAX_AUTO_SEND_LOG)
     this.save()
     return at
   }
 
-  releaseAutoSend (chatId, at, { perChat = true } = {}) {
+  releaseAutoSend (chatId, at) {
     const withoutOne = list => { const index = list.lastIndexOf(at); return index === -1 ? list : list.toSpliced(index, 1) }
     const chat = this.chat(chatId)
-    if (perChat) chat.autoSendTimes = withoutOne(chat.autoSendTimes)
+    chat.autoSendTimes = withoutOne(chat.autoSendTimes)
     this.state.autoSendLog = withoutOne(this.state.autoSendLog)
     this.save()
   }

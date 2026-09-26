@@ -12,7 +12,7 @@ test('state survives a restart', t => {
   const store = new Store(dir)
   store.markProcessed('A')
   store.markSentByBot('B')
-  store.markAutoReply('R')
+  store.markClosingReply('R')
   store.addToInbox({ id: 'Q', chatId: 'c', text: 'iya kak', quotedText: 'Mau diantar Sabtu kak?', timestamp: 1 })
   store.seedHistoryFloor(1000)
   store.seedHistoryFloor(2000)
@@ -23,7 +23,7 @@ test('state survives a restart', t => {
   const reloaded = new Store(dir)
   assert.ok(reloaded.hasProcessed('A'))
   assert.ok(reloaded.isSentByBot('B'))
-  assert.ok(reloaded.isAutoReply('R') && !reloaded.isAutoReply('B'), 'auto-replies are told apart from other bot sends')
+  assert.ok(reloaded.isClosingReply('R') && !reloaded.isClosingReply('B'), 'closing replies are told apart from other bot sends')
   assert.equal(reloaded.inboxMessages()[0].quotedText, 'Mau diantar Sabtu kak?', 'a recovered message keeps what it replied to')
   assert.equal(reloaded.historyFloorTs, 1000, 'the floor is set once')
   assert.equal(reloaded.paused, true)
@@ -93,9 +93,9 @@ test('writeFileAtomic replaces content in one step', t => {
 })
 
 test('bounded id sets drop the oldest entries', t => {
-  const store = new Store(tempDir(t), { limits: { sentByBot: 5, processed: 3, autoReplies: 2 } })
-  for (let index = 0; index < 8; index++) { store.markSentByBot(`S${index}`); store.markProcessed(`P${index}`); store.markAutoReply(`R${index}`) }
-  assert.deepEqual(store.state.autoReplies, ['R6', 'R7'])
+  const store = new Store(tempDir(t), { limits: { sentByBot: 5, processed: 3, closingReplies: 2 } })
+  for (let index = 0; index < 8; index++) { store.markSentByBot(`S${index}`); store.markProcessed(`P${index}`); store.markClosingReply(`R${index}`) }
+  assert.deepEqual(store.state.closingReplies, ['R6', 'R7'])
   assert.equal(store.state.sentByBot.length, 5)
   assert.ok(!store.isSentByBot('S2') && store.isSentByBot('S3') && store.isSentByBot('S7'))
   assert.deepEqual(store.state.processed, ['P5', 'P6', 'P7'])
@@ -117,14 +117,30 @@ test('auto-send counters use rolling windows', t => {
   assert.equal(store.countAutoSends(24 * 60 * 60 * 1000), 0)
 })
 
-test('a social closing counts toward the daily total but uses no per-chat slot', t => {
+test('a failed send gives its slot back, per chat and per day', t => {
   const store = new Store(tempDir(t), { now: () => 1_000_000_000 })
   store.recordAutoSend('a')
-  const closing = store.recordAutoSend('a', { perChat: false })
-  assert.equal(store.countChatAutoSends('a', 60 * 60 * 1000), 1)
-  assert.equal(store.countAutoSends(60 * 60 * 1000), 2)
-  store.releaseAutoSend('a', closing, { perChat: false })
-  assert.deepEqual([store.countChatAutoSends('a', 60 * 60 * 1000), store.countAutoSends(60 * 60 * 1000)], [1, 1], 'the release leaves the chat slot')
+  const failed = store.recordAutoSend('a')
+  assert.deepEqual([store.countChatAutoSends('a', 60 * 60 * 1000), store.countAutoSends(60 * 60 * 1000)], [2, 2])
+  store.releaseAutoSend('a', failed)
+  assert.deepEqual([store.countChatAutoSends('a', 60 * 60 * 1000), store.countAutoSends(60 * 60 * 1000)], [1, 1])
+})
+
+test('a state file from before closing replies loads: the old autoReplies go, pending drafts of either kind stay', t => {
+  const dir = tempDir(t)
+  const drafts = {
+    1: { id: 1, status: 'pending', createdAt: 1, chatId: 'a', draft: 'Sama-sama, Kak 🙏', closing: true, lastMessageAt: 1 },
+    2: { id: 2, status: 'pending', createdAt: 2, chatId: 'b', draft: 'Baik Kak', closing: false }
+  }
+  writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ version: 1, draftCounter: 2, drafts, chats: { a: { lastClosingAt: 5 } }, autoReplies: ['R1'], sentByBot: ['R1'] }))
+  const store = new Store(dir)
+  assert.equal('autoReplies' in store.state, false)
+  assert.deepEqual(store.state.closingReplies, [])
+  assert.equal(store.isClosingReply('R1'), false, 'an old auto-reply is no closing reply')
+  assert.ok(store.isSentByBot('R1'))
+  assert.deepEqual(store.pendingDrafts().map(draft => [draft.id, draft.closing]), [[1, true], [2, false]])
+  store.markClosingReply('X')
+  assert.equal(new Store(dir).isClosingReply('X'), true)
 })
 
 test('drafts: cancel per chat, expire by age', t => {

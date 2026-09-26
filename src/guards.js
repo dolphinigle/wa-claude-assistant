@@ -190,50 +190,56 @@ export function detectLanguage (text) {
   return 'unknown'
 }
 
-// A reply that cites no fact may only close a purely social message. The customer's side is matched as whole phrases
-// (a thanks, a goodbye or an acknowledgement, with honorifics and softeners around it), so a word that only makes
-// sense inside a phrase never counts alone: "no good", "too much" and "oh no" are not a thanks. A greeting may go with
-// one ("makasih kak, selamat siang") but never stands alone: "Selamat pagi kak" opens a conversation. A day part is a
-// greeting only in full: a bare "sore" next to an "ok" picks a time ("ok kak sore ya"). Words that ask for something
-// ("dibantu ya", "ditunggu") are in no list. Acknowledgements (ok, siap, iya) can close the customer's message but
-// never the reply: they could agree to something asked earlier.
-const HONORIFICS = new Set('kak ka kakak mas mbak bu ibu pak bapak sis gan dear min'.split(' '))
+// A thanks is never auto-answered, and after a closing it is skipped without a notice (policy.js), so the customer's
+// side is matched narrowly: a missed thanks only becomes a draft, while a false match could drop a real message. It is
+// matched as whole phrases from a small vocabulary, so a word that only makes sense inside a phrase never counts alone:
+// "no good" and "oh no" are not a thanks. It needs a thanks or goodbye; an acknowledgement ("ok", "iya", "siap") or a
+// 👍 may only go with one, since alone it can be a yes to something our side asked. Greetings are not in it: "Selamat
+// pagi kak" opens a conversation, and "makasih kak, selamat siang" is a draft too. Neither is anything that can agree
+// to, arrange or ask for something: "no problem", "anytime", "see you", "sampai jumpa", "hati-hati" (a warning too),
+// "lagi" (more), "dong", or a bare "welcome".
+const HONORIFICS = 'kak ka kakak mas mbak bu ibu pak bapak sis gan dear min'.split(' ')
 const HAVE_A_NICE = ['nice', 'great', 'good', 'lovely'].flatMap(adjective => ['day', 'weekend', 'evening', 'night'].map(time => `have a ${adjective} ${time}`))
-const CUSTOMER_PHRASES = {
-  thanks: ['terima kasih kembali', 'terima kasih', 'terimakasih', 'makasih', 'makasi', 'mksh', 'trims', 'tengkyu', 'thx', 'tq', 'ty',
+const THANKS_PHRASES = {
+  closings: ['terima kasih kembali', 'terima kasih', 'terimakasih', 'makasih', 'makasi', 'mksh', 'trims', 'tengkyu', 'thx', 'tq', 'ty',
     'thank you too', 'thank you', 'thankyou', 'thanks', 'cheers', 'sama sama', 'you re welcome', 'youre welcome', 'you are welcome',
-    'welcome', 'my pleasure', 'no problem', 'no worries', 'anytime', 'glad to help', 'happy to help', 'senang bisa membantu', 'senang membantu'],
-  goodbyes: ['goodbye', 'good bye', 'bye', 'dadah', 'sampai jumpa', 'see you', 'take care', 'good night', 'selamat tidur', 'hati hati',
-    'sehat selalu', 'semoga harinya menyenangkan', ...HAVE_A_NICE, 'all the best', 'best wishes', 'you too'],
+    'goodbye', 'good bye', 'bye', 'dadah', 'take care', 'good night', 'selamat tidur', 'sehat selalu', 'semoga harinya menyenangkan',
+    ...HAVE_A_NICE, 'all the best', 'best wishes'],
+  // Only next to a closing: "ok makasih kak", "siap, terima kasih", "great, thanks".
   acknowledgements: ['ok', 'oke', 'okay', 'okey', 'okee', 'oce', 'sip', 'siap', 'baik', 'noted', 'mantap', 'mantab', 'iya', 'yes', 'yup',
-    'yep', 'sure', 'alright', 'cool', 'perfect', 'great', 'nice', 'good', 'lovely', 'got it', 'understood', 'paham'],
-  greetings: ['selamat pagi', 'selamat siang', 'selamat sore', 'selamat malam', 'good morning', 'good afternoon', 'good evening', 'halo',
-    'hallo', 'hai', 'hi', 'hello', 'hey', 'salam'],
-  // Only next to one of the above: "makasih banyak ya kak", "thanks so much", "sampai jumpa lagi", "oh ok".
-  fillers: [...HONORIFICS, 'ya', 'yaa', 'deh', 'dong', 'nih', 'juga', 'banyak', 'lagi', 'again', 'soon', 'so much', 'very much', 'a lot',
-    'for your help', 'for the help', 'for the info', 'infonya', 'oh', 'oo', 'wah', 'wow', 'and']
+    'yep', 'alright', 'got it', 'understood', 'paham', 'great', 'nice', 'good', 'perfect', 'cool', 'lovely'],
+  fillers: [...HONORIFICS, 'ya', 'yaa', 'deh', 'nih', 'juga', 'banyak', 'again', 'so much', 'very much', 'a lot', 'for your help',
+    'for the help', 'for the info', 'infonya', 'you too', 'oh', 'oo', 'wah', 'and']
 }
-const PHRASE_KIND = new Map(Object.entries(CUSTOMER_PHRASES).flatMap(([kind, list]) => list.map(phrase => [phrase, kind])))
+const PHRASE_KIND = new Map(Object.entries(THANKS_PHRASES).flatMap(([kind, list]) => list.map(phrase => [phrase, kind])))
 const LONGEST_PHRASE = Math.max(...[...PHRASE_KIND.keys()].map(phrase => phrase.split(' ').length))
 
+// How the words from some position on split into phrases: not at all, only into acknowledgements and fillers, or with
+// at least one closing among them.
+const NO_SPLIT = 0
+const SPLITS = 1
+const SPLITS_WITH_CLOSING = 2
+
 /**
- * The kinds of phrases the words split into, the longest phrase first at each word ("good morning" is one greeting,
- * not "good" and "morning"); undefined if they do not split. Built from the last word back, so a customer's message
- * costs linear time and no recursion however long it is ("good bye" × 40 + "x" was exponential).
+ * True if the words split into phrases of the vocabulary with at least one closing among them. Built from the last
+ * word back, one pass with a fixed look-ahead: linear time and no recursion however long the message is (a recursive
+ * split was exponential on "good bye" × 40 + "x", which also splits as "good" + "bye").
  */
-function phraseKinds (words) {
-  const splits = [...Array(words.length), new Set()] // splits[i]: the kinds of words[i..], if they split
+function splitsWithClosing (words) {
+  const splits = new Uint8Array(words.length + 1) // splits[i]: how words[i..] split
+  splits[words.length] = SPLITS
   for (let start = words.length - 1; start >= 0; start--) {
-    for (let length = Math.min(LONGEST_PHRASE, words.length - start); length > 0 && !splits[start]; length--) {
-      const kind = PHRASE_KIND.get(words.slice(start, start + length).join(' '))
-      if (kind && splits[start + length]) splits[start] = new Set([...splits[start + length], kind])
+    for (let length = 1; length <= Math.min(LONGEST_PHRASE, words.length - start); length++) {
+      const rest = splits[start + length]
+      const kind = rest === NO_SPLIT ? undefined : PHRASE_KIND.get(words.slice(start, start + length).join(' '))
+      if (kind) splits[start] = Math.max(splits[start], kind === 'closings' || rest === SPLITS_WITH_CLOSING ? SPLITS_WITH_CLOSING : SPLITS)
     }
   }
-  return splits[0]
+  return splits[0] === SPLITS_WITH_CLOSING
 }
 
-// Emoji that can only be friendly. Any other one (😡, 👎, 💩) or bare punctuation ("!!!") is not a closing; 👍 and 👌
-// agree to something, so they may close the customer's message but not the reply.
+// Emoji that can only be friendly. Any other one (😡, 👎, 💩) or bare punctuation ("!!!") is no thanks; 👍 and 👌
+// agree to something, so like "ok" they only go with a thanks.
 const FRIENDLY_EMOJI = new Set([...'🙏😊🙂☺😀😁😄🤗🥰😍❤♥💕💖✨🌸'])
 const AGREEING_EMOJI = new Set([...'👍👌🙌👏'])
 const EMOJI = /[\p{Extended_Pictographic}\p{So}]/gu
@@ -242,50 +248,25 @@ const EMOJI_PARTS = /[\p{Emoji_Modifier}︎️]/gu // skin tones and presentatio
 const SMILEYS = /[:;=]-?(?:[)\]]|[dp](?!\p{L}))|\^_?\^|<3/gu
 const PUNCTUATION = /[\s.,!~'’‘"“”–—-]/gu
 
-// The reply is a closed set of closings: a thanks-back or goodbye, optionally with an honorific, a greeting and a
-// well-wish. A yes ("ya kak", "oke"), a promise ("dibantu", "ditunggu", "we have it"), an arrangement ("see you soon",
-// "sampai jumpa") or an emoji alone never fits. "ya" only softens a head or a wish ("sama-sama ya kak").
-const REPLY_HEADS = ['sama sama', 'terima kasih', 'makasih', 'you re welcome', 'youre welcome', 'you are welcome', 'welcome',
-  'thank you', 'thanks', 'my pleasure', 'glad to help', 'happy to help', 'senang bisa membantu', 'senang membantu', 'goodbye', 'bye', 'dadah']
-const REPLY_WISHES = ['semoga harinya menyenangkan', 'sehat selalu', 'hati hati', 'selamat pagi', 'selamat siang', 'selamat sore',
-  'selamat malam', 'take care', 'all the best', 'best wishes', 'good morning', 'good afternoon', 'good evening', 'good night',
-  ...['nice', 'great', 'good', 'lovely'].flatMap(adjective => ['day', 'weekend', 'evening'].map(time => `have a ${adjective} ${time}`))]
-const REPLY_FILLERS = new Set([...HONORIFICS, ...'halo hai hallo hi hello hey juga kembali banyak so much very too again and deh dong nih'.split(' ')])
-const phrases = list => list.map(phrase => phrase.replace(/ /g, ' +')).join('|')
-const REPLY_HEAD = new RegExp(`(?<= )(?:${phrases(REPLY_HEADS)})(?: +yaa?)?(?= )`, 'g')
-const REPLY_WISH = new RegExp(`(?<= )(?:${phrases(REPLY_WISHES)})(?: +yaa?)?(?= )`, 'g')
-
-// A closing is short: a longer message is none, whatever its words, and a spammed one costs nothing to reject.
-const MAX_SOCIAL_WORDS = 30
-
-const socialText = input => {
-  const text = normalizeText(input).toLowerCase().replace(SMILEYS, ' ')
-  if (/[?¿]/.test(text) || /\p{N}/u.test(text)) return undefined
-  if (text.replace(/\p{L}+/gu, '').replace(EMOJI, '').replace(EMOJI_PARTS, '').replace(PUNCTUATION, '') !== '') return undefined
-  const words = text.match(/\p{L}+/gu) ?? []
-  return words.length > MAX_SOCIAL_WORDS ? undefined : { words, emoji: text.match(EMOJI) ?? [] }
-}
+// A thanks is short: a longer message is none, whatever its words, and a spammed one is rejected before any pass over it.
+const MAX_THANKS_CHARS = 300
+const MAX_THANKS_TOKENS = 16
 
 /**
- * The customer only thanks, acknowledges or says goodbye: no question, no digits, no symbol but punctuation, friendly
- * emoji and smileys, and phrases from the vocabulary above with at least one that closes. An emoji alone closes
- * ("🙏"), but not next to a greeting ("Pagi kak 🙏"); a bare "kak" or "..." does not.
+ * The customer only thanks or says goodbye: a thanks or goodbye phrase, with at most acknowledgements, honorifics and
+ * softeners around it, or friendly emoji and no words at all ("🙏"). No question, no digits, no symbol but punctuation,
+ * friendly or agreeing emoji and friendly smileys, at most 16 words and emoji in at most 300 characters.
  */
-export function isSocialMessage (input) {
-  const parts = socialText(input)
-  if (!parts || !parts.emoji.every(symbol => FRIENDLY_EMOJI.has(symbol) || AGREEING_EMOJI.has(symbol))) return false
-  const kinds = phraseKinds(parts.words)
-  if (!kinds) return false
-  return ['thanks', 'goodbyes', 'acknowledgements'].some(kind => kinds.has(kind)) || (parts.emoji.length > 0 && !kinds.has('greetings'))
-}
-
-/** A reply that is only a closing: a thanks-back or goodbye with nothing that answers, promises or arranges. */
-export function isSocialReply (input) {
-  const parts = socialText(input)
-  if (!parts || !parts.emoji.every(symbol => FRIENDLY_EMOJI.has(symbol))) return false
-  let heads = 0
-  const rest = ` ${parts.words.join(' ')} `.replace(REPLY_WISH, ' ').replace(REPLY_HEAD, () => { heads++; return ' ' })
-  return heads > 0 && rest.trim().split(/ +/).filter(Boolean).every(word => REPLY_FILLERS.has(word))
+export function isThanks (input) {
+  if (String(input ?? '').length > MAX_THANKS_CHARS) return false
+  const text = normalizeText(input).toLowerCase().replace(SMILEYS, ' ')
+  if (/[?¿]/.test(text) || /\p{N}/u.test(text)) return false
+  if (text.replace(/\p{L}+/gu, '').replace(EMOJI, '').replace(EMOJI_PARTS, '').replace(PUNCTUATION, '') !== '') return false
+  const words = text.match(/\p{L}+/gu) ?? []
+  const emoji = text.match(EMOJI) ?? []
+  if (words.length + emoji.length > MAX_THANKS_TOKENS) return false
+  if (words.length === 0) return emoji.length > 0 && emoji.every(symbol => FRIENDLY_EMOJI.has(symbol))
+  return emoji.every(symbol => FRIENDLY_EMOJI.has(symbol) || AGREEING_EMOJI.has(symbol)) && splitsWithClosing(words)
 }
 
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -342,14 +323,10 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
   if (/\[F\d+\]/i.test(text)) reasons.push('fact_id_in_reply')
   else if (PLACEHOLDERS.some(pattern => pattern.test(text))) reasons.push('placeholder')
 
+  // Every auto-reply is backed by facts; a thanks-back, which cites none, only ever goes out as a draft (policy.js).
   const cited = Array.isArray(factsUsed) ? factsUsed : []
-  // A purely social exchange needs no fact, and takes none: "ok makasih kak" is answered with "Sama-sama, Kak 🙏", and
-  // a fact cited there only licenses a claim or a promise nobody asked for ("besok kami kirim ya").
-  const socialMessage = incomingText !== undefined && isSocialMessage(incomingText)
-  if (socialMessage && cited.length > 0) reasons.push('social_message_answered_with_facts')
-  if (cited.length === 0) {
-    if (!(socialMessage && isSocialReply(text))) reasons.push('no_facts_used')
-  } else {
+  if (cited.length === 0) reasons.push('no_facts_used')
+  else {
     const unknown = cited.filter(id => !knowledge.facts.has(factId(id)))
     if (unknown.length > 0) reasons.push(`unknown_fact:${unknown.join(',')}`)
   }

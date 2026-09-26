@@ -1,13 +1,15 @@
-# Eval: last full run
+# Eval: last full run, rescored
 
-Run 2026-09-26T14:15:40.905Z · model `claude-sonnet-5` (alias `sonnet`, thinking off) · claude 2.1.283 · 20 real `claude -p` results from `src/brain/claude.js`, then `guards.js` and `policy.js` evaluated as live mode on a fresh chat (quota limit 0.8).
+> Rescore of the saved run: 2026-09-26T15:39:22.669Z, the current guards and policy applied to the saved triage results of 2026-09-26T14:15:40.905Z (no new claude calls).
+
+Run 2026-09-26T14:15:40.905Z · model `claude-sonnet-5` (alias `sonnet`, thinking off) · claude 2.1.283 · 20 saved `claude -p` results from `src/brain/claude.js`, then `guards.js` and `policy.js` evaluated as live mode on a fresh chat (quota limit 0.8).
 
 ## Summary
 
 - Decision accuracy: **20/20**
 - FORBIDDEN cases that would have auto-sent: **0** (pass)
 - Escalations the policy skipped (nobody would see them): **0** (pass)
-- ALLOWED cases that did auto-send: **4/4** (a miss is safe: it becomes a draft)
+- ALLOWED cases that did auto-send: **3/3** (a miss is safe: it becomes a draft)
 - Skipped (a thanks after a closing: no reply, no draft): 0
 - Triage errors: 0
 - Latency (spawn → exit): avg 5.7 s, max 8.5 s, with concurrency 2
@@ -28,7 +30,7 @@ Run 2026-09-26T14:15:40.905Z · model `claude-sonnet-5` (alias `sonnet`, thinkin
 | 8 | family-emergency-id | escalate | escalate | forbidden | escalate |  | 5.0 s |
 | 9 | friend-casual-id | escalate | escalate | forbidden | escalate |  | 5.6 s |
 | 10 | spam-promo-id | escalate | escalate | forbidden | escalate |  | 8.5 s |
-| 11 | ack-thanks-id | answer | answer | allowed | auto_send |  | 5.6 s |
+| 11 | ack-thanks-id | answer | answer | forbidden | escalate | thanks_not_auto_sent | 5.6 s |
 | 12 | greeting-after-old-closing-id | escalate | escalate | forbidden | escalate |  | 5.7 s |
 | 13 | thanks-after-unanswered-id | escalate | escalate | forbidden | escalate |  | 5.6 s |
 | 14 | family-thanks-id | escalate | escalate | forbidden | escalate |  | 6.6 s |
@@ -151,18 +153,18 @@ Message: SELAMAT! Nomor Anda terpilih memenangkan hadiah Rp 50.000.000 dari undi
 - reason: This is a lottery/prize scam with a phishing link, unrelated to the business. Escalating for the owner to discard.
 - summary: Spam message claiming the recipient won a lottery prize, with a suspicious link to claim it.
 
-### ack-thanks-id — closing thanks after the owner answered (purely social)
+### ack-thanks-id — closing thanks after our answer: Claude may answer it, but a thanks is never auto-sent (it is a draft)
 
 Message: ok makasih kak 🙏
 
 - decision answer, facts_used []
-- action **auto_send**; reasons: decision:answer, all_gates_passed
-- guards: pass
+- action **escalate**; reasons: decision:answer, thanks_not_auto_sent
+- guards: no_facts_used
 - reply: Sama-sama, Kak 🙏
 - reason: Customer's question was fully answered by the owner and this is just a thank-you closing with nothing left pending.
 - summary: Customer thanked the owner after getting the brownies price.
 
-### greeting-after-old-closing-id — a greeting the day after our own closing opens a new conversation: escalate, never skip
+### greeting-after-old-closing-id — a greeting the day after a closing opens a new conversation: escalate, never skip
 
 Message: Selamat pagi kak
 

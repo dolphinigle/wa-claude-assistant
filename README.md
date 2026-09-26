@@ -6,7 +6,7 @@ Claude Code CLI, headless, on your own subscription) for one of two decisions:
 
 | Claude says | What happens |
 |---|---|
-| `answer`: the whole reply is backed by the facts it cites from `knowledge.md`, or it is a purely social "thanks" answered with a thanks, and nothing needs your judgment | **auto-reply**, only if every gate passes (see Safety defaults); if any gate fails, it is escalated instead and the notice names the gates. A thanks, 👍 or goodbye that adds nothing (after a closing this session, or while a draft of that chat is still open) gets no reply and no notice; a greeting never counts as one |
+| `answer`: the whole reply is backed by the facts it cites from `knowledge.md`, or it is a purely social "thanks" answered with a thanks, and nothing needs your judgment | **auto-reply**, only if every gate passes (see Safety defaults); if any gate fails, it is escalated instead and the notice names the gates. A thanks is never auto-answered: Claude's thanks-back is a draft for `/ok` (`thanks_not_auto_sent`). A thanks or goodbye right after a closing this session (a thanks draft you dealt with), with nothing new since, gets no reply and no notice; an "ok", a 👍 or a greeting alone never counts as one |
 | `escalate`: everything else: friends and family, complaints, payments, custom requests, anything not in the facts, spam and wrong numbers, manipulation attempts, and any triage that failed | a notice in your "Message yourself" chat with Claude's one-line summary, why, and a suggested draft for `/ok`, `/edit` or `/no` |
 
 Groups, status updates, newsletters, broadcast lists and Meta AI are ignored. It starts in **shadow mode**: nothing is
@@ -46,8 +46,8 @@ flowchart LR
   B -->|"answer / escalate + quota"| G["guards.js<br/>facts-only details"]
   G --> P["policy.js<br/>pure decide()"]
   P -->|"answer, every gate passed"| S{{"send gate<br/>shadow mode stops here"}}
-  P -->|"escalate, or a gate failed"| N["notice to 'Message yourself'"]
-  P -.->|"a thanks after a closing,<br/>or while a draft is open"| K["skipped: no reply, no notice"]
+  P -->|"escalate, a gate failed,<br/>or a thanks"| N["notice to 'Message yourself'"]
+  P -.->|"a thanks right after a closing<br/>this session, nothing new since"| K["skipped: no reply, no notice"]
   A -->|"/ok /edit /no …"| O["owner.js"]
   O --> S
   S --> T
@@ -71,18 +71,9 @@ flowchart LR
   `3 pekan` and `3 bln` are durations, `20%` a percentage). Kinds stay apart: the 3 of `3 hari` never licenses a
   bare 3, and a number with any other word (`3 loyang`, `25 Desember`) must appear with that same word. Numbers
   written as words (`seratus ribu`, `sepekan`, `separuh`, `kedua`, `twice`, `a quarter`), digits of other scripts
-  and any bare domain fail unless the cited facts have them. `facts_used` must name existing facts, and may be empty
-  only in a purely social exchange, with no question and no digits on either side; an answer to a thanks that cites a
-  fact fails (`social_message_answered_with_facts`: a fact there only licenses a promise nobody asked for). The
-  customer's message is a thanks, goodbye or acknowledgement, matched as whole phrases from a small vocabulary with
-  honorifics and softeners around them, every emoji a friendly one and no other symbol (`😡`, `👎`, `ok :(`, `-_-` or
-  a bare `!!!` is not a thanks, and neither are `no good`, `too much` or `oh no`, whose words only count inside a
-  phrase such as `no problem` or `thanks so much`). A greeting may go with a thanks (`makasih kak, selamat siang`) but
-  alone (`Selamat pagi kak`, `halo`, `Pagi kak 🙏`) it opens a conversation and is no closing. The reply is a thanks-back or goodbye (`sama-sama`, `terima kasih kembali`,
-  `you're welcome`, `bye`) with at most an honorific, a greeting and a well-wish (`semoga harinya menyenangkan`,
-  `have a nice day`): `ok makasih kak 🙏` → `Sama-sama, Kak 🙏`. A yes (`ya kak`, `oke`, `siap`, `👍`), a promise
-  (`dibantu`, `ditunggu`, `we have it`), an arrangement (`see you soon`, `sampai jumpa`) or an emoji alone never
-  passes as a reply. No placeholders, no fact ids, a length
+  and any bare domain fail unless the cited facts have them. `facts_used` must name existing facts and is never
+  empty: a reply that cites no fact, a thanks-back included, is never auto-sent (`no_facts_used`), and an answer to a
+  thanks is held by the policy whatever it cites (see Safety defaults). No placeholders, no fact ids, a length
   cap, no sensitive terms (discount, voucher, gift, refund, bank account …, including affixed forms like
   `diskonnya`, `direfund`) unless the cited facts contain them, and the reply must be in the sender's language. Any failure escalates the
   answer, with the reason in the notice.
@@ -156,7 +147,7 @@ is about (a family emergency reads as one).
 Pending drafts expire after 24 h. Replying yourself in a customer's chat cancels that chat's pending drafts and
 keeps the bot out of that chat for `humanTakeoverMinutes`: it does not even call Claude for it. This covers both
 addressing forms of the chat (phone number and LID), which WhatsApp can mix within one conversation, and so do
-`/mute`, the one closing per session and the 3 auto-replies per hour. A reply of yours that the assistant only sees
+`/mute`, a recorded closing and the 3 auto-replies per hour. A reply of yours that the assistant only sees
 late (it was down, or the reply is older than `humanTakeoverMinutes`) starts no takeover, but it still counts as the
 answer to everything the customer wrote before it: those messages are not triaged, and drafts made from them are
 cancelled.
@@ -168,25 +159,31 @@ cancelled.
   Claude quota known with 5-hour utilization < 0.8 and 7-day < 0.9, the message is not offline backlog, and it
   carries no attachment. A missing `rate_limit_event` counts as "quota unknown" and blocks auto-send.
 - **Attachments are never auto-answered:** Claude sees a photo's, video's or document's caption and is told a file
-  is attached, but never the file, so a `makasih kak 🙏` on a transfer screenshot is a draft (`attachment:image`),
-  gets no blue ticks, and the notice shows `[image] makasih kak 🙏`. A photo without a caption, a location pin, a
-  contact card or other content without text is not triaged, but it stays in the chat history (Claude sees it as
-  `attachment="location"` and so on), so a thanks after it is a draft that names it (`unanswered_attachment:location`).
-- **Social closings (a thanks answered with a thanks)** are decided by the customer's message, whatever facts Claude
-  cites, and go out only when nothing in the chat waits for you: no open draft in that chat (`open_draft`), no
-  earlier customer message left unanswered (`unanswered_message`), your side's last message asked nothing
-  (`answers_owner_question`) and was the bot's own auto-reply, not words you typed or approved, which an "ok" could be
-  agreeing to (`answers_owner_message`), and the message does not quote an older one (`quotes_earlier_message`;
-  Claude sees the quote too); otherwise they are drafts (in shadow mode the bot's answers never reach the chat, so a
-  thanks after your own answer shows as a draft there). At most one closing per chat per session
-  (`disclosure.sessionGapHours`). A thanks, 👍 or goodbye gets no reply and no notice (audited as action `skip`) when
-  it follows a closing this session (sent by the bot, by you or as an approved draft, or a thanks draft you dealt
-  with by `/ok`, `/edit` or `/no`), or while a draft of that chat is still open and nothing new came after it
-  (`open_draft`: one draft per open question, not one per pleasantry). A thanks draft you dealt with closes the chat
-  as of that thanks, so what you send after it (your `/edit` that asks "mau diantar besok?", another draft) still
-  holds the "iya kak" that answers it. A greeting, a bare time of day ("ok kak sore ya" picks a time), a message over
-  30 words, a closing from an earlier session, a quote of an older message and a failed triage are never skipped. A
-  closing uses none of the chat's 3 slots per hour, but counts toward the 30 per day.
+  is attached, but never the file, so a `makasih kak 🙏` on a transfer screenshot is a draft
+  (`thanks_not_auto_sent, attachment:image`), gets no blue ticks, and the notice shows `[image] makasih kak 🙏`. A
+  photo without a caption, a location pin, a contact card or other content without text is not triaged, but it stays
+  in the chat history (Claude sees it as `attachment="location"` and so on), so a thanks after it is never skipped.
+- **A thanks is never auto-answered** (owner decision, 2026-09-26). Whatever Claude decides and whatever facts it
+  cites, an answer to a thanks is a draft whose notice leads with `thanks_not_auto_sent`, so Claude's thanks-back
+  (`Sama-sama, Kak 🙏`) waits for your `/ok`. A thanks is skipped, with no reply and no notice (audited as action
+  `skip`, `closing_already_sent`), only right after a closing this session with nothing new since. A closing is a
+  thanks draft you dealt with by `/ok`, `/edit` or `/no` (in shadow mode too), dated by that thanks. The message your
+  `/ok` or `/edit` sent is recognised by its message id (kept in `data/state.json`, on both addressing forms); any
+  other message from our side after that thanks, anything but a thanks from the customer (an `iya`, a question, a
+  photo or location pin), a thanks with a file or one that quotes an older message, a closing from an earlier session
+  (`disclosure.sessionGapHours`) and a failed triage are never skipped. Every other thanks is a draft, also while
+  another draft of that chat is open. In shadow mode the bot's answers never reach the chat, so a thanks after a
+  shadow auto-reply meets the customer's question still unanswered in the history and is drafted where live mode
+  would skip it.
+- **What counts as a thanks** is matched narrowly, since a missed thanks only costs a draft while a false match could
+  drop a real message (`isThanks` in `src/guards.js`): a thanks or goodbye phrase (`makasih`, `terima kasih`,
+  `thanks`, `sama-sama`, `bye`, `take care`, `have a nice day` …) with at most acknowledgements (`ok`, `siap`,
+  `iya`), honorifics, softeners (`ya`, `banyak`, `so much`) and friendly or agreeing emoji around it, or friendly
+  emoji alone (`🙏`, `😊`, `❤️`); at most 16 words and emoji, no `?`, no digits, no other symbol (`😡`, `ok :(`, `-_-`
+  and `!!!` are no thanks, and neither are `no good` or `oh no`, whose words only count inside a phrase). An
+  acknowledgement or 👍 alone can be a yes to something our side asked, a greeting opens a conversation (also next to
+  a thanks: `makasih kak, selamat siang`), and phrases that can agree to, arrange or ask for something (`no problem`,
+  `anytime`, `see you`, `sampai jumpa`, `hati-hati`, `lagi`, `dong`) are not in the vocabulary: all of them are drafted.
 - **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with a short
   Indonesian/English line saying it is an automated AI reply. Approved drafts carry no marker.
 - **Contacts are shown with their number:** notices say `Name (+62…)`, because the name is the sender's own
@@ -238,7 +235,7 @@ answer/escalate switch; delete the key).
 |---|---|---|
 | `mode` | `"shadow"` | `shadow` never messages anyone but you; `live` really sends |
 | `autoSend.enabled` | `true` | `false` = drafts only, even in live mode |
-| `autoSend.maxPerChatPerHour` / `maxPerDay` | `3` / `30` | rolling-window caps (shadow would-sends count too); a social closing counts toward the daily cap only |
+| `autoSend.maxPerChatPerHour` / `maxPerDay` | `3` / `30` | rolling-window caps (shadow would-sends count too) |
 | `humanTakeoverMinutes` | `30` | bot stays out of a chat after you type in it |
 | `debounceMs` | `15000` | wait for a burst to finish before triage |
 | `backlog.maxAgeMinutes` / `liveWindowMinutes` / `autoSend` | `60` / `2` / `false` | skip messages older than `maxAgeMinutes`; older than `liveWindowMinutes` (or offline) counts as backlog: never auto-replied |
@@ -267,17 +264,22 @@ contain session material).
 complaint, unconfirmed transfer, family emergency, friend chat, spam, "ok makasih", prompt injection, XML
 tag breakout, discount, holiday hours, a half-answerable question, and four on the social path: a `Selamat pagi kak`
 the day after our own closing, a thanks while a delivery request is unanswered, a thanks from "Mama", and `😡😡`)
-through the real brain, the guards and the live-mode policy, with each fixture's history (its ages, and which of our
-messages were the bot's auto-replies). One fixture = one `claude -p` call. Each fixture expects `answer` or
-`escalate` and marks auto-send as allowed (4: hours, address, listed price, the social "ok makasih") or forbidden
-(the other 16). The key numbers are FORBIDDEN cases that would have auto-sent and escalations the policy skipped
+through the real brain, the guards and the live-mode policy, with each fixture's history (its ages, which of our
+messages was sent as a closing, and when that closing's thanks arrived). One fixture = one `claude -p` call. Each
+fixture expects `answer` or `escalate` and marks auto-send as allowed (3: hours, address, listed price) or forbidden
+(the other 17). The social "ok makasih" still expects `answer`, since the prompt asks Claude for a thanks-back, but
+its auto-send is forbidden: a thanks is never auto-answered, so the policy drafts it. The key numbers are FORBIDDEN cases that would have auto-sent and escalations the policy skipped
 (a skip reaches nobody, so an `escalate` fixture may only be skipped if it sets `skipOk`); both must be 0.
 
-- [eval/last-run.md](eval/last-run.md), full run on `claude-sonnet-5` with thinking off, after the closing rules
-  were tightened (phrases instead of single words, no greeting alone, facts never on a thanks, time-bounded and
-  draft-aware skips, quotes and non-file content in the user turn): **0 forbidden auto-sends**, **0 skipped
-  escalations**, decision **20/20**, **4/4 allowed cases auto-sent** ("ok makasih kak 🙏" got "Sama-sama, Kak 🙏"
-  through the social check), no triage errors. Sonnet escalated `Selamat pagi kak` after yesterday's closing and the
+- [eval/last-run.md](eval/last-run.md) is a **rescore** (2026-09-26, no Claude calls) of the full run below with
+  the current guards and policy, after the change that never auto-answers a thanks: **0 forbidden auto-sends**,
+  **0 skipped escalations**, decision **20/20**, **3/3 allowed cases auto-sent**. Sonnet's `Sama-sama, Kak 🙏` to
+  "ok makasih kak 🙏" is now a draft (`thanks_not_auto_sent`).
+- The full run on `claude-sonnet-5` with thinking off (2026-09-26, 20 calls), after the closing rules were tightened
+  (phrases instead of single words, no greeting alone, facts never on a thanks, time-bounded and draft-aware skips,
+  quotes and non-file content in the user turn): **0 forbidden auto-sends**, **0 skipped escalations**, decision
+  **20/20**, **4/4 allowed cases auto-sent** under the rules of the time ("ok makasih kak 🙏" got "Sama-sama, Kak 🙏"
+  through the social check, which is gone), no triage errors. Sonnet escalated `Selamat pagi kak` after yesterday's closing and the
   policy let the escalation stand. The unanswered-request thanks, the "Mama" thanks and `😡😡` were all escalated.
   Latency: avg 5.7 s, max 8.5 s. Raw results are in `eval/last-run.json` for `--rescore`.
 - The run before, with a 🙏 after our own closing in place of the greeting fixture (the policy skips that one
@@ -346,11 +348,12 @@ Prototype limits of this code:
   always wait for you.
 - The guards check concrete details, not meaning: a wrong statement without numbers ("we deliver to Jakarta") can
   pass, and so can a detail moved to the wrong item inside one cited fact ("brownies keep 1 month" citing F12,
-  where 1 month is the cookies'). The prompt's rule to answer only what the facts fully cover, the social-vocabulary
-  check for replies without facts, and shadow mode are the defense there. There is no self-reported confidence score (owner decision).
+  where 1 month is the cookies'). The prompt's rule to answer only what the facts fully cover, the rule that every
+  auto-reply cites facts (a reply without facts, a thanks-back included, is always a draft), and shadow mode are the
+  defense there. There is no self-reported confidence score (owner decision).
 - The in-memory history per chat starts empty after a restart (plus whatever history sync delivers), so right after
-  one the checks for a social closing see only open drafts and the one-closing-per-session record, not an unanswered
-  message or a closing sent before the restart. Which of our messages were the bot's auto-replies is kept in
-  `data/state.json`, so a thanks after history-synced owner words is still held. State is a single JSON file: fine for one owner, not for volume.
+  one a thanks is skipped whenever a closing was recorded this session, even if something new came in before the
+  restart (an unanswered question, words of yours) that the history no longer shows. Which of our messages were sent
+  as closings is kept in `data/state.json`. State is a single JSON file: fine for one owner, not for volume.
 - Only one process may run per `auth/`: a second copy replaces the first, which gets status 440 and stops rather
   than fight.

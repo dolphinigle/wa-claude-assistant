@@ -32,6 +32,7 @@ draft in the owner's "Message yourself" chat.
 | AI disclosure | On, first auto-send per 12 h session (Anthropic AUP); approved drafts carry no marker |
 | Tone and facts | `knowledge.md`: `## Voice` for tone, `## Facts` is the only ground truth, `## Never` for hard rules |
 | WhatsApp client | Baileys `7.0.0-rc14`, exact pin. Switch triggers are in `docs/implementation-notes.md` |
+| Thanks | Never auto-answered; skipped only after a closing this session, drafted otherwise (2026-09-26) |
 
 Ask the owner before changing **what gets auto-sent, drafted, or silently skipped**. Mechanical work needs no plan
 confirmation here: just do it and report.
@@ -65,10 +66,14 @@ confirmation here: just do it and report.
 
 ## Known weak spot
 
-The social "thanks" path is the weak spot: `isSocial*` and `phraseKinds` in `src/guards.js`, plus the closing skip in `src/policy.js`.
-- Every review round found bugs there, including an exponential-time matcher.
-- Commit `6503270` is unreviewed.
-- Proposed simplification, **pending owner OK:** never auto-answer a thanks; skip it after a closing, draft it otherwise.
+The social "thanks" path was the weak spot: every review round found bugs there, including an exponential-time matcher.
+The owner-approved simplification is done (a thanks never auto-sends) and is **under review**, together with the
+never-reviewed `6503270`. What is left of the path:
+- `isThanks` in `src/guards.js` only chooses skip vs draft. Its vocabulary is deliberately narrow: a missed thanks
+  costs a draft, a false match silently drops a real message after a closing. When in doubt, leave a phrase out.
+- `closedThisSession` in `src/policy.js` skips a thanks only after a closing this session (`lastClosingAt`, dated by
+  the thanks) with nothing new since. The reply sent by `/ok` or `/edit` is recognised by its message id
+  (`store.closingReplies`).
 
 ## Working style
 
