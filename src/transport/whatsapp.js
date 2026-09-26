@@ -49,7 +49,8 @@ export async function createBaileysSocket ({ authDir, logger, getMessage }) {
  * @param {object} options
  * @param {(message: object) => Promise<void>} options.onMessage  normalized customer/self-chat messages
  * @param {(item: {id: string, chatId: string, chatIdAlt?: string, timestamp: number, attachment: string}) => void} [options.onUntriaged]
- *   a customer's content that is never triaged: a file without a caption, a pin, a contact card, an undecryptable message
+ *   a customer's content that is never triaged: a file without a caption, a pin, a contact card, an undecryptable
+ *   message, a sticker, a reaction or an edit
  * @param {() => void} [options.onReady]  first successful connection of this process
  * @param {(info: {outageMs: number}) => void} [options.onConnected]  every successful (re)connection, e.g. to re-send
  *   failed notices; `outageMs` is how long WhatsApp was unreachable before it (0 on the first connection)

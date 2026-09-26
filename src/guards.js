@@ -229,6 +229,7 @@ function vocabulary (lists) {
   return { kinds, phrases, longest: Math.max(...[...phrases.keys()].map(phrase => phrase.split(' ').length)) }
 }
 const THANKS_VOCABULARY = vocabulary(THANKS_PHRASES)
+const YES_BEFORE_THANKS = new Set(['ya', 'yaa'])
 
 /**
  * The kinds of phrases each way of splitting the words into phrases of the vocabulary uses, as bitmasks; empty if
@@ -268,7 +269,8 @@ const MAX_THANKS_TOKENS = 16
  * most acknowledgements, honorifics and softeners around it, or friendly emoji and no words at all ("🙏"). No question,
  * no digits, no symbol but punctuation, friendly or agreeing emoji and friendly smileys, at most 16 words and emoji in
  * at most 300 characters. `agrees`: it reads as a thanks only with an acknowledgement or an agreeing emoji in it ("iya
- * makasih", "ok siap, thanks", "👍 makasih"), so it may also be a yes to something our side asked.
+ * makasih", "ok siap, thanks", "👍 makasih"), or a "ya" comes before the thanks ("ya kak, makasih"), so it may also be a
+ * yes to something our side asked.
  */
 function readThanks (input) {
   if (String(input ?? '').length > MAX_THANKS_CHARS) return undefined
@@ -283,7 +285,12 @@ function readThanks (input) {
   const { closings, acknowledgements } = THANKS_VOCABULARY.kinds
   const splits = splitKinds(words, THANKS_VOCABULARY).filter(kinds => kinds & closings)
   if (splits.length === 0) return undefined
-  return { agrees: emoji.some(symbol => AGREEING_EMOJI.has(symbol)) || splits.every(kinds => kinds & acknowledgements) }
+  // A "ya" before the thanks is the Indonesian yes ("ya kak, makasih", "ya deh makasih"); after it, it only softens
+  // ("makasih ya kak").
+  const startsClosing = index => Array.from({ length: THANKS_VOCABULARY.longest }, (_, length) => words.slice(index, index + length + 1).join(' '))
+    .some(phrase => THANKS_VOCABULARY.phrases.get(phrase) === closings)
+  const yesFirst = words.slice(0, words.findIndex((_, index) => startsClosing(index))).some(word => YES_BEFORE_THANKS.has(word))
+  return { agrees: yesFirst || emoji.some(symbol => AGREEING_EMOJI.has(symbol)) || splits.every(kinds => kinds & acknowledgements) }
 }
 
 /** The customer only thanks or says goodbye (see readThanks). */
@@ -299,8 +306,9 @@ export const thanksAgrees = input => readThanks(input)?.agrees === true
 // answer back on the other gates.
 const wordsOf = list => list.split(' ')
 // Ask wherever they stand. Chat questions often have no question mark ("buka jam berapa kak").
+// Not "kok": in chat it mostly stresses a statement ("bisa kok kak", "udah sampai kok, makasih"), so it is a particle.
 const QUESTION_WORDS = new Set(wordsOf('apa apakah apaan ngapain berapa berapakah brp brapa kapan kapankah kpn dimana dimanakah dmn mana ' +
-  'manakah kemana darimana gimana gmn gmana bagaimana bagaimanakah bgmn kenapa knp napa mengapa siapa siapakah kah kok koq bisakah ' +
+  'manakah kemana darimana gimana gmn gmana bagaimana bagaimanakah bgmn kenapa knp napa mengapa siapa siapakah kah bisakah ' +
   'bolehkah adakah benarkah betulkah masihkah sudahkah haruskah perlukah mungkinkah maukah tanya nanya ' +
   'what whats when where wheres which who whos whom whose why how hows does'))
 const QUESTION_PHRASES = new Set(['do you', 'do i', 'did you', 'is there', 'are there', 'is it', 'are you', 'will you', 'may i', 'tell me',
@@ -312,23 +320,28 @@ const FIRST_PERSON = new Set(wordsOf('saya sy aku ak gue gw gua kami kita i we')
 // What a clause may hold besides a request word and still only say yes: every word of the thanks vocabulary, more
 // honorifics, particles, and an apology ("minta maaf", "mohon maaf").
 const SOFT_WORDS = new Set([...Object.values(THANKS_PHRASES).flat().flatMap(phrase => phrase.split(' ')),
-  ...wordsOf('kaka kk mba sist bang om bro bos sob bund bunda yah sih dong tuh aja saja lah loh lho maaf')])
+  ...wordsOf('kaka kk mba sist bang om bro bos sob bund bunda yah sih dong tuh aja saja lah loh lho kok koq maaf')])
 // "info harga kak" asks; "makasih infonya", "makasih info nya" and "thanks for the info" do not.
 const THANKED_FOR = new Set(wordsOf('the for atas untuk buat your makasih kasih thanks thx tq'))
 // A tag at the end of a clause ("buka gak kak", "sudah sampai belum", "masih ada nggak"), after a word it asks about:
-// "belum", "gak kak", "iya kan" and "saya belum" answer. A negation also makes "nggak apa" (no problem) no question.
+// "belum", "gak kak", "iya kan" and "saya belum" answer.
 const NEGATIONS = new Set(wordsOf('gak ga nggak ngga enggak engga nggk ngak gk tidak tdk ndak nda kagak'))
 const TAGS = new Set([...NEGATIONS, ...wordsOf('belum blm bukan kan')])
+// After a negation these ask nothing: "gak apa", "ga napa", "gak knp", "tidak mengapa", "nggak kenapa-napa" (no
+// problem), "gak ngapain" (nothing).
+const NO_PROBLEM = new Set(wordsOf('apa napa knp kenapa mengapa ngapain'))
 
 function clauseAsks (clause) {
   const tokens = clause.match(/[\p{L}\p{N}]+/gu) ?? []
   const other = tokens.some(token => !SOFT_WORDS.has(token) && !REQUEST_WORDS.has(token))
+  const noProblem = index => NO_PROBLEM.has(tokens[index]) &&
+    (NEGATIONS.has(tokens[index - 1]) || (NO_PROBLEM.has(tokens[index - 1]) && NEGATIONS.has(tokens[index - 2])))
   const asks = (token, index) => {
     const before = tokens[index - 1]
     const after = tokens[index + 1]
     if (before === token || after === token) return false // "apa-apa" (anything), "kapan-kapan" (some time), "mana-mana"
     if (QUESTION_PHRASES.has(`${token} ${after}`)) return true
-    if (QUESTION_WORDS.has(token)) return !(token === 'apa' && NEGATIONS.has(before))
+    if (QUESTION_WORDS.has(token)) return !noProblem(index)
     if (token === 'info') return after !== 'nya' && !THANKED_FOR.has(before)
     return REQUEST_WORDS.has(token) && other && !FIRST_PERSON.has(before)
   }
@@ -339,12 +352,19 @@ function clauseAsks (clause) {
   return TAGS.has(tokens[last]) && previous !== undefined && !TAGS.has(previous) && !SOFT_WORDS.has(previous) && !FIRST_PERSON.has(previous)
 }
 
+// A shared link is not what the customer asks: its query string ("maps.app.goo.gl/x?g_st=iw", "…?smtt=0.0.9") and
+// the words of its path are dropped. A link is a word with "://", or one that starts with "www." or with a domain and a
+// "/"; a bare "kak.kirim" is a missing space and stays. Tested per word and anchored, so linear: the URL pattern
+// above backtracks quadratically on a long "a.a.a…".
+const LINK = /:\/\/|^www\.|^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\//
+const withoutLinks = text => text.replace(/\S+/g, word => (LINK.test(word) ? ' ' : word))
+
 /**
  * The customer's message asks something: a question mark, a question word, a request word with something to request,
- * or a tag question at the end of a clause. A burst asks if any of its messages does. One pass over the text.
+ * or a tag question at the end of a clause, links left out. A burst asks if any of its messages does. Linear time.
  */
 export function asksSomething (input) {
-  const text = normalizeText(input).toLowerCase()
+  const text = withoutLinks(normalizeText(input).toLowerCase())
   if (/[?¿؟]/.test(text)) return true // NFKC folds the fullwidth ？
   return text.split(/[\n.,!;]+/).some(clauseAsks)
 }

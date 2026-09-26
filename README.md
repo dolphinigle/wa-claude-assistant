@@ -194,7 +194,8 @@ cancelled.
   other content without text is not triaged, but it stays in the chat history (Claude sees it as
   `attachment="location"` and so on) and its time is kept in `data/state.json`, so a thanks after it is never skipped:
   also when it came while a thanks draft waited and your `/ok` sent the closing after it, when it came on the other
-  addressing form, and after a restart.
+  addressing form, and after a restart. A sticker, a reaction (a 👍 on our offer may be a yes) or an edit from the
+  customer stays out of the history, but its time is kept the same way.
 - **Only an answer to a message that asks something is auto-sent** (owner decision, 2026-09-27; a thanks since
   2026-09-26). Whatever Claude decides and whatever facts it cites, an answer to a message that asks nothing (a
   thanks, a yes, a greeting, a statement) is a draft whose notice leads with `no_question`, so Claude's thanks-back
@@ -202,14 +203,16 @@ cancelled.
   something your side offered. A thanks is skipped, with no reply and no notice (audited as action
   `skip`, `closing_already_sent`), only right after a closing this session with nothing new since. A closing is a
   thanks draft you dealt with by `/ok`, `/edit` or `/no` (in shadow mode too), dated by that thanks. After a `/no`, a
-  shadow `/ok` or a restart, only a plain thanks (`makasih kak 🙏`) is skipped: one with an acknowledgement or a 👍
-  (`iya kak makasih`, `👍 makasih`) may be the yes to our last message before the thanks, which nothing answered, and
-  is drafted. The message your `/ok` or `/edit` sent is recognised by its message id (kept in `data/state.json`, on
+  shadow `/ok` or a restart, only a plain thanks (`makasih kak 🙏`, `makasih ya kak`) is skipped: one with an
+  acknowledgement, a 👍 or a `ya` before the thanks (`iya kak makasih`, `👍 makasih`, `ya kak, makasih`) may be the
+  yes to our last message before the thanks, which nothing answered, and is drafted. The message your `/ok` or `/edit` sent is recognised by its message id (kept in `data/state.json`, on
   both addressing forms), and only when it is itself just a thanks-back: one that asks or offers anything
   (`Sama-sama kak! Mau sekalian pesan untuk Sabtu?`) is new, so an `iya kak, makasih 🙏` after it is drafted. Any
   other message from our side after that thanks (on either addressing form, and from before a restart: the time of
-  our last word is kept in `data/state.json`), anything but a thanks from the customer since that thanks (an `iya`, a
-  question, a photo, a location pin, a message that could not be decrypted), a thanks with a file or one that quotes
+  our last word is kept in `data/state.json`, never older than the newest customer message already received, so a
+  local clock behind WhatsApp's cannot date a reply before the thanks it followed), anything but a thanks from the
+  customer since that thanks (an `iya`, a question, a photo, a location pin, a message that could not be decrypted, a
+  sticker, a reaction, an edit), a thanks with a file or one that quotes
   any message but the thanks-back your `/ok` or `/edit` sent (our question before a thanks you discarded, or a photo,
   voice note or pin of ours, which has no text: quotes are matched by message id), a closing from an earlier session
   (`disclosure.sessionGapHours`) and a failed triage are never skipped. Every other thanks is a
@@ -228,14 +231,17 @@ cancelled.
 - **What counts as asking** is matched the other way round (`asksSomething`): no list knows every way to thank or
   agree (`makasih bang`, `sama2`, `betul`), so it lists what asks, and a missed question only costs a draft. A
   message asks something if it has a `?` (fullwidth too), a question word (`apa`, `berapa`, `kapan`, `dimana`,
-  `mana`, `gimana`, `kenapa`, `siapa`, `kok`, `tanya`, `bisakah` and the other `-kah` questions; `what`, `when`,
+  `mana`, `gimana`, `kenapa`, `siapa`, `tanya`, `bisakah` and the other `-kah` questions; `what`, `when`,
   `where`, `which`, `who`, `why`, `how`, `does`, `do you`, `is there`, `are you`, `will you`, `may i`, `tell me`,
   `would like` …), `info` as a request (`info harga`, not `makasih infonya` or `thanks for the info`), a request
   word with something to request in its clause (`bisa kirim ke Bekasi`, `boleh minta alamatnya`, `tolong kirim
   besok`, `please send the menu`, `can you deliver`; alone they say yes: `bisa kak`, `boleh`, `ada`, `tolong ya`,
   `yes please`, and after `saya` or `I` they state: `saya bisa ambil besok`), or a tag question at the end of a
   clause (`tokonya buka gak kak`, `ready ga`, `sudah sampai belum`, `buka minggu kan`). Reduplicated question words
-  ask nothing (`nggak apa-apa`, `kapan-kapan`), and neither does `apa` after a negation (`gak apa kak`). A burst asks
+  ask nothing (`nggak apa-apa`, `kapan-kapan`), and neither do `apa`, `napa`, `knp`, `kenapa`, `mengapa` or
+  `ngapain` after a negation ("no problem" however it is spelled: `gak apa kak`, `ga napa`, `tidak mengapa`). `kok`
+  is a particle (`bisa kok kak`), not a question word. A shared link is left out, so the `?` of its query string
+  (`https://maps.app.goo.gl/…?g_st=iw`) or a word in its path asks nothing; a bare `kak.kirim` is no link. A burst asks
   if any of its messages does, and a question with a thanks (`makasih kak, jam berapa tutup?`) goes on to the other
   gates like any question.
 - **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with a short
@@ -294,7 +300,7 @@ answer/escalate switch; delete the key).
 | `debounceMs` | `15000` | wait for a burst to finish before triage |
 | `backlog.maxAgeMinutes` / `liveWindowMinutes` / `autoSend` | `60` / `2` / `false` | skip messages older than `maxAgeMinutes`; older than `liveWindowMinutes` (or offline) counts as backlog: never auto-replied |
 | `contextMessages` | `8` | earlier messages sent to Claude as `<history>` |
-| `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`); never sent to Claude, never replied to. A LID chat matches a phone number through the number its messages carried or WhatsApp's LID mapping; while its number is unknown and the list has phone numbers, that chat gets drafts only (its messages still reach Claude) and every draft of it, a thanks or an escalation too, shows the LID to add here |
+| `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`); never sent to Claude, never replied to. A LID chat matches a phone number through the number its messages carried or WhatsApp's LID mapping; while its number is unknown and the list has phone numbers, that chat gets drafts only (its messages still reach Claude) and every draft of it, a thanks or an escalation too, shows the LID to add here. Anything but a list of JIDs or phone numbers stops the start |
 | `allowChats` | `[]` | empty = every chat. Otherwise only the chats it lists (JIDs or phone numbers, matched like `blocklist`) are handled; every other chat is ignored before anything happens to it (no Claude call, no draft, notice, blue ticks or takeover, nothing in `data/state.json`, one `skip_not_allowed` audit line without the text), and the send gate refuses it. A LID chat whose number is unknown is ignored until you list its LID. "Message yourself" always works. Anything but a list of JIDs or phone numbers stops the start. See "Testing with one contact" |
 | `disclosure.enabled` / `text` / `sessionGapHours` | `true` / … / `12` | AI disclosure on the first auto-reply per session |
 | `notifyOwnerOnAutoSend` | `true` | post each auto-reply to "Message yourself" |
@@ -329,7 +335,8 @@ its auto-send is forbidden: it asks nothing, so the policy drafts it. The key nu
 - [eval/last-run.md](eval/last-run.md) is a **rescore** (2026-09-27, no Claude calls) of the full run below with
   the current guards and policy, after the change that auto-sends only an answer to a message that asks something
   (it replaced the social matchers and the thanks-back reply check of the review rounds before; untriaged content and
-  quotes are never skipped over, and a thanks that agrees is skipped only after our closing reply):
+  quotes are never skipped over, and a thanks that agrees is skipped only after our closing reply), re-run after its
+  review fixes (`kok` a particle, "no problem" spellings, links, a `ya` before a thanks, stickers and reactions):
   **0 forbidden auto-sends**, **0 skipped escalations**, decision **20/20**, **3/3 allowed cases auto-sent**.
   Sonnet's `Sama-sama, Kak 🙏` to "ok makasih kak 🙏" is a draft (`no_question`; the guards add `no_facts_used`).
 - The full run on `claude-sonnet-5` with thinking off (2026-09-26, 20 calls), after the closing rules were tightened
@@ -399,7 +406,8 @@ Prototype limits of this code:
 
 - Text only: incoming media without a caption, location pins, contact cards and the like are not triaged (they only
   show in the history Claude gets, as an attachment it cannot see), captioned
-  media is triaged on its caption and never auto-answered, edits and deletions (`messages.update`) are ignored; no
+  media is triaged on its caption and never auto-answered, edits and deletions are not triaged (an edit, like a
+  sticker or a reaction, only keeps a thanks after it from being skipped); no
   typing indicator. A question sent right after a photo without a caption (`yang kayak gini harganya berapa?`) is
   triaged on its own: Claude sees the photo as an attachment in the history and is told to escalate, but no
   deterministic gate holds its answer (open owner question: hold any answer while the customer's newest file is

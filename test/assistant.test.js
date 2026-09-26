@@ -1044,6 +1044,51 @@ test('after a /no or a shadow /ok of a thanks, a yes with a thanks may answer ou
   }
 })
 
+test('after a /no or a shadow /ok of a thanks, a "ya" with a thanks, alone or as a burst, is drafted: it may be the yes to our offer (skip-safety-r1-1)', async t => {
+  for (const mode of ['live', 'shadow']) {
+    for (const burst of [['ya kak, makasih'], ['ya deh makasih kak'], ['ya', 'makasih kak']]) {
+      const { store, transport, brain, assistant, deliver, advance, stamp, say, command, skipped } = chatSetup(t, { config: { mode, debounceMs: 100 } })
+      if (mode === 'live') {
+        await say(ALICE, 'kak brownies bisa dikirim')
+        await command('/edit 1 Bisa kak, mau diantar besok sore')
+      } else {
+        await deliver({ id: 'OWNER1', chatId: ALICE, fromMe: true, isSelfChat: false, text: 'Bisa kak, mau diantar besok sore', ...stamp(), kind: 'notify' })
+        advance(31 * 60_000)
+      }
+      await say(ALICE, 'makasih kak')
+      await command(`${mode === 'live' ? '/no' : '/ok'} ${store.pendingDrafts().at(-1).id}`)
+      advance(60_000)
+      for (const text of burst) {
+        const message = incoming(ALICE, text, stamp())
+        transport.remember(message)
+        await assistant.handleMessage(message)
+      }
+      await assistant.idle()
+      assert.equal(brain.calls.at(-1).messages.length, burst.length, 'triaged as one burst')
+      assert.deepEqual([skipped(), store.pendingDrafts().map(draft => draft.excerpt)], [[], [burst.join(' / ')]], `${mode}: ${burst}`)
+    }
+  }
+})
+
+test('with the local clock behind WhatsApp\'s, a reply sent after a thanks still counts as newer: the next thanks is drafted (skip-safety-r1-3)', async t => {
+  const SKEW_MS = 90_000 // WhatsApp's clock runs this far ahead of the local one
+  for (const flow of ['/edit of the thanks draft', '/ok of an older draft, then /no of the thanks']) {
+    const { store, advance, now, deliver, command, skipped } = chatSetup(t)
+    const say = async text => { advance(60_000); await deliver(incoming(ALICE, text, { timestamp: Math.floor((now() + SKEW_MS) / 1000) })) }
+    if (flow === '/edit of the thanks draft') {
+      await say('makasih kak')
+      await command('/edit 1 Sama-sama kak! Mau sekalian pesan untuk Sabtu?') // asks something: not a closing reply
+    } else {
+      await say('kak brownies bisa dikirim')
+      await say('makasih kak')
+      await command('/ok 1')
+      await command('/no 2')
+    }
+    await say('makasih kak 🙏')
+    assert.deepEqual([skipped(), store.pendingDrafts().map(draft => draft.excerpt)], [[], ['makasih kak 🙏']], flow)
+  }
+})
+
 test('a thanks quoting our question from before a discarded thanks is drafted: only a quote of our closing reply is skipped (skip-safety-r3-1)', async t => {
   const { transport, store, say, command, skipped } = chatSetup(t)
   await say(ALICE, 'kak brownies bisa dikirim')

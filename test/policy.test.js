@@ -184,6 +184,17 @@ test('a thanks that agrees closes only after our closing reply: after a /no, a s
   assert.equal(decide(triageResult(THANKS), thanksContext(asked)).action, 'skip', 'makasih kak 🙏')
 })
 
+test('a "ya" before the thanks is a yes: after a /no, a shadow /ok or a restart it is drafted, a trailing "ya" is not (skip-safety-r1-1)', () => {
+  const asked = [customer('kak brownies bisa diantar besok?', 41), ours('Bisa kak, mau diantar jam 5 sore?', 40), customer('makasih kak', 30)]
+  for (const incomingText of ['ya makasih', 'ya kak, makasih', 'yaa makasih', 'ya deh makasih kak', 'Ya, terima kasih banyak kak', 'ya\nmakasih kak']) {
+    for (const history of [asked, []]) {
+      assert.deepEqual(decide(triageResult(THANKS), thanksContext(history, {}, { incomingText })), { action: 'escalate', reasons: ['decision:answer', 'no_question'] },
+        `${incomingText} (${history.length ? 'after a /no' : 'after a restart'})`)
+    }
+  }
+  for (const incomingText of ['makasih ya kak', 'terima kasih ya']) assert.equal(decide(triageResult(THANKS), thanksContext(asked, {}, { incomingText })).action, 'skip', incomingText)
+})
+
 test('a thanks quoting our message is skipped only when that message is our closing reply (skip-safety-r3-1)', () => {
   const question = ours('Bisa kak, mau diantar jam 5 sore?', 40)
   const asked = [customer('kak brownies bisa diantar besok?', 41), question, customer('makasih kak', 30)]
@@ -235,6 +246,21 @@ test('an answer to a message that asks nothing is never auto-sent, whatever it c
   assert.deepEqual(decide(triageResult(facts), { ...baseContext(), incomingText: undefined }), drafted, 'no text: it asks nothing')
   assert.deepEqual(decide(triageResult(THANKS), { ...open('makasih kak 🙏'), attachments: ['image'] }).reasons, ['decision:answer', 'no_question', 'attachment:image'])
   assert.deepEqual(decide(triageResult({ decision: 'escalate' }), open('makasih kak')), { action: 'escalate', reasons: ['decision:escalate'] }, 'Claude\'s escalation stands')
+})
+
+test('a fact-cited answer to a yes with "kok", a spelled-out "no problem" or a shared link is a draft (send-path-r1-1, send-path-r1-2, send-path-r1-3)', () => {
+  const delivery = { decision: 'answer', reply: 'Baik Kak, pengiriman dalam Kota Bandung pakai kurir instan (GoSend atau GrabExpress), ongkir dibayar pembeli ya.', facts_used: ['F3'] }
+  const deposit = { decision: 'answer', reply: 'Baik Kak, pesanan dianggap masuk setelah DP 50% ya.', facts_used: ['F10'] }
+  for (const [triage, incomingText] of [
+    [delivery, 'boleh kok kak'], [delivery, 'bisa kok kak'], [delivery, 'gapapa kok kak'], [delivery, 'udah sampai kok kak, makasih'],
+    [deposit, 'ga napa kak'], [deposit, 'gak knp kak'], [deposit, 'nggak kenapa kak'], [deposit, 'tidak mengapa kak'],
+    [delivery, 'Kak kirim ke sini ya https://maps.app.goo.gl/AbC123xyz?g_st=iw'], [delivery, 'ok makasih kak https://maps.app.goo.gl/AbC123xyz?g_st=iw'],
+    [delivery, 'Kak aku mau yang ini https://shopee.co.id/product/123?smtt=0.0.9']
+  ]) {
+    const guard = guardTriage(triage, { knowledge, config, incomingText })
+    assert.deepEqual(guard, { ok: true, reasons: [] }, `${incomingText}: the guards alone would let it out`)
+    assert.deepEqual(decide(triageResult(triage), { ...baseContext(), incomingText, guard }), { action: 'escalate', reasons: ['decision:answer', 'no_question'] }, incomingText)
+  }
 })
 
 test('an answer to a message that asks something goes on to the other gates, a burst where one message asks too', () => {

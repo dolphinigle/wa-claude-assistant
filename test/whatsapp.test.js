@@ -256,21 +256,25 @@ test('the owner\'s own Meta AI prompts are dropped and never re-point the self-c
   assert.equal(sockets[0].sent[0].jid, OWNER_PN, 'an unknown /command does not move the notices')
 })
 
-test('a customer\'s content that is never triaged is reported with its chat and time; stickers, reactions and our own files are not', async t => {
+test('a customer\'s content that is never triaged is reported with its chat and time, stickers and reactions too; our own files are not', async t => {
   const { transport, received, untriaged, emit } = setup(t)
   await transport.start()
   open(emit)
   const LID = '123456789012345@lid'
   const photo = raw(LID, { imageMessage: { mimetype: 'image/jpeg' } }, { key: { remoteJid: LID, remoteJidAlt: CUSTOMER, id: 'IMG1', fromMe: false } })
   const stub = { key: { remoteJid: CUSTOMER, id: 'X1', fromMe: false }, message: null, messageStubType: 2, messageTimestamp: nowSeconds() }
+  const sticker = raw(CUSTOMER, { stickerMessage: {} }, { key: { remoteJid: CUSTOMER, id: 'ST1', fromMe: false } })
+  const reaction = raw(CUSTOMER, { reactionMessage: { text: '👍', key: { id: 'IMG1' } } }, { key: { remoteJid: CUSTOMER, id: 'RE1', fromMe: false } })
   emit('messages.upsert', {
     type: 'notify',
-    messages: [photo, stub, raw(CUSTOMER, { stickerMessage: {} }), raw(CUSTOMER, { reactionMessage: { text: '👍', key: { id: 'IMG1' } } }),
+    messages: [photo, stub, sticker, reaction,
       raw(CUSTOMER, { imageMessage: { caption: 'ini kak' } }), raw(CUSTOMER, { imageMessage: {} }, { key: { remoteJid: CUSTOMER, id: 'OWN1', fromMe: true } })]
   })
   await sleep(5)
   assert.deepEqual(untriaged.map(item => [item.id, item.chatId, item.chatIdAlt, item.attachment, item.timestamp]),
-    [['IMG1', LID, CUSTOMER, 'image', photo.messageTimestamp], ['X1', CUSTOMER, undefined, 'other', stub.messageTimestamp]])
+    [['IMG1', LID, CUSTOMER, 'image', photo.messageTimestamp], ['X1', CUSTOMER, undefined, 'other', stub.messageTimestamp],
+      ['ST1', CUSTOMER, undefined, 'sticker', sticker.messageTimestamp], ['RE1', CUSTOMER, undefined, 'reaction', reaction.messageTimestamp]])
+  assert.ok(!transport.getHistory(CUSTOMER, 10).some(item => ['ST1', 'RE1'].includes(item.id)), 'a sticker or a reaction stays out of the history Claude sees')
   assert.deepEqual(received.map(message => message.text), ['ini kak', ''], 'the captioned photo is triaged; the owner\'s own photo starts a takeover')
 })
 
@@ -454,4 +458,49 @@ test('allowChats end to end: the listed contact is found through WhatsApp\'s LID
   assert.ok(!state.includes('6282222222222') && !state.includes('6287777777777') && !/"C\d"/.test(state))
   const skips = readFileSync(store.auditFile, 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(entry => entry.event === 'skip_not_allowed')
   assert.deepEqual(skips.map(({ ts, ...entry }) => entry), Array(4).fill({ event: 'skip_not_allowed', chatId: CUSTOMER }), 'the text, the photo, the stub and the owner\'s reply')
+})
+
+test('a sticker, reaction or edit after a discarded thanks holds the next thanks: drafted, not skipped (skip-safety-r1-2)', async t => {
+  const respond = input => {
+    const text = input.messages.map(message => message.text).join(' ')
+    return /makasih/.test(text) ? { ok: true, triage: { decision: 'answer', reply: 'Sama-sama, Kak 🙏', facts_used: [], reason: 'thanks' }, meta: {} }
+      : { ok: true, triage: { decision: 'escalate', reply: 'Baik Kak, saya cek dulu ya.', facts_used: [], reason: 'ask' }, meta: {} }
+  }
+  for (const variant of ['sticker', 'reaction', 'edit', 'none']) {
+    const dir = tempDir(t)
+    const config = makeConfig({ mode: 'live', debounceMs: 5, whatsapp: { caughtUpWatchdogMs: 60_000 } }, dir)
+    const store = new Store(dir, { logger: silent })
+    const { sockets, createSocket } = fakeSockets()
+    const brain = createFakeBrain(respond)
+    let assistant
+    const transport = createWhatsAppTransport({
+      config, store, logger: silent, createSocket,
+      onMessage: message => assistant.handleMessage(message),
+      onUntriaged: item => assistant.noteUntriaged(item)
+    })
+    assistant = createAssistant({ config, store, brain, transport, knowledge, logger: silent })
+    t.after(async () => { await assistant.stop(); await transport.stop() })
+    await transport.start()
+    const emit = (event, payload) => sockets.at(-1).ev.emit(event, payload)
+    open(emit)
+    const base = nowSeconds()
+    const step = async (...messages) => { emit('messages.upsert', { type: 'notify', messages }); await sleep(10); await assistant.idle() }
+    const customer = (id, message, seconds) => raw(CUSTOMER, message, { key: { remoteJid: CUSTOMER, id, fromMe: false }, messageTimestamp: base + seconds })
+    const owner = text => raw(OWNER_PN, { conversation: text }, { key: { remoteJid: OWNER_PN, id: `CMD${Math.random()}`, fromMe: true } })
+
+    await step(customer('Q1', { conversation: 'kak brownies bisa dikirim' }, 0))
+    await step(owner('/edit 1 Bisa kak, mau diantar besok sore'))
+    const offer = sockets[0].sent.find(item => item.jid === CUSTOMER)
+    await step(customer('T1', { conversation: 'makasih kak' }, 60))
+    await step(owner('/no 2'))
+    const sign = {
+      sticker: { stickerMessage: {} },
+      reaction: { reactionMessage: { text: '👍', key: { remoteJid: CUSTOMER, id: offer.options.messageId, fromMe: true } } },
+      edit: { editedMessage: { message: { protocolMessage: { type: 14, key: { id: 'Q1' }, editedMessage: { conversation: 'kak brownies bisa dikirim besok?' } } } } }
+    }[variant]
+    if (sign) await step(customer('S1', sign, 120))
+    await step(customer('T2', { conversation: 'makasih kak 🙏' }, 180))
+    const drafted = store.pendingDrafts().map(draft => draft.excerpt)
+    assert.deepEqual(drafted, variant === 'none' ? [] : ['makasih kak 🙏'], variant)
+  }
 })

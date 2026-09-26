@@ -30,3 +30,11 @@ test('allowChats defaults to every chat and must list JIDs or phone numbers', t 
     assert.throws(() => loadConfig({ rootDir: rootWith(t, { allowChats }) }), /config\.allowChats must be a list of JIDs or phone numbers/, JSON.stringify(allowChats))
   }
 })
+
+test('blocklist must list JIDs or phone numbers too: a string would drop every message, a name would block nothing (consistency-r1-2)', t => {
+  assert.deepEqual(loadConfig({ rootDir: rootWith(t) }).blocklist, [])
+  assert.deepEqual(loadConfig({ rootDir: rootWith(t, { blocklist: ['081234567890', '123456789012345@lid'] }) }).blocklist, ['081234567890', '123456789012345@lid'])
+  for (const blocklist of ['081234567890', null, [6281234567890], ['Mama'], ['']]) {
+    assert.throws(() => loadConfig({ rootDir: rootWith(t, { blocklist }) }), /config\.blocklist must be a list of JIDs or phone numbers/, JSON.stringify(blocklist))
+  }
+})

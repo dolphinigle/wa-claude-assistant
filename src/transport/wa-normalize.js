@@ -2,7 +2,7 @@
 // No socket, no network, so everything here is unit-testable with plain message objects.
 import {
   areJidsSameUser, getContentType, isJidBroadcast, isJidGroup, isJidMetaAI, isJidNewsletter, isJidStatusBroadcast,
-  isLidUser, isPnUser, isRealMessage, jidNormalizedUser, normalizeMessageContent, WAMessageStubType
+  isLidUser, isPnUser, isRealMessage, jidNormalizedUser, normalizeMessageContent, proto, WAMessageStubType
 } from 'baileys'
 
 /** Filter order from docs/implementation-notes.md: status before broadcast (status@broadcast matches both). */
@@ -37,7 +37,7 @@ export function extractText (message) {
 
 // What nobody but the owner can see: files, of which only the caption reaches Claude, and content without text (a
 // location pin, a contact card, a poll), which is never triaged but must still hold a thanks after it. Anything not
-// named here is 'other'. Text, stickers, reactions and protocol messages are not such content.
+// named here is 'other'. Text, stickers, reactions and protocol messages are not such content (see SIGN_KINDS).
 const ATTACHMENT_KINDS = {
   imageMessage: 'image', videoMessage: 'video', ptvMessage: 'video', documentMessage: 'document', audioMessage: 'audio',
   locationMessage: 'location', liveLocationMessage: 'location', contactMessage: 'contact', contactsArrayMessage: 'contact',
@@ -51,6 +51,12 @@ const NOT_ATTACHMENTS = new Set(['conversation', 'extendedTextMessage', 'protoco
 
 /** 'image' | 'video' | 'document' | 'audio' | 'location' | 'contact' | 'poll' | 'event' | 'other', or undefined for text. */
 export const attachmentKind = contentType => (!contentType || NOT_ATTACHMENTS.has(contentType) ? undefined : ATTACHMENT_KINDS[contentType] ?? 'other')
+
+// Not content for the history, but a customer's sticker, reaction or edit is never triaged and may be the yes to our
+// last message (a 👍 on our offer): like a file, it must hold a thanks after it from being skipped.
+const SIGN_KINDS = { stickerMessage: 'sticker', lottieStickerMessage: 'sticker', reactionMessage: 'reaction', encReactionMessage: 'reaction' }
+const signKind = (content, contentType) =>
+  SIGN_KINDS[contentType] ?? (content?.protocolMessage?.type === proto.Message.ProtocolMessage.Type.MESSAGE_EDIT ? 'edit' : undefined)
 
 /** A message that could not be decrypted (yet): Baileys asks for a retry or a resend, which arrives under the same id. */
 export const isCiphertextStub = raw => !raw?.message && raw?.messageStubType === WAMessageStubType.CIPHERTEXT
@@ -109,11 +115,12 @@ export function normalizeUpsert (raw, { type, meIds }) {
   // human reply and must start the takeover, so it is kept before the text-only filters below.
   if (key.fromMe && !isSelfChat && (contentType || isCiphertext)) return { message }
   // A customer's content that is never triaged, which a thanks after it must not be skipped over (assistant.js).
-  const untriaged = !key.fromMe && !isSelfChat && (isCiphertext || message.attachment) && !text?.trim()
-    ? { id: key.id, chatId: message.chatId, chatIdAlt, timestamp: message.timestamp, attachment: isCiphertext ? 'other' : message.attachment }
+  const untriagedKind = !key.fromMe && !isSelfChat && !text?.trim()
+    ? (isCiphertext ? 'other' : message.attachment ?? signKind(normalizeMessageContent(raw.message), contentType))
     : undefined
+  const untriaged = untriagedKind ? { id: key.id, chatId: message.chatId, chatIdAlt, timestamp: message.timestamp, attachment: untriagedKind } : undefined
   if (isCiphertext) return { skip: 'ciphertext', id: key.id, untriaged }
-  if (!isRealMessage(raw)) return { skip: 'not_real', id: key.id }
+  if (!isRealMessage(raw)) return { skip: 'not_real', id: key.id, ...(untriaged && { untriaged }) }
   if (!text?.trim()) return { skip: 'no_text', id: key.id, contentType, untriaged }
   return { message }
 }

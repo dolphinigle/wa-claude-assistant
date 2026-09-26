@@ -43,6 +43,9 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   // Our side's last word on either form, kept across restarts: the owner on the phone, or any send but a closing.
   const lastOursAt = chatId => Math.max(0, ...linkedChats(chatId).flatMap(chat => [chat.ownerRepliedAt ?? 0, chat.lastSentAt ?? 0]))
   const lastUntriagedAt = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.lastUntriagedAt ?? 0))
+  // Our send comes after every customer message already received, whatever the local clock says: policy.js compares
+  // it with WhatsApp's time of a thanks, and this machine's clock may run behind WhatsApp's.
+  const sendTime = chatId => Math.max(now(), ...linkedChats(chatId).map(chat => chat.lastReceivedAt ?? 0))
   const chatAutoSendsLastHour = chatId => store.linkedChatIds(chatId).reduce((sum, id) => sum + store.countChatAutoSends(id, HOUR_MS), 0)
   /** Epoch ms of a burst's newest message: a closing is dated by the thanks it closes, not by when it was handled. */
   const lastMessageAt = batch => Math.max(...batch.map(message => message.timestamp)) * 1000
@@ -119,7 +122,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       return { sent: false, error: 'chat is blocklisted' }
     }
     const closing = closingReply && isThanks(text)
-    if (!closing) store.updateChat(chatId, { lastSentAt: now() }) // before sending: one that fails only costs a draft
+    if (!closing) store.updateChat(chatId, { lastSentAt: sendTime(chatId) }) // before sending: one that fails only costs a draft
     if (config.mode !== 'live') {
       store.audit('shadow_send_suppressed', { chatId, source, draftId, text })
       return { sent: false, shadow: true }
@@ -174,8 +177,12 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     if (message.fromMe) return startTakeover(message)
 
     // Only a contact's own message carries its alt JID; on the owner's messages the alt can be the owner's own number.
-    if (message.chatIdAlt && store.existingChat(message.chatId)?.chatIdAlt !== message.chatIdAlt) store.updateChat(message.chatId, { chatIdAlt: message.chatIdAlt })
-    if (message.senderName) store.updateChat(message.chatId, { name: message.senderName })
+    const known = store.existingChat(message.chatId)
+    store.updateChat(message.chatId, {
+      lastReceivedAt: Math.max(known?.lastReceivedAt ?? 0, message.timestamp * 1000 || 0), // on WhatsApp's clock (sendTime)
+      ...(message.chatIdAlt && known?.chatIdAlt !== message.chatIdAlt && { chatIdAlt: message.chatIdAlt }),
+      ...(message.senderName && { name: message.senderName })
+    })
     if (message.timestamp < store.historyFloorTs) {
       store.audit('skip_before_history_floor', { chatId: message.chatId, id: message.id })
       return
@@ -196,8 +203,9 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
 
   /**
    * Content from a customer that is never triaged (a photo without a caption, a location pin, a contact card, a message
-   * that could not be decrypted yet) reaches the owner only on the phone. Its time is kept on the chat record, so a
-   * thanks after it is never skipped, even on the other addressing form or after a restart (policy.js).
+   * that could not be decrypted yet, a sticker, a reaction, an edit) reaches the owner only on the phone. Its time is
+   * kept on the chat record, so a thanks after it is never skipped, even on the other addressing form or after a
+   * restart (policy.js).
    */
   function noteUntriaged ({ chatId, chatIdAlt, timestamp } = {}) {
     if (!chatId || !(timestamp > 0)) return

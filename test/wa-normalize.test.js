@@ -90,10 +90,23 @@ test('a customer\'s content that is never triaged is reported, with its chat and
   assert.equal(untriaged(wa(null, {}, { messageStubType: WAMessageStubType.CIPHERTEXT })).attachment, 'other')
   assert.equal(untriaged(wa({ imageMessage: { mimetype: 'image/jpeg' } }), 'append').attachment, 'image', 'offline backlog too')
   // Not content, triaged anyway, or not the customer's.
-  for (const raw of [wa({ stickerMessage: {} }), wa({ reactionMessage: { text: '👍', key: { id: 'X' } } }), wa({ conversation: '   ' }),
+  for (const raw of [wa({ conversation: '   ' }), wa({ protocolMessage: { type: 0, key: { id: 'X' } } }), wa({ reactionMessage: { text: '👍', key: { id: 'X' } } }, { fromMe: true }),
     wa({ imageMessage: { caption: 'ini kak' } }), wa({ imageMessage: {} }, { fromMe: true }),
     wa({ imageMessage: {} }, { remoteJid: '6281111111111@s.whatsapp.net', fromMe: true }), wa({ imageMessage: {} }, { remoteJid: '120363000000000000@g.us', participant: CUSTOMER })]) {
     assert.equal(untriaged(raw), undefined, JSON.stringify(raw.message))
+  }
+})
+
+test('a customer\'s sticker, reaction or edit is reported as untriaged: it may be the yes to our offer (skip-safety-r1-2)', () => {
+  const normalize = raw => normalizeUpsert(raw, { type: 'notify', meIds })
+  const edit = { editedMessage: { message: { protocolMessage: { type: 14, key: { id: 'Q1' }, editedMessage: { conversation: 'kak bisa dikirim besok?' } } } } }
+  for (const [message, skip, kind] of [
+    [{ stickerMessage: {} }, 'no_text', 'sticker'], [{ lottieStickerMessage: { message: { stickerMessage: {} } } }, 'no_text', 'sticker'],
+    [{ reactionMessage: { text: '👍', key: { id: 'OURS1' } } }, 'not_real', 'reaction'], [edit, 'not_real', 'edit'],
+    [{ protocolMessage: { type: 14, key: { id: 'Q1' }, editedMessage: { conversation: 'x' } } }, 'not_real', 'edit']
+  ]) {
+    const result = normalize(wa(message))
+    assert.deepEqual([result.skip, result.untriaged], [skip, { id: '3EB0A1B2C3D4E5F6', chatId: CUSTOMER, chatIdAlt: undefined, timestamp: 1790400000, attachment: kind }], Object.keys(message)[0])
   }
 })
 

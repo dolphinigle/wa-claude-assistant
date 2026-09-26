@@ -241,7 +241,11 @@ test('thanksAgrees: a thanks that reads as one only with an acknowledgement or �
   for (const text of ['iya kak makasih', '👍 makasih kak', 'ok siap, makasih', 'perfect, thanks', 'Great, thanks!', 'ok makasih kak', 'oh ok, makasih kak', 'makasih kak 👌']) {
     assert.deepEqual([isThanks(text), thanksAgrees(text)], [true, true], text)
   }
-  for (const text of ['makasih kak 🙏', 'makasih ya kak', 'good bye', 'thanks, you too!', 'have a nice day kak', '🙏', 'wah makasih banyak kak']) {
+  // A "ya" before the thanks says yes (skip-safety-r1-1); after it, it only softens.
+  for (const text of ['ya makasih', 'ya kak, makasih', 'yaa makasih', 'ya deh makasih kak', 'Ya, terima kasih banyak kak', 'ya thanks', 'ya\nmakasih kak', 'oh ya, makasih']) {
+    assert.deepEqual([isThanks(text), thanksAgrees(text)], [true, true], text)
+  }
+  for (const text of ['makasih kak 🙏', 'makasih ya kak', 'terima kasih ya', 'makasih kak, sehat selalu ya', 'good bye', 'thanks, you too!', 'have a nice day kak', '🙏', 'wah makasih banyak kak']) {
     assert.deepEqual([isThanks(text), thanksAgrees(text)], [true, false], text)
   }
   for (const text of ['iya kak', '👍', 'jam buka?', undefined]) assert.equal(thanksAgrees(text), false, String(text))
@@ -251,7 +255,7 @@ test('thanksAgrees: a thanks that reads as one only with an acknowledgement or �
 const ASKS = ['Halo kak, tokonya buka jam berapa aja ya?', "Hi! Where is your shop located? I'd like to pick up my order.",
   'Kak, brownies panggang harganya berapa ya?', 'jam berapa buka kak', 'alamatnya dimana', 'di mana tokonya', 'where are you located',
   'what time do you open', 'how much is the brownie', 'is it open on sunday', 'I would like the address', 'tell me the price',
-  'makasih kak, jam berapa tutup?', 'makasih bang, buka jam berapa', 'jam buka kak？', 'jam ber\u200bapa buka', 'kok belum sampai kak', 'bisakah dikirim hari ini',
+  'makasih kak, jam berapa tutup?', 'makasih bang, buka jam berapa', 'jam buka kak？', 'jam ber\u200bapa buka', 'kok belum sampai kak?', 'bisakah dikirim hari ini',
   'mau tanya kak', 'info harga dong kak', 'kak info', 'can you deliver tomorrow',
   // a request word with something to request, not after "saya" or "I"
   'bisa kirim ke Bekasi', 'kirim besok bisa', 'boleh minta alamatnya', 'minta alamatnya kak, makasih', 'tolong kirim besok ya', 'please send the menu',
@@ -279,12 +283,43 @@ test('asksSomething: no thanks asks anything, so a thanks is never auto-answered
   for (const text of THANKS_EXAMPLES) assert.equal(asksSomething(text), false, text)
 })
 
+test('"kok" stresses a statement: a yes or a thanks with it asks nothing (send-path-r1-1)', () => {
+  for (const text of ['bisa kok kak', 'boleh kok kak', 'boleh kok', 'ada kok', 'iya kok kak', 'gapapa kok kak', 'udah sampai kok kak, makasih',
+    'makasih kak, mantap kok', 'kok belum sampai kak']) { // a missed question only costs a draft
+    assert.equal(asksSomething(text), false, text)
+  }
+  for (const text of ['kok belum sampai kak?', 'kok belum sampai, kapan dikirim kak']) assert.equal(asksSomething(text), true, text)
+})
+
+test('"no problem" after a negation asks nothing, however it is spelled (send-path-r1-2)', () => {
+  for (const text of ['ga napa kak', 'gak knp kak', 'ok kak, nggak knp', 'nggak kenapa kak', 'tidak mengapa kak', 'tdk mengapa', 'nggak kenapa-napa kak',
+    'gak ngapain kak']) {
+    assert.equal(asksSomething(text), false, text)
+  }
+  for (const text of ['kenapa belum sampai', 'knp belum dikirim kak', 'mengapa pesanan saya dibatalkan', 'ga jadi, kenapa ya']) assert.equal(asksSomething(text), true, text)
+})
+
+test('a shared link is not a question: its query string and path are left out (send-path-r1-3)', () => {
+  for (const text of ['Kak kirim ke sini ya https://maps.app.goo.gl/AbC123xyz?g_st=iw', 'ok makasih kak https://maps.app.goo.gl/AbC123xyz?g_st=iw',
+    'Kak aku mau yang ini https://shopee.co.id/product/123?smtt=0.0.9', 'https://www.instagram.com/p/xyz/?igsh=abc', 'ini kak maps.app.goo.gl/AbC?g_st=iw',
+    'www.tokopedia.com/toko/apa-aja?extParam=1', 'ini alamatnya (https://maps.app.goo.gl/AbC?g_st=iw)',
+    'boleh kak.kirim besok']) { // a bare "kak.kirim" is a missing space, not a link: its clauses stay apart
+    assert.equal(asksSomething(text), false, text)
+  }
+  for (const text of ['jam berapa buka? https://x.co/a?b=1', 'ini ready gak kak shopee.co.id/product/123?smtt=0', 'https://shopee.co.id/p/1 yang ini ada?']) {
+    assert.equal(asksSomething(text), true, text)
+  }
+})
+
 test('asksSomething scans a long message once', () => {
   const adversarial = ['good bye '.repeat(5000) + 'x', 'ok '.repeat(20000), 'x '.repeat(20000) + 'berapa', 'bisa boleh '.repeat(10000),
-    'kak '.repeat(20000) + 'gak', 'apa '.repeat(20000), 'buka gak kak, '.repeat(5000), '🙏'.repeat(20000), 'saya belum '.repeat(10000)]
-  const expected = [false, false, true, false, false, false, true, false, false]
+    'kak '.repeat(20000) + 'gak', 'apa '.repeat(20000), 'buka gak kak, '.repeat(5000), '🙏'.repeat(20000), 'saya belum '.repeat(10000),
+    // what the URL pattern of the reply checks backtracks on
+    'a.'.repeat(40000), 'https://' + 'a.'.repeat(40000), 'a-'.repeat(40000) + '.1', 'x.1'.repeat(25000) + '?', 'ga napa '.repeat(10000)]
+  const expected = [false, false, true, false, false, false, true, false, false, false, false, false, true, false]
+  // One quadratic pass over one of these takes seconds; two linear rounds of all of them stay far below the budget.
   const started = performance.now()
-  for (let round = 0; round < 5; round++) {
+  for (let round = 0; round < 2; round++) {
     for (const [index, text] of adversarial.entries()) assert.equal(asksSomething(text), expected[index], `${index}: ${text.length} chars`)
   }
   assert.ok(performance.now() - started < 1000, `${Math.round(performance.now() - started)} ms`)
