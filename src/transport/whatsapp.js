@@ -9,6 +9,10 @@ import qrcode from 'qrcode-terminal'
 import { isAllowedChat } from '../chat-lists.js'
 import { parseCommand } from '../owner.js'
 import { attachmentKind, backoffMs, classifyDisconnect, classifyJid, extractText, getMeIds, isCiphertextStub, isSelfChatJid, normalizeUpsert, toEpochSeconds } from './wa-normalize.js'
+import { redactSignalSessions } from './redact-signal-logs.js'
+
+// Before any socket exists: libsignal prints session records, private keys included, to the console.
+redactSignalSessions()
 
 const HISTORY_PER_CHAT = 50
 const MAX_META_AI_IDS = 500

@@ -339,7 +339,9 @@ answer/escalate switch; delete the key).
 | `knowledgeFile`, `paths.auth`, `paths.data` | `knowledge.md`, `auth`, `data` | relative to the repo |
 
 Baileys logs go to stderr at `warn`; set `BAILEYS_LOG_LEVEL=info` to see more (never share debug logs: they can
-contain session material).
+contain session material). libsignal ignores that level and prints whole Signal session records, private keys
+included, with `console.info`/`warn` ("Closing session: …", seen on the first live start): the transport replaces them
+with `[signal session redacted]` before they reach the console (`src/transport/redact-signal-logs.js`).
 
 ## Eval
 
