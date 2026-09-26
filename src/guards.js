@@ -92,13 +92,32 @@ const PLACEHOLDERS = [
   /_{3,}/
 ]
 
+// Small function-word lists: enough to tell an Indonesian reply from an English one, nothing more.
+const LANGUAGE_WORDS = {
+  id: 'yang dan di ke dari ini itu ada tidak nggak gak bisa kami kita saya aku untuk dengan buka tutup harga berapa mau ya sudah belum jam hari pesan kirim terima kasih makasih dong apa gimana bagaimana boleh tolong sampai pukul hanya juga atau karena kalau sama setiap',
+  en: 'the and is are we you your our to of for what where when how do does can could would have has open closed price please thanks thank hi hello it in on at from with this that my me i be will yes order pick up located hours'
+}
+const LANGUAGE_SETS = Object.fromEntries(Object.entries(LANGUAGE_WORDS).map(([language, words]) => [language, new Set(words.split(' '))]))
+
+/** 'id' | 'en' | 'unknown' — only confident when one language clearly dominates. */
+export function detectLanguage (text) {
+  const words = String(text ?? '').toLowerCase().match(/\p{L}+/gu) ?? []
+  const count = language => words.filter(word => LANGUAGE_SETS[language].has(word)).length
+  const id = count('id')
+  const en = count('en')
+  if (id + en < 3) return 'unknown'
+  if (id >= 2 * en) return 'id'
+  if (en >= 2 * id) return 'en'
+  return 'unknown'
+}
+
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const containsTerm = (haystack, term) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(term)}(?![\\p{L}\\p{N}])`, 'iu').test(haystack)
 
 /**
  * @returns {{ok: boolean, reasons: string[]}}
  */
-export function checkReply ({ reply, factsUsed }, { knowledge, maxReplyChars = 600, sensitiveTerms = [] }) {
+export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, maxReplyChars = 600, sensitiveTerms = [] }) {
   const reasons = []
   const text = String(reply ?? '').trim()
   if (!text) return { ok: false, reasons: ['empty_reply'] }
@@ -130,11 +149,18 @@ export function checkReply ({ reply, factsUsed }, { knowledge, maxReplyChars = 6
   for (const term of sensitiveTerms) {
     if (containsTerm(text, term) && !containsTerm(allow.factsLower, term)) reasons.push(`sensitive_term:${term}`)
   }
+
+  // Voice says mirror the sender's language; an auto-reply in the other language goes to the owner instead.
+  if (incomingText !== undefined) {
+    const incoming = detectLanguage(incomingText)
+    const replied = detectLanguage(text)
+    if (incoming !== 'unknown' && replied !== 'unknown' && incoming !== replied) reasons.push(`language_mismatch:${incoming}->${replied}`)
+  }
   return { ok: reasons.length === 0, reasons }
 }
 
 /** Guards for a triage result: only a "simple" reply can be auto-sent, so only it is checked. */
-export function guardTriage (triage, { knowledge, config }) {
+export function guardTriage (triage, { knowledge, config, incomingText }) {
   if (triage?.category !== 'simple') return undefined
-  return checkReply({ reply: triage.reply, factsUsed: triage.facts_used }, { knowledge, ...config.guards })
+  return checkReply({ reply: triage.reply, factsUsed: triage.facts_used, incomingText }, { knowledge, ...config.guards })
 }

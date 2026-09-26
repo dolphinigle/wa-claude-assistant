@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { buildAllowList, checkReply, extractDetails } from '../src/guards.js'
+import { buildAllowList, checkReply, detectLanguage, extractDetails, guardTriage } from '../src/guards.js'
 import { parseKnowledge } from '../src/knowledge.js'
 import { knowledge, makeConfig } from './helpers.js'
 
@@ -78,4 +78,21 @@ test('structural checks: empty, length, placeholders, fact ids, facts_used', () 
 test('a sensitive term that appears in the facts is allowed', () => {
   const custom = parseKnowledge('## Facts\n- [F1] Gratis ongkir area Coblong.\n')
   assert.equal(checkReply({ reply: 'Gratis ongkir untuk Coblong ya', factsUsed: ['F1'] }, { knowledge: custom, sensitiveTerms: ['gratis'] }).ok, true)
+})
+
+test('language detection and the mirror-language guard', () => {
+  assert.equal(detectLanguage("Hi! Where is your shop located? I'd like to pick up my order."), 'en')
+  assert.equal(detectLanguage('Halo kak, tokonya buka jam berapa aja ya?'), 'id')
+  assert.equal(detectLanguage('ok 👍'), 'unknown')
+  const indonesianReply = 'Kak, kami berada di Jl. Contoh Raya No. 12, Coblong, Bandung. Ini dapur rumahan untuk pengambilan pesanan.'
+  const mismatch = checkReply({ reply: indonesianReply, factsUsed: ['F2'], incomingText: "Hi! Where is your shop located? I'd like to pick up my order." }, { knowledge })
+  assert.deepEqual(mismatch.reasons, ['language_mismatch:en->id'])
+  assert.equal(checkReply({ reply: indonesianReply, factsUsed: ['F2'], incomingText: 'Alamatnya di mana ya kak?' }, { knowledge }).ok, true)
+  assert.equal(checkReply({ reply: 'Hi Kak! We are at Jl. Contoh Raya No. 12, Coblong, Bandung.', factsUsed: ['F2'], incomingText: 'Where is the shop?' }, { knowledge }).ok, true)
+})
+
+test('guardTriage only checks simple replies', () => {
+  const config = makeConfig()
+  assert.equal(guardTriage({ category: 'complex', reply: 'Rp 1' }, { knowledge, config }), undefined)
+  assert.equal(guardTriage({ category: 'simple', reply: 'Rp 1', facts_used: ['F5'] }, { knowledge, config }).ok, false)
 })

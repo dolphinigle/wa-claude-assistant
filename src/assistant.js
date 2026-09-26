@@ -190,7 +190,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   async function route (chatId, batch, result, generation) {
     const triage = result.triage
     const chat = store.chat(chatId)
-    const guard = guardTriage(triage, { knowledge, config })
+    const guard = guardTriage(triage, { knowledge, config, incomingText: batch.map(message => message.text).join('\n') })
     const decision = decide(result, {
       config,
       guard,
