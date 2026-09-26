@@ -7,6 +7,7 @@ const MINUTE_MS = 60 * 1000
 const HOUR_MS = 60 * MINUTE_MS
 const DAY_MS = 24 * HOUR_MS
 const EXPIRY_SWEEP_MS = 10 * MINUTE_MS
+const DEFAULT_LIVE_WINDOW_MINUTES = 2
 
 /**
  * @param {object} deps
@@ -94,7 +95,10 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     store.markProcessed(message.id)
     sweepExpiredDrafts()
 
-    if (message.isSelfChat) return handleSelfChat(message)
+    // Age decides, not the upsert type: placeholder resends and retries of old messages arrive as 'notify'.
+    const ageMs = now() - message.timestamp * 1000
+    const isBacklog = message.kind === 'append' || ageMs > (config.backlog.liveWindowMinutes ?? DEFAULT_LIVE_WINDOW_MINUTES) * MINUTE_MS
+    if (message.isSelfChat) return handleSelfChat(message, isBacklog)
     if (isBlocked(message.chatId, message.chatIdAlt)) {
       store.audit('skip_blocked', { chatId: message.chatId })
       return
@@ -102,28 +106,24 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     if (message.fromMe) return startTakeover(message)
 
     if (message.senderName) store.updateChat(message.chatId, { name: message.senderName })
-    const ageMs = now() - message.timestamp * 1000
-    if (message.kind === 'append') {
-      if (message.timestamp <= store.lastProcessedTs) {
-        store.audit('skip_already_seen_backlog', { chatId: message.chatId, id: message.id })
-        return
-      }
-      if (ageMs > config.backlog.maxAgeMinutes * MINUTE_MS) {
-        store.advanceLastProcessedTs(message.timestamp)
-        store.audit('skip_backlog_too_old', { chatId: message.chatId, id: message.id, ageMinutes: Math.round(ageMs / MINUTE_MS) })
-        return
-      }
+    if (message.timestamp < store.historyFloorTs) {
+      store.audit('skip_before_history_floor', { chatId: message.chatId, id: message.id })
+      return
     }
-    store.advanceLastProcessedTs(message.timestamp)
-    enqueue(message)
+    if (ageMs > config.backlog.maxAgeMinutes * MINUTE_MS) {
+      store.audit('skip_backlog_too_old', { chatId: message.chatId, id: message.id, kind: message.kind, ageMinutes: Math.round(ageMs / MINUTE_MS) })
+      return
+    }
+    enqueue({ ...message, isBacklog })
   }
 
-  async function handleSelfChat (message) {
+  async function handleSelfChat (message, isBacklog) {
     // Only the owner's own typing counts; the bot's notices are already dropped by the loop guard.
     if (!message.fromMe || !message.text.trim().startsWith('/')) return
-    if (message.kind === 'append' && message.timestamp <= store.lastProcessedTs) return // replayed history, not a new command
-    store.advanceLastProcessedTs(message.timestamp)
-    const reply = await owner.handle(message.text, { timestampMs: message.kind === 'append' ? message.timestamp * 1000 : undefined })
+    if (message.timestamp < store.historyFloorTs) return // typed before the bot was ever linked
+    // A late command carries its own time so it cannot approve a newer draft or undo a newer /pause. Live commands
+    // go without it: the local clock may be skewed against WhatsApp's by more than the replay slack.
+    const reply = await owner.handle(message.text, { timestampMs: isBacklog ? message.timestamp * 1000 : undefined })
     if (reply) await sendToOwner(reply)
   }
 
@@ -200,7 +200,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       chatAutoSendsLastHour: store.countChatAutoSends(chatId, HOUR_MS),
       autoSendsLastDay: store.countAutoSends(DAY_MS),
       rateLimit: result.rateLimit,
-      isBacklog: batch.some(message => message.kind === 'append')
+      isBacklog: batch.some(message => message.isBacklog)
     })
     store.audit('decision', {
       chatId,

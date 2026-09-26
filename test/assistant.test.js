@@ -61,12 +61,13 @@ test('live: a simple question is auto-sent with disclosure, quoted, marked read,
 })
 
 test('disclosure only on the first auto-reply of a session', async t => {
-  const { transport, deliver, advance } = setup(t)
-  await deliver(incoming(ALICE, 'jam buka?'))
+  const { transport, deliver, advance, now } = setup(t)
+  const live = () => ({ timestamp: Math.floor(now() / 1000) })
+  await deliver(incoming(ALICE, 'jam buka?', live()))
   advance(60 * 60 * 1000)
-  await deliver(incoming(ALICE, 'buka hari sabtu juga?'))
+  await deliver(incoming(ALICE, 'buka hari sabtu juga?', live()))
   advance(13 * 60 * 60 * 1000)
-  await deliver(incoming(ALICE, 'jam buka lagi?'))
+  await deliver(incoming(ALICE, 'jam buka lagi?', live()))
   const disclosed = transport.toCustomer().map(item => item.text.startsWith('🤖 Balasan otomatis'))
   assert.deepEqual(disclosed, [true, false, true])
 })
@@ -190,7 +191,7 @@ test('per-chat and per-day rate limits downgrade to drafts', async t => {
 
 test('backlog: old appends are skipped, recent ones are drafted, never auto-sent', async t => {
   const { transport, deliver, store, brain, now } = setup(t)
-  store.advanceLastProcessedTs(Math.floor(now() / 1000) - 3 * 3600)
+  store.seedHistoryFloor(Math.floor(now() / 1000) - 3 * 3600)
   const nowSeconds = Math.floor(now() / 1000)
   await deliver(incoming(ALICE, 'jam buka? (sudah diproses)', { kind: 'append', timestamp: nowSeconds - 4 * 3600 }))
   await deliver(incoming(ALICE, 'jam buka? (terlalu lama)', { kind: 'append', timestamp: nowSeconds - 2 * 3600 }))
@@ -199,6 +200,42 @@ test('backlog: old appends are skipped, recent ones are drafted, never auto-sent
   assert.equal(brain.calls.length, 1)
   assert.equal(transport.toCustomer().length, 0)
   assert.ok(store.getDraft(1).policyReasons.includes('backlog'))
+})
+
+test('an old message redelivered as notify (placeholder resend, retry) is skipped or drafted by its age', async t => {
+  const { transport, deliver, store, brain, now, audit } = setup(t)
+  const nowSeconds = Math.floor(now() / 1000)
+  store.seedHistoryFloor(nowSeconds - 3 * 3600)
+  await deliver(incoming(ALICE, 'jam berapa buka?', { kind: 'notify', timestamp: nowSeconds - 150 * 60 }))
+  assert.equal(brain.calls.length, 0)
+  assert.ok(audit().some(entry => entry.event === 'skip_backlog_too_old' && entry.kind === 'notify'))
+  await deliver(incoming(BOB, 'jam berapa buka?', { kind: 'notify', timestamp: nowSeconds - 10 * 60 }))
+  assert.equal(brain.calls.length, 1)
+  assert.equal(transport.toCustomer().length, 0)
+  assert.ok(store.getDraft(1).policyReasons.includes('backlog'))
+})
+
+test('a live message does not hide older offline messages, even from the same second', async t => {
+  const { deliver, store, brain, now } = setup(t)
+  const nowSeconds = Math.floor(now() / 1000)
+  store.seedHistoryFloor(nowSeconds - 30 * 60)
+  await deliver(incoming(ALICE, 'jam buka? (live)'))
+  await deliver(incoming(BOB, 'Halo kak', { kind: 'append', timestamp: nowSeconds - 600 }))
+  await deliver(incoming(BOB, 'mau pesan 20 kue untuk besok pagi, bisa?', { kind: 'append', timestamp: nowSeconds - 600 }))
+  await deliver(incoming('6284444444444@s.whatsapp.net', 'jam buka? (offline)', { kind: 'append', timestamp: nowSeconds - 900 }))
+  assert.deepEqual(brain.calls.map(call => call.messages.map(message => message.text)), [
+    ['jam buka? (live)'], ['Halo kak'], ['mau pesan 20 kue untuk besok pagi, bisa?'], ['jam buka? (offline)']
+  ])
+})
+
+test('a late /resume cannot undo a newer /pause; a late /ok cannot approve a newer draft', async t => {
+  const { deliver, owner, store, now } = setup(t)
+  await owner('/pause')
+  await deliver({ id: 'LATE1', chatId: 'self', fromMe: true, isSelfChat: true, text: '/resume', timestamp: Math.floor(now() / 1000) - 600, kind: 'notify' })
+  assert.equal(store.paused, true)
+  await deliver(incoming(ALICE, 'bisa kue custom?'))
+  await deliver({ id: 'LATE2', chatId: 'self', fromMe: true, isSelfChat: true, text: '/ok 1', timestamp: Math.floor(now() / 1000) - 600, kind: 'notify' })
+  assert.equal(store.getDraft(1).status, 'pending')
 })
 
 test('groups, status and newsletters never reach the brain (raw Baileys shapes through the normalizer)', async t => {

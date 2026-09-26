@@ -130,7 +130,7 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
 
   /**
    * @param {string} text  the owner's message
-   * @param {{timestampMs?: number}} [context]  set for replayed (append) commands only
+   * @param {{timestampMs?: number}} [context]  set for late (backlog) commands only; live ones use now()
    * @returns {Promise<string|null>} the reply to post in self-chat (null: not a command)
    */
   async function handle (text, { timestampMs } = {}) {
@@ -156,10 +156,10 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
         return `${BOT_PREFIX} 🗑️ Discarded draft #${draft.id} (${draft.contactName}).`
       }
       case 'pause':
-        store.setPaused(true)
-        return `${BOT_PREFIX} ⏸️ Auto-replies paused. Drafts still come here. /resume to undo.`
       case 'resume':
-        store.setPaused(false)
+        if (timestampMs && timestampMs < store.pauseChangedAt) return `${BOT_PREFIX} Ignored a late /${command.name} typed before your last /pause or /resume.`
+        store.setPaused(command.name === 'pause', timestampMs ?? now())
+        if (command.name === 'pause') return `${BOT_PREFIX} ⏸️ Auto-replies paused. Drafts still come here. /resume to undo.`
         return `${BOT_PREFIX} ▶️ Auto-replies resumed${config.mode === 'live' ? '' : ' (shadow mode: still nothing is sent to customers)'}.`
       case 'status':
         return status()

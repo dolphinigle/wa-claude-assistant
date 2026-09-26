@@ -65,10 +65,11 @@ CONNECTION
 - sock.requestPairingCode may also be broken (#2832).
 
 INGEST: messages.upsert {messages, type:'notify'|'append', requestId}
-- Offline backlog arrives as 'append'. Process it when the message is !fromMe, isRealMessage, and messageTimestamp > the persisted lastProcessedTs.
+- Offline backlog arrives as 'append'. Process it when the message is !fromMe, isRealMessage, and messageTimestamp >= the persisted history floor (set once, on the first connection; a watermark moved by live traffic drops offline messages still queued behind it).
+- Placeholder-resend answers (requestId) and retries arrive as 'notify' with the ORIGINAL timestamp: gate backlog on message age, not on the upsert type.
 - The bot's own sends echo back as 'append' with fromMe (emitOwnEvents=true). Skip any key.id in sentByBot.
 - Dedupe every message by key.id (#2822: Meta AI messages mimic self-chat and are redelivered every ~7 min).
-- Ciphertext stub: `!m.message && m.messageStubType===WAMessageStubType.CIPHERTEXT` → sock.requestPlaceholderResend(m.key).
+- Ciphertext stub: `!m.message && m.messageStubType===WAMessageStubType.CIPHERTEXT` → sock.requestPlaceholderResend(m.key), only while the message is younger than backlog.maxAgeMinutes.
 - Edits and revokes arrive as messages.update, not as upserts.
 - Filter order: isJidStatusBroadcast before isJidBroadcast (status@broadcast matches both), then isJidNewsletter, isJidMetaAI (@bot), and isJidGroup (skip in v1).
 - Text: `const c = normalizeMessageContent(m.message)`, then `c?.conversation ?? c?.extendedTextMessage?.text ?? c?.imageMessage?.caption ?? c?.videoMessage?.caption ?? c?.documentMessage?.caption`. Use getContentType(c) for the type. Do not use extractMessageContent for type detection.

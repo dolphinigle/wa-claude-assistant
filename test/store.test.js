@@ -11,16 +11,18 @@ test('state survives a restart', t => {
   const store = new Store(dir)
   store.markProcessed('A')
   store.markSentByBot('B')
-  store.advanceLastProcessedTs(1000)
-  store.setPaused(true)
+  store.seedHistoryFloor(1000)
+  store.seedHistoryFloor(2000)
+  store.setPaused(true, 5000)
   const draft = store.createDraft({ chatId: 'c', contactName: 'C', draft: 'x' })
   store.updateChat('c', { muted: true, name: 'C' })
 
   const reloaded = new Store(dir)
   assert.ok(reloaded.hasProcessed('A'))
   assert.ok(reloaded.isSentByBot('B'))
-  assert.equal(reloaded.lastProcessedTs, 1000)
+  assert.equal(reloaded.historyFloorTs, 1000, 'the floor is set once')
   assert.equal(reloaded.paused, true)
+  assert.equal(reloaded.pauseChangedAt, 5000)
   assert.equal(reloaded.getDraft(draft.id).status, 'pending')
   assert.equal(reloaded.chat('c').muted, true)
   assert.equal(reloaded.createDraft({ chatId: 'c' }).id, draft.id + 1, 'draft counter persists')
@@ -38,17 +40,26 @@ test('writes are atomic: temp file + rename, no leftovers, private mode', t => {
 test('a crash mid-write (stray temp file) leaves the previous state intact', t => {
   const dir = tempDir(t)
   const store = new Store(dir)
-  store.advanceLastProcessedTs(42)
-  writeFileSync(path.join(dir, 'state.json.999.1.tmp'), '{"lastProcessedTs": 7, "trunc')
-  assert.equal(new Store(dir).lastProcessedTs, 42)
+  store.seedHistoryFloor(42)
+  writeFileSync(path.join(dir, 'state.json.999.1.tmp'), '{"historyFloorTs": 7, "trunc')
+  assert.equal(new Store(dir).historyFloorTs, 42)
 })
 
 test('a corrupt state file is moved aside and state starts fresh', t => {
   const dir = tempDir(t)
   writeFileSync(path.join(dir, 'state.json'), '{not json')
   const store = new Store(dir, { logger: { error () {} } })
-  assert.equal(store.lastProcessedTs, 0)
+  assert.equal(store.historyFloorTs, 0)
   assert.ok(readdirSync(dir).some(name => name.startsWith('state.json.corrupt-')))
+})
+
+test('a legacy lastProcessedTs becomes the history floor', t => {
+  const dir = tempDir(t)
+  writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ lastProcessedTs: 1234, paused: true }))
+  const store = new Store(dir)
+  assert.equal(store.historyFloorTs, 1234)
+  assert.equal(store.state.lastProcessedTs, undefined)
+  assert.equal(store.paused, true)
 })
 
 test('writeFileAtomic replaces content in one step', t => {

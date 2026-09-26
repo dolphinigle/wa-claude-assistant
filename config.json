@@ -10,6 +10,7 @@
   "debounceMs": 15000,
   "backlog": {
     "maxAgeMinutes": 60,
+    "liveWindowMinutes": 2,
     "autoSend": false
   },
   "contextMessages": 8,

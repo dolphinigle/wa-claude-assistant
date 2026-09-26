@@ -138,9 +138,12 @@ keeps the bot out of that chat for `humanTakeoverMinutes`: it does not even call
 - **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with a short
   Indonesian/English line saying it is an automated AI reply. Approved drafts carry no marker.
 - **Loop and duplicate guards:** ids of everything the bot sends are recorded before sending; every message id is
-  processed once; self-chat acts only on your `/` commands; a replayed old `/ok N` cannot approve a newer draft.
-- **History never triggers replies:** on the very first connection `lastProcessedTs` starts at "now". Offline
-  backlog older than 60 min is skipped; newer backlog is triaged but only drafted.
+  processed once; self-chat acts only on your `/` commands; a replayed old `/ok N` cannot approve a newer draft
+  and a late `/pause` or `/resume` cannot undo a newer one.
+- **History never triggers replies:** on the very first connection a history floor is set to "now" and never
+  moves. Anything older than 60 min is skipped, and anything older than 2 min is triaged but only drafted,
+  whether it arrives as offline backlog or as a late resend or retry (those come back as `notify` with their
+  original timestamp).
 - **Blue ticks only after an auto-reply** (`markRead`), never for drafted or escalated chats.
 - **Burst handling:** messages in the same chat within 15 s are triaged together; a message that arrives while a
   triage is running discards that result and re-triages the whole burst.
@@ -158,7 +161,7 @@ keeps the bot out of that chat for `humanTakeoverMinutes`: it does not even call
 | `autoSend.maxPerChatPerHour` / `maxPerDay` | `3` / `30` | rolling-window caps (shadow would-sends count too) |
 | `humanTakeoverMinutes` | `30` | bot stays out of a chat after you type in it |
 | `debounceMs` | `15000` | wait for a burst to finish before triage |
-| `backlog.maxAgeMinutes` / `backlog.autoSend` | `60` / `false` | offline messages: skip if older, never auto-reply |
+| `backlog.maxAgeMinutes` / `liveWindowMinutes` / `autoSend` | `60` / `2` / `false` | skip messages older than `maxAgeMinutes`; older than `liveWindowMinutes` (or offline) counts as backlog: never auto-replied |
 | `contextMessages` | `8` | earlier messages sent to Claude as `<history>` |
 | `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`); never sent to Claude, never replied to |
 | `disclosure.enabled` / `text` / `sessionGapHours` | `true` / … / `12` | AI disclosure on the first auto-reply per session |

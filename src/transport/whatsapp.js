@@ -97,7 +97,7 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       meIds = getMeIds(sock.user)
       selfChatJid ??= meIds[0]
       // First connect ever: start from now so history sync and old offline messages never trigger replies.
-      if (!store.lastProcessedTs) store.advanceLastProcessedTs(Math.floor(Date.now() / 1000))
+      store.seedHistoryFloor(Math.floor(Date.now() / 1000))
       logger.log(`[whatsapp] connected as ${meIds.join(' / ')}; self-chat target ${selfChatJid}`)
       armWatchdog()
       if (!announced) { announced = true; onReady?.() }
@@ -121,13 +121,18 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
     }
   }
 
-  const handleUpsert = async ({ messages, type }) => {
+  const handleUpsert = async ({ messages, type, requestId }) => {
     for (const raw of messages) {
       if (metaAiIds.has(raw?.key?.id)) continue
       remember(raw)
-      const normalized = normalizeUpsert(raw, { type, meIds })
+      // A placeholder-resend answer (requestId) is a replay with the original timestamp, not a live message.
+      const normalized = normalizeUpsert(raw, { type: requestId ? 'append' : type, meIds })
       if (normalized.skip === 'ciphertext') {
-        sock.requestPlaceholderResend(raw.key).catch(error => logger.warn(`[whatsapp] placeholder resend failed: ${error.message}`))
+        // Past maxAge the assistant would skip the message anyway; don't ask the phone for it.
+        const ageMs = Date.now() - toEpochSeconds(raw.messageTimestamp) * 1000
+        if (ageMs <= config.backlog.maxAgeMinutes * 60_000) {
+          sock.requestPlaceholderResend(raw.key).catch(error => logger.warn(`[whatsapp] placeholder resend failed: ${error.message}`))
+        }
         continue
       }
       if (normalized.skip) continue

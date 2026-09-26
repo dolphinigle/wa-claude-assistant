@@ -65,12 +65,11 @@ const open = emit => emit('connection.update', { connection: 'open' })
 const closeWith = (emit, statusCode, message = 'closed') => emit('connection.update', { connection: 'close', lastDisconnect: { error: Object.assign(new Error(message), { output: { statusCode } }) } })
 const raw = (remoteJid, message, extra = {}) => ({ key: { remoteJid, id: `ID${Math.random()}`, fromMe: false }, message, messageTimestamp: nowSeconds(), pushName: 'Sari', ...extra })
 
-test('first open seeds lastProcessedTs and announces once; 515 recreates immediately', async t => {
+test('first open seeds the history floor and announces once; 515 recreates immediately', async t => {
   const { store, transport, sockets, emit, ready } = setup(t)
   await transport.start()
-  assert.equal(store.lastProcessedTs, 0)
   open(emit)
-  assert.ok(Math.abs(store.lastProcessedTs - nowSeconds()) <= 1)
+  assert.ok(Math.abs(store.historyFloorTs - nowSeconds()) <= 1)
   closeWith(emit, 515, 'restart required')
   await sleep(10)
   assert.equal(sockets.length, 2)
@@ -193,4 +192,16 @@ test('a decrypted resend replaces its ciphertext stub in the history', async t =
   await sleep(5)
   assert.deepEqual(received.map(message => message.text), ['ada stok beras 5kg?'])
   assert.deepEqual(transport.getHistory(CUSTOMER, 10).map(item => item.text), ['ada stok beras 5kg?'])
+})
+
+test('a placeholder-resend answer is a replay; stubs past maxAge are not re-requested', async t => {
+  const { transport, sockets, received, emit } = setup(t)
+  await transport.start()
+  open(emit)
+  const stub = (id, ageSeconds) => ({ key: { remoteJid: CUSTOMER, id, fromMe: false }, message: null, messageStubType: 2, messageTimestamp: nowSeconds() - ageSeconds })
+  emit('messages.upsert', { type: 'append', messages: [stub('OLD', 150 * 60), stub('NEW', 5 * 60)] })
+  emit('messages.upsert', { type: 'notify', requestId: 'PDO1', messages: [raw(CUSTOMER, { conversation: 'jam berapa buka?' }, { key: { remoteJid: CUSTOMER, id: 'NEW', fromMe: false } })] })
+  await sleep(5)
+  assert.deepEqual(sockets[0].resends.map(key => key.id), ['NEW'])
+  assert.deepEqual(received.map(message => [message.id, message.kind]), [['NEW', 'append']])
 })

@@ -16,7 +16,8 @@ const emptyState = () => ({
   sentByBot: [],
   processed: [],
   autoSendLog: [],
-  lastProcessedTs: 0,
+  historyFloorTs: 0,
+  pauseChangedAt: 0,
   lastRateLimit: null
 })
 
@@ -49,9 +50,11 @@ export class Store {
   #load () {
     if (!existsSync(this.file)) return emptyState()
     try {
-      return { ...emptyState(), ...JSON.parse(readFileSync(this.file, 'utf8')) }
+      const { lastProcessedTs, ...saved } = JSON.parse(readFileSync(this.file, 'utf8'))
+      // Before the floor existed, a watermark moved with live traffic; it is still a valid (later) floor.
+      return { ...emptyState(), historyFloorTs: lastProcessedTs ?? 0, ...saved }
     } catch (error) {
-      // Keep the unreadable file for inspection and start fresh; lastProcessedTs=0 makes the transport re-seed it.
+      // Keep the unreadable file for inspection and start fresh; historyFloorTs=0 makes the transport re-seed it.
       const aside = `${this.file}.corrupt-${this.now()}`
       renameSync(this.file, aside)
       this.logger.error?.(`[store] ${this.file} unreadable (${error.message}); moved to ${aside}`)
@@ -82,15 +85,21 @@ export class Store {
   hasProcessed (id) { return this.processedSet.has(id) }
   markProcessed (id) { this.#remember(this.state.processed, this.processedSet, id, this.limits.processed); this.save() }
 
-  get lastProcessedTs () { return this.state.lastProcessedTs }
-  advanceLastProcessedTs (ts) {
-    if (ts > this.state.lastProcessedTs) { this.state.lastProcessedTs = ts; this.save() }
+  /**
+   * Epoch seconds of the very first connection: anything older is history and never handled. Set once and never
+   * moved by traffic, so a live message cannot hide older backlog; duplicates are the processed-id set's job.
+   */
+  get historyFloorTs () { return this.state.historyFloorTs }
+  seedHistoryFloor (ts) {
+    if (!this.state.historyFloorTs) { this.state.historyFloorTs = ts; this.save() }
   }
 
   // --- flags ---------------------------------------------------------------
 
   get paused () { return this.state.paused }
-  setPaused (paused) { this.state.paused = paused; this.save() }
+  /** `at` (epoch ms) is when the owner typed the command, so a replayed older /pause or /resume can be refused. */
+  get pauseChangedAt () { return this.state.pauseChangedAt }
+  setPaused (paused, at = this.now()) { Object.assign(this.state, { paused, pauseChangedAt: at }); this.save() }
 
   get lastRateLimit () { return this.state.lastRateLimit }
   setLastRateLimit (rateLimit) {
