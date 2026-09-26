@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, privateIdentifiers, privateIdentifiersFor } from '../src/guards.js'
+import { buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, isSocialMessage, privateIdentifiers, privateIdentifiersFor } from '../src/guards.js'
 import { parseKnowledge } from '../src/knowledge.js'
 import { knowledge, makeConfig } from './helpers.js'
 
@@ -173,6 +173,28 @@ test('structural checks: empty, length, placeholders, fact ids, facts_used', () 
   assert.ok(check('Buka Senin–Sabtu [F1]').reasons.includes('fact_id_in_reply'))
   assert.ok(check('Buka Senin–Sabtu', []).reasons.includes('no_facts_used'))
   assert.ok(check('Buka Senin–Sabtu', ['F1', 'F99']).reasons.includes('unknown_fact:F99'))
+})
+
+test('a reply without facts passes only in a purely social exchange', () => {
+  const social = (reply, incomingText) => checkReply({ reply, factsUsed: [], incomingText }, { knowledge, ...guards })
+  for (const [incoming, reply] of [
+    ['ok makasih kak 🙏', 'Sama-sama, Kak 🙏'],
+    ['Siap kak, terima kasih banyak ya', 'Terima kasih kembali, Kak. Semoga harinya menyenangkan 😊'],
+    ['thanks!', "You're welcome! Have a nice day."],
+    ['👍', 'Sama-sama ya Kak']
+  ]) assert.deepEqual(social(reply, incoming), { ok: true, reasons: [] }, `${incoming} → ${reply}`)
+
+  for (const [incoming, reply] of [
+    ['ok makasih kak', 'Sama-sama Kak, kami kirim ke Jakarta juga ya'], // a claim without a fact
+    ['ok makasih kak', 'Oke kak, siap'], // agrees to whatever was asked before
+    ['bisa kirim ke Jakarta?', 'Sama-sama Kak'], // the customer asked something
+    ['makasih, besok jam 9 ya', 'Sama-sama Kak'], // and set a time
+    ['ok makasih kak', 'Sama-sama Kak, ditunggu jam 9 ya'],
+    ['ok makasih kak', 'Sama-sama, gratis ongkir ya'],
+    [undefined, 'Sama-sama Kak'] // the customer's text is not known: fail closed
+  ]) assert.ok(social(reply, incoming).reasons.includes('no_facts_used'), `${incoming} → ${reply}`)
+  assert.equal(isSocialMessage('ok makasih kak'), false, 'acknowledgements only on the customer side')
+  assert.equal(isSocialMessage('ok makasih kak', { acknowledgements: true }), true)
 })
 
 test('a sensitive term that appears in the facts is allowed', () => {

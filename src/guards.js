@@ -190,6 +190,26 @@ export function detectLanguage (text) {
   return 'unknown'
 }
 
+// A reply that cites no fact may only be social: a thanks, greeting or goodbye answering one. Checking it word by word
+// against this vocabulary keeps factual claims without numbers ("kami kirim ke Jakarta") and yes-answers ("bisa kak")
+// from going out uncited. Acknowledgements (ok, siap, iya) can close the customer's message, but never make up the
+// reply: they could agree to something asked earlier in the chat.
+const SOCIAL_WORDS = new Set(('terima kasih makasih banyak sama kembali juga senang membantu dibantu ditunggu semoga ' +
+  'harinya menyenangkan sehat selalu selamat pagi siang sore malam halo hai hallo salam sampai jumpa lagi hati kami ' +
+  'ya yaa deh dong nih kak kakak mas mbak bu ibu pak bapak sis gan ' +
+  'thanks thank you youre re welcome so much very too glad happy to help helped have a an nice great good lovely day ' +
+  'evening morning afternoon night weekend take care see again soon anytime no problem worries pleasure my it was ' +
+  'our we hi hello hey dear cheers bye goodbye all the best wishes and for your').split(' '))
+const ACKNOWLEDGEMENT_WORDS = new Set(('ok oke okay okey okee oce sip siap baik noted mantap mantab iya yes yup yep sure ' +
+  'alright cool perfect got understood paham oh oo wah wow thx tq ty makasi mksh trims tengkyu infonya min').split(' '))
+
+/** A thanks, greeting or goodbye and nothing else: no question, no digits, only social vocabulary. */
+export function isSocialMessage (input, { acknowledgements = false } = {}) {
+  const text = normalizeText(input).toLowerCase()
+  if (/[?¿]/.test(text) || /\p{N}/u.test(text)) return false
+  return (text.match(/\p{L}+/gu) ?? []).every(word => SOCIAL_WORDS.has(word) || (acknowledgements && ACKNOWLEDGEMENT_WORDS.has(word)))
+}
+
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 // Indonesian attaches affixes to the very words the list is about (diskonnya, direfund, digratiskan, jaminan), and
 // chat spelling doubles letters (gratiss); a term matches with those, still not inside unrelated words (freezer).
@@ -246,7 +266,9 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
 
   const cited = Array.isArray(factsUsed) ? factsUsed : []
   if (cited.length === 0) {
-    reasons.push('no_facts_used')
+    // Only a purely social exchange needs no fact: "ok makasih kak" answered with "Sama-sama, Kak 🙏".
+    const social = incomingText !== undefined && isSocialMessage(incomingText, { acknowledgements: true }) && isSocialMessage(text)
+    if (!social) reasons.push('no_facts_used')
   } else {
     const unknown = cited.filter(id => !knowledge.facts.has(factId(id)))
     if (unknown.length > 0) reasons.push(`unknown_fact:${unknown.join(',')}`)

@@ -72,7 +72,10 @@ flowchart LR
   `3 pekan` and `3 bln` are durations, `20%` a percentage). Kinds stay apart: the 3 of `3 hari` never licenses a
   bare 3, and a number with any other word (`3 loyang`, `25 Desember`) must appear with that same word. Numbers
   written as words (`seratus ribu`, `sepekan`, `separuh`, `kedua`, `twice`, `a quarter`), digits of other scripts
-  and any bare domain fail unless the cited facts have them. `facts_used` must name existing facts; no placeholders, no fact ids, a length
+  and any bare domain fail unless the cited facts have them. `facts_used` must name existing facts, and may be empty
+  only in a purely social exchange: the customer's message and the reply are each a thanks, greeting or goodbye with
+  no question and no digits, every word from a small social vocabulary (`ok makasih kak 🙏` → `Sama-sama, Kak 🙏`;
+  `ok`, `siap` and `iya` may close the customer's message but not the reply). No placeholders, no fact ids, a length
   cap, no sensitive terms (discount, voucher, gift, refund, bank account …, including affixed forms like
   `diskonnya`, `direfund`) unless the cited facts contain them, and the reply must be in the sender's language. Any failure turns the reply
   into a draft with the reason.
