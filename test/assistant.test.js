@@ -1023,3 +1023,70 @@ test('a photo captioned "makasih kak" is a draft that names the photo: Claude ne
   assert.equal(store.getDraft(1).closing, false)
   assert.match(transport.toSelf().at(-1), /They wrote: "\[image\] makasih kak 🙏"/)
 })
+
+test('after a /no or a shadow /ok of a thanks, a yes with a thanks may answer our question before it: drafted; a plain thanks is skipped (skip-safety-r3-2)', async t => {
+  for (const mode of ['live', 'shadow']) {
+    for (const text of ['iya kak makasih', '👍 makasih kak', 'ok siap, makasih', 'perfect, thanks', 'makasih kak 🙏']) {
+      const { store, deliver, advance, stamp, say, command, skipped } = chatSetup(t, { config: { mode } })
+      if (mode === 'live') {
+        await say(ALICE, 'kak brownies bisa dikirim')
+        await command('/edit 1 Bisa kak, mau diantar jam 5 sore')
+      } else {
+        // Shadow sends nothing to the chat: the owner asked on the phone, and the takeover window passed.
+        await deliver({ id: 'OWNER1', chatId: ALICE, fromMe: true, isSelfChat: false, text: 'Bisa kak, mau diantar jam 5 sore', ...stamp(), kind: 'notify' })
+        advance(31 * 60_000)
+      }
+      await say(ALICE, 'makasih kak')
+      const thanksDraft = store.pendingDrafts().at(-1)
+      assert.equal(thanksDraft.closing, true)
+      await command(`${mode === 'live' ? '/no' : '/ok'} ${thanksDraft.id}`)
+      await say(ALICE, text)
+      const expected = text === 'makasih kak 🙏' ? [[[ALICE, text, 'closing_already_sent']], []] : [[], [text]]
+      assert.deepEqual([skipped(), store.pendingDrafts().map(draft => draft.excerpt)], expected, `${mode}: ${text}`)
+    }
+  }
+})
+
+test('a thanks quoting our question from before a discarded thanks is drafted: only a quote of our closing reply is skipped (skip-safety-r3-1)', async t => {
+  const { transport, store, say, command, skipped } = chatSetup(t)
+  await say(ALICE, 'kak brownies bisa dikirim')
+  await command('/edit 1 Bisa kak, mau diantar jam 5 sore?')
+  const question = transport.toCustomer().at(-1)
+  await say(ALICE, 'makasih kak')
+  await command('/no 2')
+  await say(ALICE, 'makasih kak 🙏', { quotedId: question.id, quotedText: question.text })
+  assert.deepEqual([skipped(), store.pendingDrafts().map(draft => draft.excerpt)], [[], ['makasih kak 🙏']])
+})
+
+test('a thanks or a yes that asks nothing is never auto-answered, whatever words the vocabulary lacks; a question with a thanks still is (send-path-r3-1, send-path-r3-2)', async t => {
+  // Claude slips: it cites a fact on a message that only thanks or agrees.
+  const respond = input => {
+    const text = input.messages.map(message => message.text).join(' ')
+    if (/dimana/.test(text)) return triageResult({ decision: 'answer', reply: 'Alamat kami di Jl. Contoh Raya No. 12, Coblong, Bandung ya Kak.', facts_used: ['F2'] })
+    if (/berapa/.test(text)) return triageResult(ANSWER_HOURS)
+    if (/makasih|thanks|sama2/i.test(text)) return triageResult({ decision: 'answer', reply: 'Terima kasih, Kak 🙏 Pemesanan berikutnya bisa lewat chat WhatsApp ini ya.', facts_used: ['F13'] })
+    return triageResult({ decision: 'answer', reply: 'Siap Kak, ditunggu ya. Kami buka Senin–Sabtu pukul 08.00–17.00 WIB.', facts_used: ['F1'] })
+  }
+  const { transport, store, say } = chatSetup(t, { respond })
+  const held = ['makasih bang', 'makasih mba', 'makasih kk', 'thanks bro', 'Makasih kak, semangat', 'thanks so much, have a good one', 'Sama2 kak, makasih juga 🙏',
+    'Oke kak siap, saya tunggu 🙏', 'iya kak betul', 'gapapa kak', 'siap bos', 'ok kk', 'okeh kak', 'ok kak nanti saya ke sana', 'siap kak ditunggu kabarnya']
+  // One chat each: the hourly cap must not be what holds them.
+  const chatOf = index => `62855500000${String(index).padStart(2, '0')}@s.whatsapp.net`
+  for (const [index, text] of held.entries()) await say(chatOf(index), text)
+  assert.deepEqual(transport.toCustomer(), [])
+  for (const [index, text] of held.entries()) {
+    assert.ok(store.getDraft(index + 1).policyReasons.includes('guard:social_message_answered_with_facts'), text)
+  }
+  for (const text of ['makasih bang, buka jam berapa?', 'Kak alamatnya dimana ya, makasih']) await say(BOB, text)
+  assert.equal(transport.toCustomer().length, 2, 'a question is answered, thanks or not')
+})
+
+test('a draft from a LID chat whose number is unknown shows the blocklist hint, a thanks or an escalation too (consistency-r3-1)', async t => {
+  const { transport, deliver } = setup(t, { config: { blocklist: ['081234567890'] } })
+  const LID = '123456789012345@lid'
+  for (const text of ['makasih kak 🙏', 'kak saya sudah transfer']) {
+    await deliver(incoming(LID, text, { senderName: 'Mama' }))
+    assert.match(transport.toSelf().at(-1), /add "123456789012345@lid" to blocklist/, text)
+  }
+  assert.equal(transport.toCustomer().length, 0)
+})

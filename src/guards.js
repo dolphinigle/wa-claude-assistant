@@ -196,7 +196,9 @@ export function detectLanguage (text) {
 //   since a missed thanks only becomes a draft while a false match could drop a real message.
 // - isSocialMessage holds the answer: whatever it cites, no answer to a thanks, a goodbye or a yes alone is auto-sent
 //   (checkReply). It is broad, since a false match only becomes a draft while a miss could auto-send a promise: it
-//   has no size limit, and it takes any text emoticon and laughter ("iya kak :D", "makasih kak hehe").
+//   has no size limit, and it takes any text emoticon and laughter ("iya kak :D", "makasih kak hehe"). A whole-message
+//   vocabulary still misses a word it does not know ("makasih bang"), so socialWithoutQuestion backs it: any thanks,
+//   goodbye or yes in a message that asks nothing holds the answer too.
 //
 // isThanks needs a thanks or goodbye; an acknowledgement ("ok", "iya", "siap") or a 👍 may only go with one, since
 // alone it can be a yes to something our side asked. Greetings are not in it: "Selamat pagi kak" opens a
@@ -227,20 +229,22 @@ const THANKS_BACK_PHRASES = ['sama sama', 'sama 2', 'terima kasih kembali', 'ter
 const THANKS_BACK_OPENERS = ['kembali kasih', 'no problem', 'no worries', 'anytime'] // "kami kembali kasih kabar" is no thanks-back
 
 // isSocialMessage takes all of that, plus what agrees to, arranges or asks for something ("no problem", "see you", a
-// yes alone: "iya kak", "boleh", "please", "lanjut", "👍"; "makasih, ditunggu ya"), greetings next to any of it, other
-// spellings of a thanks, laughter, and repeated letters folded ("makasihh kakk"). A greeting alone is not social:
-// "Selamat pagi kak" is answered like any other message.
+// yes alone: "iya kak", "boleh", "please", "lanjut", "gapapa", "👍"; "makasih, ditunggu ya"), greetings next to any of
+// it, other spellings of a thanks, more honorifics, laughter, and repeated letters folded ("makasihh kakk"). A greeting
+// alone is not social: "Selamat pagi kak" is answered like any other message.
 const SOCIAL_PHRASES = {
   closings: [...THANKS_PHRASES.closings, ...THANKS_BACK_PHRASES, ...THANKS_BACK_OPENERS, 'thank', 'thank u', 'thanks u', 'thank s', 'thx u',
     'tks', 'mks', 'mksi', 'mksih', 'maksih', 'mkasih', 'makaseh', 'makaci', 'trimakasih', 'trima kasih', 'trmksh', 'trmks', 'tysm',
     'hatur nuhun', 'nuhun', 'matur nuwun', 'suwun', 'welcome', 'appreciated', 'much appreciated', 'appreciate it', 'i appreciate it',
     'see you', 'sampai jumpa', 'sampai ketemu', 'hati hati', 'you too'],
   acknowledgements: [...THANKS_PHRASES.acknowledgements, 'ya', 'yaa', 'y', 'yoi', 'sure', 'boleh', 'mau', 'bisa', 'setuju', 'deal',
-    'sounds good', 'of course', 'mantul', 'please', 'pls', 'plz', 'jadi', 'fix', 'lanjut', 'gas', 'udah', 'sudah', 'yaudah', 'yasudah'],
+    'sounds good', 'of course', 'mantul', 'please', 'pls', 'plz', 'jadi', 'fix', 'lanjut', 'gas', 'udah', 'sudah', 'yaudah', 'yasudah',
+    'okeh', 'oks', 'betul', 'benar', 'bener', 'gapapa', 'gpp', 'ga apa apa', 'gak apa apa', 'nggak apa apa', 'enggak apa apa', 'tidak apa apa'],
   greetings: ['selamat pagi', 'selamat siang', 'selamat sore', 'selamat malam', 'pagi', 'siang', 'sore', 'malam', 'good morning',
     'good afternoon', 'good evening', 'halo', 'hallo', 'hai', 'hi', 'hello', 'hey', 'salam'],
   fillers: [...THANKS_PHRASES.fillers.filter(phrase => !['ya', 'yaa', 'you too'].includes(phrase)), 'dong', 'lagi', 'soon', 'wow', 'banget',
-    'bgt', 'sekali', 'ditunggu', 'dibantu', 'atas', 'bantuannya', 'informasinya', 'sangat', 'membantu', 'haha']
+    'bgt', 'sekali', 'ditunggu', 'dibantu', 'atas', 'bantuannya', 'informasinya', 'sangat', 'membantu', 'haha',
+    'bang', 'mba', 'kaka', 'kk', 'om', 'bro', 'bos', 'sist']
 }
 
 /**
@@ -305,38 +309,91 @@ const MAX_THANKS_CHARS = 300
 const MAX_THANKS_TOKENS = 16
 
 /**
- * The customer only thanks or says goodbye: a thanks or goodbye phrase, with at most acknowledgements, honorifics and
- * softeners around it, or friendly emoji and no words at all ("🙏"). No question, no digits, no symbol but punctuation,
- * friendly or agreeing emoji and friendly smileys, at most 16 words and emoji in at most 300 characters.
+ * How the customer thanks, or undefined if they do not only thank or say goodbye: a thanks or goodbye phrase, with at
+ * most acknowledgements, honorifics and softeners around it, or friendly emoji and no words at all ("🙏"). No question,
+ * no digits, no symbol but punctuation, friendly or agreeing emoji and friendly smileys, at most 16 words and emoji in
+ * at most 300 characters. `agrees`: it reads as a thanks only with an acknowledgement or an agreeing emoji in it ("iya
+ * makasih", "ok siap, thanks", "👍 makasih"), so it may also be a yes to something our side asked.
  */
-export function isThanks (input) {
-  if (String(input ?? '').length > MAX_THANKS_CHARS) return false
+function readThanks (input) {
+  if (String(input ?? '').length > MAX_THANKS_CHARS) return undefined
   const text = normalizeText(input).toLowerCase().replace(SMILEYS, ' ')
-  if (/[?¿]/.test(text) || /\p{N}/u.test(text)) return false
-  if (text.replace(/\p{L}+/gu, '').replace(EMOJI, '').replace(EMOJI_PARTS, '').replace(PUNCTUATION, '') !== '') return false
+  if (/[?¿]/.test(text) || /\p{N}/u.test(text)) return undefined
+  if (text.replace(/\p{L}+/gu, '').replace(EMOJI, '').replace(EMOJI_PARTS, '').replace(PUNCTUATION, '') !== '') return undefined
   const words = text.match(/\p{L}+/gu) ?? []
   const emoji = text.match(EMOJI) ?? []
-  if (words.length + emoji.length > MAX_THANKS_TOKENS) return false
-  if (words.length === 0) return emoji.length > 0 && emoji.every(symbol => FRIENDLY_EMOJI.has(symbol))
-  const { closings } = THANKS_VOCABULARY.kinds
-  return emoji.every(symbol => FRIENDLY_EMOJI.has(symbol) || AGREEING_EMOJI.has(symbol)) &&
-    splitKinds(words, THANKS_VOCABULARY).some(kinds => kinds & closings)
+  if (words.length + emoji.length > MAX_THANKS_TOKENS) return undefined
+  if (words.length === 0) return emoji.length > 0 && emoji.every(symbol => FRIENDLY_EMOJI.has(symbol)) ? { agrees: false } : undefined
+  if (!emoji.every(symbol => FRIENDLY_EMOJI.has(symbol) || AGREEING_EMOJI.has(symbol))) return undefined
+  const { closings, acknowledgements } = THANKS_VOCABULARY.kinds
+  const splits = splitKinds(words, THANKS_VOCABULARY).filter(kinds => kinds & closings)
+  if (splits.length === 0) return undefined
+  return { agrees: emoji.some(symbol => AGREEING_EMOJI.has(symbol)) || splits.every(kinds => kinds & acknowledgements) }
 }
+
+/** The customer only thanks or says goodbye (see readThanks). */
+export const isThanks = input => readThanks(input) !== undefined
+
+/** A thanks that also agrees to something ("iya makasih", "👍 thanks"): see readThanks. */
+export const thanksAgrees = input => readThanks(input)?.agrees === true
+
+// Indonesian writes a doubled word with a 2: "sama2", "makasih2", "hati2".
+const foldReduplication = text => text.replace(/(?<![\p{L}\p{N}])(\p{L}{2,})2(?![\p{L}\p{N}])/gu, '$1 $1')
 
 /**
  * The customer's words are only social: a thanks, a goodbye or a yes, with honorifics, softeners, laughter and maybe a
  * greeting around it, or emoji with no greeting ("👍", "kak 🙏"). Any emoji, emoticon, symbol or question mark may go
- * with it; a digit or a word outside the vocabulary is content. However long it is: a burst of thanks is still social,
- * and the split is linear.
+ * with it; a digit (but a doubling 2) or a word outside the vocabulary is content. However long it is: a burst of
+ * thanks is still social, and the split is linear.
  */
 export function isSocialMessage (input) {
-  const text = normalizeText(input).toLowerCase().replace(EMOTICONS, ' ')
+  const text = foldReduplication(normalizeText(input).toLowerCase().replace(EMOTICONS, ' '))
   if (/\p{N}/u.test(text)) return false
   const words = text.match(/\p{L}+/gu) ?? []
   const emoji = text.match(EMOJI) ?? []
   const { closings, acknowledgements, greetings } = SOCIAL_VOCABULARY.kinds
   return splitKinds(words, SOCIAL_VOCABULARY).some(kinds => (kinds & (closings | acknowledgements)) !== 0 ||
     (emoji.length > 0 && (kinds & greetings) === 0))
+}
+
+// Chat questions often have no question mark ("buka jam berapa kak"). "Nggak apa-apa" (no problem) asks nothing.
+const QUESTION_WORDS = new Set(['apa', 'apakah', 'berapa', 'brp', 'brapa', 'kapan', 'kpn', 'dimana', 'dmn', 'mana', 'gimana', 'gmn', 'bagaimana',
+  'bgmn', 'kenapa', 'knp', 'mengapa', 'siapa', 'what', 'whats', 'when', 'where', 'which', 'who', 'why', 'how'].map(SOCIAL_VOCABULARY.fold))
+// Yes-words as common in requests and orders as in a yes ("boleh minta alamatnya", "mau pesan", "sudah transfer ya"):
+// anywhere in a message they would hold nearly every message without a question.
+const COMMON_IN_REQUESTS = new Set(['ya', 'yaa', 'y', 'mau', 'bisa', 'jadi', 'udah', 'sudah', 'fix', 'gas', 'lanjut', 'boleh', 'sure', 'deal',
+  'please', 'pls', 'plz'].map(SOCIAL_VOCABULARY.fold))
+
+/** The phrases of a vocabulary found anywhere in the words, the longest first at each word; other words are passed over. */
+function findPhrases (words, { phrases, longest, fold }) {
+  const folded = words.map(fold)
+  const found = []
+  for (let start = 0; start < folded.length;) {
+    let length = Math.min(longest, folded.length - start)
+    while (length > 0 && !phrases.has(folded.slice(start, start + length).join(' '))) length--
+    if (length > 0) found.push(folded.slice(start, start + length).join(' '))
+    start += Math.max(length, 1)
+  }
+  return found
+}
+
+/**
+ * The fail-closed twin of isSocialMessage for the hold: the message thanks, says goodbye or says yes somewhere
+ * ("makasih bang", "Sama2 kak, makasih juga", "siap bos, saya tunggu", "👍 besok ya") and asks nothing: no question
+ * mark and no question word. A word outside the vocabulary cannot unlock an auto-send here, since no list knows every
+ * honorific or every way to say "see you". A greeting's words are its own ("good morning" says no "good").
+ */
+export function socialWithoutQuestion (input) {
+  const text = foldReduplication(normalizeText(input).toLowerCase().replace(EMOTICONS, ' '))
+  if (/[?¿]/.test(text)) return false
+  const words = text.match(/\p{L}+/gu) ?? []
+  const folded = words.map(SOCIAL_VOCABULARY.fold)
+  const asks = (word, index) => QUESTION_WORDS.has(word) && !(word === 'apa' && (folded[index - 1] === 'apa' || folded[index + 1] === 'apa'))
+  if (folded.some(asks)) return false
+  if ((text.match(EMOJI) ?? []).some(symbol => AGREEING_EMOJI.has(symbol))) return true
+  const { closings, acknowledgements } = SOCIAL_VOCABULARY.kinds
+  return findPhrases(words, SOCIAL_VOCABULARY)
+    .some(phrase => (SOCIAL_VOCABULARY.phrases.get(phrase) & (closings | acknowledgements)) !== 0 && !COMMON_IN_REQUESTS.has(phrase))
 }
 
 // Words are joined by any run of non-letters, none included: "sama-sama", "sama2", "you’re", "youre".
@@ -400,12 +457,13 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
 
   // Every auto-reply is backed by facts, so a thanks-back, which cites none, only ever goes out as a draft. A fact cited
   // on a purely social message only licenses a claim or a promise nobody asked for ("besok kami kirim ya" to an "iya
-  // kak" that may agree to something our side offered): held too. So is a reply that answers a thanks in its own words,
-  // however the customer spelled the thanks.
+  // kak" that may agree to something our side offered): held too, and so is one on a thanks or a yes that asks nothing,
+  // whatever other words come with it. So is a reply that answers a thanks in its own words, however the customer
+  // spelled the thanks.
   const cited = Array.isArray(factsUsed) ? factsUsed : []
   if (cited.length === 0) reasons.push('no_facts_used')
   else {
-    if (incomingText !== undefined && isSocialMessage(incomingText)) reasons.push('social_message_answered_with_facts')
+    if (incomingText !== undefined && (isSocialMessage(incomingText) || socialWithoutQuestion(incomingText))) reasons.push('social_message_answered_with_facts')
     const unknown = cited.filter(id => !knowledge.facts.has(factId(id)))
     if (unknown.length > 0) reasons.push(`unknown_fact:${unknown.join(',')}`)
   }

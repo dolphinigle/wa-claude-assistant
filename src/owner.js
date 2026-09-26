@@ -74,7 +74,7 @@ export function formatDraftNotice (draft) {
   lines.push(`Why: ${draft.reason}`)
   const blockers = (draft.policyReasons ?? []).filter(reason => !reason.startsWith('decision:'))
   if (blockers.length > 0) lines.push(`Not auto-sent: ${blockers.join(', ')}`)
-  if (blockers.includes('blocklist_unchecked')) lines.push(`Number unknown, so the blocklist cannot match it by phone number. To exclude this contact, add "${draft.chatId}" to blocklist.`)
+  if (draft.blocklistUnchecked || blockers.includes('blocklist_unchecked')) lines.push(`Number unknown, so the blocklist cannot match it by phone number. To exclude this contact, add "${draft.chatId}" to blocklist.`)
   lines.push(draft.draft ? `Reply: /ok ${draft.id} · /edit ${draft.id} <text> · /no ${draft.id}` : `Reply: /edit ${draft.id} <text> · /no ${draft.id}`)
   return lines.join('\n')
 }
@@ -91,10 +91,11 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
   const chatName = chatId => formatContact(chatId, store.existingChat(chatId))
   // Drafts whose send is in flight: two self-chat commands run concurrently (Baileys does not await listeners).
   const sending = new Set()
-  // Whatever the owner did with a thanks (sent it, edited it, discarded it, shadow included) closes the chat for the
-  // session: the next 🙏 is skipped instead of drafted again (policy.js). It is dated by the thanks, not the command:
-  // what our side sent after the thanks (another draft, a message typed on the phone) stays newer and reopens the chat.
-  // The reply sent by /ok or /edit is recognised by its message id instead (sendToCustomer's `closingReply`).
+  // Discarding a thanks draft, or sending one whose text is itself only a thanks-back (shadow included), closes the
+  // chat for the session: the next 🙏 is skipped instead of drafted again (policy.js). It is dated by the thanks, not
+  // the command: what our side sent after the thanks (another draft, a message typed on the phone, a sent reply that
+  // asks or offers anything, recorded as `lastSentAt` by sendToCustomer) stays newer and reopens the chat. A thanks-back
+  // sent by /ok or /edit is recognised by its message id instead (sendToCustomer's `closingReply`).
   const resolveClosing = draft => {
     if (!draft.closing) return
     const thanksAt = draft.lastMessageAt ?? draft.createdAt

@@ -103,7 +103,8 @@ const ours = (text, minutesAgo, extra = {}) => ({ id: `O${++messageCounter}`, fr
 const ANSWERED = [customer('jam buka kak?', 41), ours('Buka 08.00–17.00 ya Kak.', 40)]
 const THANKED = [...ANSWERED, customer('ok makasih kak', 30)]
 const CLOSED_AT = at(30) * 1000
-const closed = (history, lastClosingAt = CLOSED_AT) => closedThisSession(history, { lastClosingAt, sessionStart: SESSION_START })
+// A plain thanks ("makasih kak 🙏"); `agrees` is tested on its own below.
+const closed = (history, lastClosingAt = CLOSED_AT, agrees = false) => closedThisSession(history, { lastClosingAt, sessionStart: SESSION_START, agrees })
 const thanksContext = (history, chat = {}, extra = {}) =>
   ({ ...baseContext(), incomingText: 'makasih kak 🙏', history, chat: { ...baseContext().chat, lastClosingAt: CLOSED_AT, ...chat }, ...extra })
 const SKIP = reasons => ({ action: 'skip', reasons })
@@ -133,7 +134,7 @@ test('closedThisSession: no closing this session, or something new since', () =>
 })
 
 test('closedThisSession: our side wrote after the thanks where this history does not show it (the other addressing form, a restart)', () => {
-  const closedWith = (history, lastOursAt) => closedThisSession(history, { lastClosingAt: CLOSED_AT, sessionStart: SESSION_START, lastOursAt })
+  const closedWith = (history, lastOursAt) => closedThisSession(history, { lastClosingAt: CLOSED_AT, sessionStart: SESSION_START, lastOursAt, agrees: false })
   for (const history of [THANKED, [...THANKED, ours('Sama-sama, Kak 🙏', 20, { closing: true })], []]) {
     assert.equal(closedWith(history, at(10) * 1000), false, 'the owner on the phone, or a send, after the thanks')
     assert.equal(closedWith(history, CLOSED_AT), false, 'in the same second: unknown order, so new')
@@ -156,13 +157,42 @@ test('closedThisSession: what the customer sent after the closed thanks is new, 
 })
 
 test('closedThisSession: untriaged content on either form or before a restart is new from the closed thanks on (consistency-r2-2)', () => {
-  const closedWith = (history, lastUntriagedAt) => closedThisSession(history, { lastClosingAt: CLOSED_AT, sessionStart: SESSION_START, lastUntriagedAt })
+  const closedWith = (history, lastUntriagedAt) => closedThisSession(history, { lastClosingAt: CLOSED_AT, sessionStart: SESSION_START, lastUntriagedAt, agrees: false })
   for (const history of [THANKED, [...THANKED, ours('Sama-sama, Kak 🙏', 20, { closing: true })], []]) {
     assert.equal(closedWith(history, at(10) * 1000), false, 'a photo after the thanks, which this history does not show')
     assert.equal(closedWith(history, CLOSED_AT), false, 'in the same second: unknown order, so new')
     assert.equal(closedWith(history, at(40) * 1000), true, 'before the thanks: the closing stands')
   }
   assert.equal(decide(triageResult(THANKS), thanksContext([], { lastUntriagedAt: at(10) * 1000 })).action, 'escalate', 'decide passes it on')
+})
+
+test('a thanks that agrees closes only after our closing reply: after a /no, a shadow /ok or a restart it may be a yes (skip-safety-r3-2)', () => {
+  const question = ours('Bisa kak, mau diantar jam 5 sore?', 40)
+  const asked = [customer('kak brownies bisa diantar besok?', 41), question, customer('makasih kak', 30)]
+  const agreeing = (history, lastClosingAt = CLOSED_AT) => closed(history, lastClosingAt, true)
+  assert.equal(agreeing(asked), false, 'our question came before the thanks the owner discarded')
+  assert.equal(agreeing([]), false, 'a restart: what it could agree to is unknown')
+  assert.equal(agreeing([customer('makasih kak', 30)]), false, 'a history of thanks only')
+  assert.equal(agreeing([...asked, ours('Sama-sama, Kak 🙏', 20, { closing: true })]), true, 'our closing reply asked nothing')
+  assert.equal(closed(asked), true, 'a plain thanks is still skipped')
+  assert.equal(closedThisSession(asked, { lastClosingAt: CLOSED_AT, sessionStart: SESSION_START }), false, 'unset: it agrees')
+  // decide reads it from the message.
+  for (const incomingText of ['iya kak makasih', '👍 makasih kak', 'ok siap, makasih', 'perfect, thanks']) {
+    assert.deepEqual(decide(triageResult(THANKS), thanksContext(asked, {}, { incomingText })), { action: 'escalate', reasons: ['decision:answer', 'thanks_not_auto_sent'] }, incomingText)
+  }
+  assert.equal(decide(triageResult(THANKS), thanksContext(asked)).action, 'skip', 'makasih kak 🙏')
+})
+
+test('a thanks quoting our message is skipped only when that message is our closing reply (skip-safety-r3-1)', () => {
+  const question = ours('Bisa kak, mau diantar jam 5 sore?', 40)
+  const asked = [customer('kak brownies bisa diantar besok?', 41), question, customer('makasih kak', 30)]
+  const escalated = { action: 'escalate', reasons: ['decision:answer', 'thanks_not_auto_sent'] }
+  for (const quote of [{ id: question.id, text: question.text }, { text: question.text }, question.text]) {
+    assert.deepEqual(decide(triageResult(THANKS), thanksContext(asked, {}, { quoted: [quote] })), escalated, JSON.stringify(quote))
+  }
+  assert.deepEqual(decide(triageResult({ decision: 'escalate' }), thanksContext(asked, {}, { quoted: [question.text] })), { action: 'escalate', reasons: ['decision:escalate'] })
+  const reply = ours('Sama-sama, Kak 🙏', 20, { closing: true })
+  assert.equal(decide(triageResult(THANKS), thanksContext([...asked, reply], {}, { quoted: [{ id: reply.id, text: reply.text }] })).action, 'skip', 'our closing reply')
 })
 
 test('a thanks quoting an older message without text is drafted: quotes are told apart by id (skip-safety-r2-2)', () => {

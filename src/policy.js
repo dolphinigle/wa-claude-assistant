@@ -3,7 +3,7 @@
 // thanks-back is only a draft. The one exception to "everything reaches the owner" is a thanks right after a closing
 // this session: it is skipped, since another "sama-sama" or another draft only adds volume. Shadow mode is not decided
 // here: the send gate in assistant.js turns an approved send into a notice.
-import { isThanks, normalizeText } from './guards.js'
+import { isThanks, normalizeText, thanksAgrees } from './guards.js'
 
 const QUOTA_OK_STATUSES = new Set(['allowed', 'allowed_warning'])
 const HOUR_MS = 60 * 60 * 1000
@@ -20,17 +20,21 @@ const HOUR_MS = 60 * 60 * 1000
  * - our message sent as that closing (`closing`: the owner's /ok or /edit of the thanks draft, when it is itself only a
  *   thanks-back) is the last word: closed
  * - any other message of ours (the owner's or the bot's) is closed only if it came before the thanks the owner dealt
- *   with (a /no, a shadow /ok); one sent after it, or of unknown age, is new
+ *   with (a /no, a shadow /ok), and only for a new thanks that agrees to nothing: an "iya makasih" or a "👍 thanks"
+ *   (`agrees`) may be the yes to that message, which a /no answered nothing to. One sent after that thanks, or of
+ *   unknown age, is new
  * - so is `lastOursAt` after that thanks: the history holds one addressing form since the last start, but our side
  *   may have written on the other one, or before a restart
- * - a history that ends before any message of ours (a restart empties it) leaves the recorded closing standing
+ * - a history that ends before any message of ours (a restart empties it) leaves the recorded closing standing, for a
+ *   new thanks that agrees to nothing: what it could agree to is unknown
  * @param {{fromMe: boolean, text?: string, attachment?: string, timestamp?: number, closing?: boolean}[]} history
  *   oldest first; timestamps in epoch seconds
- * @param {{lastClosingAt?: number, sessionStart?: number, lastOursAt?: number, lastUntriagedAt?: number}} [options]
+ * @param {{lastClosingAt?: number, sessionStart?: number, lastOursAt?: number, lastUntriagedAt?: number, agrees?: boolean}} [options]
  *   epoch ms; `lastOursAt`: when our side last wrote to this contact on either form, closings left out;
- *   `lastUntriagedAt`: when the customer last sent content that is never triaged, on either form (assistant.js)
+ *   `lastUntriagedAt`: when the customer last sent content that is never triaged, on either form (assistant.js);
+ *   `agrees`: the new thanks comes with an acknowledgement or an agreeing emoji (guards.thanksAgrees; unset: it does)
  */
-export function closedThisSession (history = [], { lastClosingAt = 0, sessionStart = 0, lastOursAt = 0, lastUntriagedAt = 0 } = {}) {
+export function closedThisSession (history = [], { lastClosingAt = 0, sessionStart = 0, lastOursAt = 0, lastUntriagedAt = 0, agrees = true } = {}) {
   if (!(lastClosingAt > sessionStart)) return false
   if (lastOursAt >= lastClosingAt) return false
   if (lastUntriagedAt >= lastClosingAt) return false
@@ -46,9 +50,9 @@ export function closedThisSession (history = [], { lastClosingAt = 0, sessionSta
       continue
     }
     if (item.closing) return true
-    return Number.isFinite(item.timestamp) && lastClosingAt > item.timestamp * 1000
+    return !agrees && Number.isFinite(item.timestamp) && lastClosingAt > item.timestamp * 1000
   }
-  return true
+  return !agrees
 }
 
 const flatText = text => normalizeText(text).replace(/\s+/g, ' ').trim()
@@ -79,17 +83,25 @@ export function decide (result, ctx) {
   const attachments = ctx.attachments ?? []
   const sessionMs = (config.disclosure?.sessionGapHours ?? 12) * HOUR_MS
   const thanks = ctx.incomingText !== undefined && isThanks(ctx.incomingText)
-  // A thanks quoting an earlier message answers that message, not our side's last one. Ids tell two messages apart
-  // even when neither has text (an older photo of ours quoted after our closing); texts are the fallback.
+  // A thanks quoting a message answers that message. Only our closing reply itself (the thanks-back the owner's /ok or
+  // /edit sent) asks nothing: a quote of any other message, our question before a thanks the owner discarded
+  // included, may be a yes to it. Ids tell two messages apart even when neither has text (an older photo of ours
+  // quoted after our closing); texts are the fallback.
   const lastOurs = history.findLast(item => item.fromMe)
   const quotesEarlier = (ctx.quoted ?? []).map(quote => (typeof quote === 'string' ? { text: quote } : quote ?? {}))
-    .some(({ id, text }) => !lastOurs || (id && lastOurs.id ? id !== lastOurs.id : flatText(text) !== flatText(lastOurs.text)))
+    .some(({ id, text }) => !lastOurs?.closing || (id && lastOurs.id ? id !== lastOurs.id : flatText(text) !== flatText(lastOurs.text)))
 
   if (!result?.ok || !result.triage) return { action: 'escalate', reasons: [`triage_failed:${result?.error ?? 'unknown'}`] }
   const { decision } = result.triage
   // A thanks after a closing needs nothing from anyone, whatever Claude made of it.
   if (thanks && attachments.length === 0 && !quotesEarlier &&
-    closedThisSession(history, { lastClosingAt: chat.lastClosingAt, sessionStart: ctx.now - sessionMs, lastOursAt: chat.lastOursAt, lastUntriagedAt: chat.lastUntriagedAt })) {
+    closedThisSession(history, {
+      lastClosingAt: chat.lastClosingAt,
+      sessionStart: ctx.now - sessionMs,
+      lastOursAt: chat.lastOursAt,
+      lastUntriagedAt: chat.lastUntriagedAt,
+      agrees: thanksAgrees(ctx.incomingText)
+    })) {
     return { action: 'skip', reasons: [`decision:${decision}`, 'closing_already_sent'] }
   }
   if (decision !== 'answer') return { action: 'escalate', reasons: [`decision:${decision}`] }

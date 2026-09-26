@@ -187,6 +187,12 @@ test('one notice format: id, name, excerpt, summary, draft, reason, held gates a
   const held = formatDraftNotice({ id: 8, contactName: 'X', excerpt: 'e', draft: '', reason: 'r', policyReasons: ['decision:answer', 'guard:unsupported_amount:1', 'paused'] })
   assert.ok(!held.includes('/ok 8'))
   assert.match(held, /Not auto-sent: guard:unsupported_amount:1, paused/)
+  // The blocklist hint comes from the chat, whatever held the draft (consistency-r3-1).
+  const hint = /Number unknown, so the blocklist cannot match it by phone number\. To exclude this contact, add "1@lid" to blocklist\./
+  for (const policyReasons of [['decision:escalate'], ['decision:answer', 'thanks_not_auto_sent'], ['triage_failed:timeout']]) {
+    assert.match(formatDraftNotice({ id: 9, chatId: '1@lid', contactName: '1@lid', excerpt: 'e', draft: 'd', reason: 'r', policyReasons, blocklistUnchecked: true }), hint, policyReasons.join())
+  }
+  assert.doesNotMatch(formatDraftNotice({ id: 9, chatId: '1@lid', contactName: '1@lid', excerpt: 'e', draft: 'd', reason: 'r', policyReasons: ['decision:escalate'] }), /Number unknown/)
 })
 
 test('a pending draft saved by the four-category version still works with /ok and /status', async t => {

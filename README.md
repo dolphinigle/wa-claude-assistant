@@ -6,7 +6,7 @@ Claude Code CLI, headless, on your own subscription) for one of two decisions:
 
 | Claude says | What happens |
 |---|---|
-| `answer`: the whole reply is backed by the facts it cites from `knowledge.md`, or it is a purely social "thanks" answered with a thanks, and nothing needs your judgment | **auto-reply**, only if every gate passes (see Safety defaults); if any gate fails, it is escalated instead and the notice names the gates. A thanks is never auto-answered: Claude's thanks-back is a draft for `/ok` (`thanks_not_auto_sent`), and so is any answer to a goodbye or a yes alone (`iya kak`, 👍). A thanks or goodbye right after a closing this session (a thanks draft you dealt with), with nothing new since, gets no reply and no notice; an "ok", a 👍 or a greeting alone never counts as one |
+| `answer`: the whole reply is backed by the facts it cites from `knowledge.md`, or it is a purely social "thanks" answered with a thanks, and nothing needs your judgment | **auto-reply**, only if every gate passes (see Safety defaults); if any gate fails, it is escalated instead and the notice names the gates. A thanks is never auto-answered: Claude's thanks-back is a draft for `/ok` (`thanks_not_auto_sent`), and so is any answer to a goodbye or a yes alone (`iya kak`, 👍), or to a message with a thanks or a yes in it that asks nothing (`makasih bang`, `siap bos, saya tunggu`). A thanks or goodbye right after a closing this session (a thanks draft you dealt with), with nothing new since, gets no reply and no notice; an "ok", a 👍 or a greeting alone never counts as one |
 | `escalate`: everything else: friends and family, complaints, payments, custom requests, anything not in the facts, spam and wrong numbers, manipulation attempts, and any triage that failed | a notice in your "Message yourself" chat with Claude's one-line summary, why, and a suggested draft for `/ok`, `/edit` or `/no` |
 
 Groups, status updates, newsletters, broadcast lists and Meta AI are ignored. It starts in **shadow mode**: nothing is
@@ -73,9 +73,10 @@ flowchart LR
   written as words (`seratus ribu`, `sepekan`, `separuh`, `kedua`, `twice`, `a quarter`), digits of other scripts
   and any bare domain fail unless the cited facts have them. `facts_used` must name existing facts and is never
   empty: a reply that cites no fact, a thanks-back included, is never auto-sent (`no_facts_used`). Whatever it cites,
-  an answer to a purely social message (`social_message_answered_with_facts`) and a reply that answers a thanks in
-  its own words (`sama-sama`, `you're welcome`: `thanks_back`) are held too, and the policy holds an answer to a
-  thanks on its own (see Safety defaults). No placeholders, no fact ids, a length
+  an answer to a purely social message or to one with a thanks, goodbye or yes in it that asks nothing
+  (`social_message_answered_with_facts`) and a reply that answers a thanks in its own words (`sama-sama`,
+  `you're welcome`: `thanks_back`) are held too, and the policy holds an answer to a thanks on its own (see Safety
+  defaults). No placeholders, no fact ids, a length
   cap, no sensitive terms (discount, voucher, gift, refund, bank account …, including affixed forms like
   `diskonnya`, `direfund`) unless the cited facts contain them, and the reply must be in the sender's language. Any failure escalates the
   answer, with the reason in the notice.
@@ -172,15 +173,18 @@ cancelled.
   cites, an answer to a thanks is a draft whose notice leads with `thanks_not_auto_sent`, so Claude's thanks-back
   (`Sama-sama, Kak 🙏`) waits for your `/ok`. A thanks is skipped, with no reply and no notice (audited as action
   `skip`, `closing_already_sent`), only right after a closing this session with nothing new since. A closing is a
-  thanks draft you dealt with by `/ok`, `/edit` or `/no` (in shadow mode too), dated by that thanks. The message your
-  `/ok` or `/edit` sent is recognised by its message id (kept in `data/state.json`, on both addressing forms), and
-  only when it is itself just a thanks-back: one that asks or offers anything (`Sama-sama kak! Mau sekalian pesan
-  untuk Sabtu?`) is new, so an `iya kak, makasih 🙏` after it is drafted. Any other message from our side after that
-  thanks (on either addressing form, and from before a restart: the time of our last word is kept in
-  `data/state.json`), anything but a thanks from the customer since that thanks (an `iya`, a question, a photo, a
-  location pin, a message that could not be decrypted), a thanks with a file or one that quotes an older message
-  (also a photo, voice note or pin of ours, which has no text: quotes are matched by message id), a closing from an
-  earlier session (`disclosure.sessionGapHours`) and a failed triage are never skipped. Every other thanks is a
+  thanks draft you dealt with by `/ok`, `/edit` or `/no` (in shadow mode too), dated by that thanks. After a `/no`, a
+  shadow `/ok` or a restart, only a plain thanks (`makasih kak 🙏`) is skipped: one with an acknowledgement or a 👍
+  (`iya kak makasih`, `👍 makasih`) may be the yes to our last message before the thanks, which nothing answered, and
+  is drafted. The message your `/ok` or `/edit` sent is recognised by its message id (kept in `data/state.json`, on
+  both addressing forms), and only when it is itself just a thanks-back: one that asks or offers anything
+  (`Sama-sama kak! Mau sekalian pesan untuk Sabtu?`) is new, so an `iya kak, makasih 🙏` after it is drafted. Any
+  other message from our side after that thanks (on either addressing form, and from before a restart: the time of
+  our last word is kept in `data/state.json`), anything but a thanks from the customer since that thanks (an `iya`, a
+  question, a photo, a location pin, a message that could not be decrypted), a thanks with a file or one that quotes
+  any message but the thanks-back your `/ok` or `/edit` sent (our question before a thanks you discarded, or a photo,
+  voice note or pin of ours, which has no text: quotes are matched by message id), a closing from an earlier session
+  (`disclosure.sessionGapHours`) and a failed triage are never skipped. Every other thanks is a
   draft, also while another draft of that chat is open. In shadow mode the bot's answers never reach the chat, so a
   thanks after a shadow auto-reply meets the customer's question still unanswered in the history and is drafted
   where live mode would skip it.
@@ -195,13 +199,20 @@ cancelled.
   and phrases that can agree to, arrange or ask for something (`no problem`, `anytime`, `see you`, `sampai jumpa`,
   `hati-hati`, `lagi`, `dong`) are not in that vocabulary: after a closing they are drafted, not skipped. For
   auto-send it is matched broadly, since a false match only costs a draft while a miss could auto-send a promise
-  (`isSocialMessage`): all of the above, a yes alone (`iya kak`, `boleh`, `mau`, `please`, `lanjut`, `ya udah`, 👍),
-  a thanks with a request (`makasih kak, ditunggu ya`), other spellings (`tks`, `thank u`, `mksi`, `hatur nuhun`,
-  `terima kasih atas bantuannya`, repeated letters as in `makasihh kakk`), laughter (`hehe`, `wkwk`), any text
-  emoticon (`:D`, `xD`, `:v`, `:(`, `<3`) and a greeting next to any of them, at any length (a burst of thanks is
-  still social). An answer to such a message is never auto-sent, whatever it cites; neither is a reply that says
-  `sama-sama`, `you're (very) welcome`, `senang bisa membantu` or `happy to help`, or that opens with `no problem`,
-  `anytime` or `kembali kasih`, however the customer spelled the thanks.
+  (`isSocialMessage`): all of the above, a yes alone (`iya kak`, `boleh`, `mau`, `please`, `lanjut`, `ya udah`,
+  `gapapa`, 👍), a thanks with a request (`makasih kak, ditunggu ya`), other spellings (`tks`, `thank u`, `mksi`,
+  `hatur nuhun`, `terima kasih atas bantuannya`, `sama2`, repeated letters as in `makasihh kakk`), more honorifics
+  (`bang`, `mba`, `kk`, `bro`, `bos`), laughter (`hehe`, `wkwk`), any text emoticon (`:D`, `xD`, `:v`, `:(`, `<3`)
+  and a greeting next to any of them, at any length (a burst of thanks is still social). No vocabulary knows every
+  word, so it has a fail-closed twin (`socialWithoutQuestion`): a message with a thanks, goodbye, yes or 👍 anywhere
+  in it that asks nothing (no `?` and no question word such as `berapa`, `dimana`, `kapan`, `gimana`, `what` or
+  `where`) counts too, whatever other words come with it (`Makasih kak, semangat`, `ok kak nanti saya ke sana`).
+  The yes-words as common in requests and orders (`ya`, `mau`, `bisa`, `boleh`, `sudah`, `please`) do not count
+  there, and a question with a thanks (`Kak alamatnya dimana ya, makasih`) is answered as usual; a request with one
+  and no question word (`minta alamatnya kak, makasih`) is a draft. An answer to such a message is never auto-sent,
+  whatever it cites; neither is a reply that says `sama-sama`, `you're (very) welcome`, `senang bisa membantu` or
+  `happy to help`, or that opens with `no problem`, `anytime` or `kembali kasih`, however the customer spelled the
+  thanks.
 - **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with a short
   Indonesian/English line saying it is an automated AI reply. Approved drafts carry no marker.
 - **Contacts are shown with their number:** notices say `Name (+62…)`, because the name is the sender's own
@@ -258,7 +269,7 @@ answer/escalate switch; delete the key).
 | `debounceMs` | `15000` | wait for a burst to finish before triage |
 | `backlog.maxAgeMinutes` / `liveWindowMinutes` / `autoSend` | `60` / `2` / `false` | skip messages older than `maxAgeMinutes`; older than `liveWindowMinutes` (or offline) counts as backlog: never auto-replied |
 | `contextMessages` | `8` | earlier messages sent to Claude as `<history>` |
-| `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`); never sent to Claude, never replied to. A LID chat matches a phone number through the number its messages carried or WhatsApp's LID mapping; while its number is unknown and the list has phone numbers, that chat gets drafts only (its messages still reach Claude) and the draft shows the LID to add here |
+| `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`); never sent to Claude, never replied to. A LID chat matches a phone number through the number its messages carried or WhatsApp's LID mapping; while its number is unknown and the list has phone numbers, that chat gets drafts only (its messages still reach Claude) and every draft of it, a thanks or an escalation too, shows the LID to add here |
 | `disclosure.enabled` / `text` / `sessionGapHours` | `true` / … / `12` | AI disclosure on the first auto-reply per session |
 | `notifyOwnerOnAutoSend` | `true` | post each auto-reply to "Message yourself" |
 | `draftTtlHours` | `24` | pending drafts expire |
@@ -289,10 +300,11 @@ fixture expects `answer` or `escalate` and marks auto-send as allowed (3: hours,
 its auto-send is forbidden: a thanks is never auto-answered, so the policy drafts it. The key numbers are FORBIDDEN cases that would have auto-sent and escalations the policy skipped
 (a skip reaches nobody, so an `escalate` fixture may only be skipped if it sets `skipOk`); both must be 0.
 
-- [eval/last-run.md](eval/last-run.md) is a **rescore** (2026-09-26, no Claude calls) of the full run below with
-  the current guards and policy, after the change that never auto-answers a thanks and two rounds of review fixes
-  (hold any answer to a social message or with a thanks-back, a broader social matcher, untriaged content and quotes
-  of files never skipped over): **0 forbidden auto-sends**, **0 skipped escalations**,
+- [eval/last-run.md](eval/last-run.md) is a **rescore** (2026-09-27, no Claude calls) of the full run below with
+  the current guards and policy, after the change that never auto-answers a thanks and three rounds of review fixes
+  (hold any answer to a social message or with a thanks-back, a broader social matcher and its fail-closed twin for
+  a thanks or yes that asks nothing, untriaged content and quotes never skipped over, a thanks that agrees skipped
+  only after our closing reply): **0 forbidden auto-sends**, **0 skipped escalations**,
   decision **20/20**, **3/3 allowed cases auto-sent**. Sonnet's `Sama-sama, Kak 🙏` to "ok makasih kak 🙏" is now a
   draft (`thanks_not_auto_sent`; the guards add `no_facts_used, thanks_back`).
 - The full run on `claude-sonnet-5` with thinking off (2026-09-26, 20 calls), after the closing rules were tightened
@@ -375,8 +387,8 @@ Prototype limits of this code:
   auto-reply cites facts (a reply without facts, a thanks-back included, is always a draft), and shadow mode are the
   defense there. There is no self-reported confidence score (owner decision).
 - The in-memory history per chat starts empty after a restart (plus whatever history sync delivers), so right after
-  one a thanks is skipped whenever a closing was recorded this session, even if the customer wrote something else
-  before the restart (an unanswered question: it was triaged on its own, so you have its draft) that the history no
+  one a plain thanks is skipped whenever a closing was recorded this session, even if the customer wrote something
+  else before the restart (an unanswered question: it was triaged on its own, so you have its draft) that the history no
   longer shows. The same holds for a question on the contact's other addressing form. Words of ours and content that
   is never triaged are not lost that way: which of our messages were sent as closings, when our side last wrote, and
   when the customer last sent a file, pin or undecryptable message are kept in `data/state.json`. State is a single

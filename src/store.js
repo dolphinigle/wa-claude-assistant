@@ -98,8 +98,9 @@ export class Store {
   markSentByBot (id) { this.#remember(this.state.sentByBot, this.sentByBotSet, id, this.limits.sentByBot); this.save() }
 
   /**
-   * Our messages sent as the owner's /ok or /edit of a thanks draft: a thanks after one, with nothing else in between,
-   * is skipped. Message ids are unique across chats, so this holds on both addressing forms (PN and LID) of a contact.
+   * Our messages sent by the owner's /ok or /edit of a thanks draft whose text is itself only a thanks-back: a thanks
+   * after one, with nothing else in between, is skipped. Message ids are unique across chats, so this holds on both
+   * addressing forms (PN and LID) of a contact.
    */
   isClosingReply (id) { return this.closingReplySet.has(id) }
   markClosingReply (id) { this.#remember(this.state.closingReplies, this.closingReplySet, id, this.limits.closingReplies); this.save() }

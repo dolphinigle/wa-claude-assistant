@@ -359,7 +359,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const triage = result.triage
     const incomingText = batch.map(message => message.text).join('\n')
     const attachments = [...new Set(batch.map(message => message.attachment).filter(Boolean))]
-    // A thanks without a file: however the owner resolves its draft, that closes the chat for the session (owner.js).
+    // A thanks without a file: discarding its draft, or sending one that is itself only a thanks-back, closes the chat
+    // for the session; a sent reply that asks or offers anything is our newest word instead (sendToCustomer, owner.js).
     const closing = attachments.length === 0 && isThanks(incomingText)
     const guard = guardTriage(triage, { knowledge, config, incomingText })
     const decision = decide(result, {
@@ -461,6 +462,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       messageIds: batch.map(message => message.id),
       lastMessageAt: lastMessageAt(batch), // an owner reply after it answers it; a resolved closing is dated by it
       closing,
+      // Whatever held it: the owner may /ok it, and the send gate cannot match this chat against a phone number.
+      ...(blocklistUnchecked(chatId) && { blocklistUnchecked: true }),
       privateDetails: findPrivateDetails(triage?.reply ?? '', privateIdentifiersFor(config))
     })
     const notice = await sendToOwner(formatDraftNotice(draft))
