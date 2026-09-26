@@ -189,7 +189,9 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
         })
         const resultText = typeof result?.result === 'string' ? result.result : ''
         let error = failure
-        if (!error && /not logged in/i.test(`${resultText}\n${stderr}`)) error = 'not_logged_in'
+        // Only on failure: a successful reply may legitimately quote a customer saying "not logged in".
+        const failed = exitCode !== 0 || !result || result.is_error !== false
+        if (!error && failed && /not logged in/i.test(`${resultText}\n${stderr}`)) error = 'not_logged_in'
         if (!error && exitCode !== 0) error = `exit_${exitCode ?? signal}`
         if (!error && !init) error = 'no_init_event'
         if (!error && !result) error = 'no_result_event'

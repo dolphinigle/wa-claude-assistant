@@ -115,6 +115,11 @@ test('timeout: SIGTERM and a timeout error', async t => {
   assert.ok(Date.now() - started < 3000)
 })
 
+test('"not logged in" inside a successful reply is not mistaken for a login failure', async t => {
+  const result = await ask(brainFor(t), 'saya not logged in ke aplikasi SCENARIO:echo')
+  assert.equal(result.ok, true, result.error)
+})
+
 test('non-JSON lines are skipped and a final line without newline is parsed', async t => {
   const result = await ask(brainFor(t), 'SCENARIO:garbage')
   assert.equal(result.ok, true, result.error)
