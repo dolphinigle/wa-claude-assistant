@@ -349,6 +349,51 @@ test('an English question phrase asks only at the start of a clause; a relative,
   }
 })
 
+test('an apology for asking, a "maybe" or leaving it to us asks nothing: "tanya" asks only as a request to ask (send-path-r3-1)', () => {
+  for (const text of ['makasih kak, maaf ya banyak tanya', 'Makasih kak, maaf banyak nanya 🙏', 'makasih kak udah jawab, maaf nanya terus',
+    'oke kak, nanti saya tanya lagi', 'nanti saya tanya suami dulu mau yang mana', 'makasih kak, siapa tau nanti order lagi', 'ok kak, siapa tahu besok jadi',
+    'ok kak, gimana kakak aja', 'gimana baiknya aja kak', 'iya kak, gimana enaknya aja', 'makasih kak, gimana nanti aja', 'boleh gimana kakak aja']) {
+    assert.equal(asksSomething(text), false, text)
+  }
+  for (const text of ['mau tanya kak', 'maaf mau tanya', 'numpang tanya kak', 'boleh nanya', 'sekalian tanya kak', 'tanya dong kak', 'kak, tanya harga brownies',
+    'maaf nanya lagi kak, buka jam berapa', 'siapa yang ambil kak', 'gimana kak caranya', 'pembayarannya gimana aja kak', 'gimana baiknya kak']) {
+    assert.equal(asksSomething(text), true, text)
+  }
+})
+
+test('the one-word "alright then" and "go ahead" words say yes: a request word with them asks nothing (send-path-r3-2)', () => {
+  for (const text of ['yaudah boleh kak', 'yaudah bisa kak', 'yauda boleh', 'ywdh boleh', 'yodah bisa', 'yowes boleh kak', 'yaudahh boleh kak', 'ok gas kak boleh',
+    'mangga kak boleh', 'boleh kak lanjut', 'bisa kak lanjut', 'ok kak boleh sekalian', 'yaudah deh boleh', 'yaudah ada kak', 'yaudah tolong ya kak']) {
+    assert.equal(asksSomething(text), false, text)
+  }
+  for (const text of ['bisa kirim ke Bekasi', 'masih bisa pesan untuk besok', 'lanjut gak kak', 'yaudah bisa kirim besok']) assert.equal(asksSomething(text), true, text)
+})
+
+test('"ada" asks where it opens its clause, not in a statement or "someone will" (send-path-r3-3)', () => {
+  for (const text of ['makasih kak, nanti kalau ada apa-apa saya hubungi lagi', 'makasih kak, nanti kalo ada apa2 saya chat lagi',
+    'oke kak makasih, kalau ada yang kurang jelas nanti saya tanya lagi', 'iya kak, besok ada yang ambil', 'makasih kak, udah ada yang jemput',
+    'makasih kak, ada teman yang ambil', 'ok kak, soalnya ada acara', 'iya kak ada yang ambil besok']) {
+    assert.equal(asksSomething(text), false, text)
+  }
+  for (const text of ['ada brownies kak', 'kak masih ada stok coklat', 'ada yang ukuran kecil kak', 'ga ada yang ukuran kecil kak?', 'masih ada nggak',
+    'halo kak, ada kue ulang tahun']) {
+    assert.equal(asksSomething(text), true, text)
+  }
+})
+
+test('an English exclamation, relative or the customer\'s own plan asks nothing (send-path-r3-4)', () => {
+  for (const text of ['thanks, what a lovely cake', 'wow, what a beautiful cake, thank you!', 'thanks, what a great service', 'thanks for what you did',
+    'I love what you made, thank you', 'thanks, I will pay when I pick up', 'ok, I will transfer when I get home', "ok, I'll transfer when I get home",
+    'thanks, I will come by when I can', "I'm going to pay when I pick up", "we'll come when it's ready", 'thanks, my brother is the one who will pick it up',
+    'thanks, see you when I see you']) {
+    assert.equal(asksSomething(text), false, text)
+  }
+  for (const text of ['when do you open', 'thanks, when do you close', 'what time do you open', 'I want to know when you open', 'what is the price',
+    'which one is cheaper', 'can you tell me when you open']) {
+    assert.equal(asksSomething(text), true, text)
+  }
+})
+
 test('"let me know …" asks: three-word phrases are looked up too (consistency-r2-2)', () => {
   for (const text of ['let me know your opening hours', 'let me know the price kak', 'ok, let me know']) assert.equal(asksSomething(text), true, text)
 })
@@ -359,8 +404,11 @@ test('asksSomething scans a long message once', () => {
     // what the URL pattern of the reply checks backtracks on
     'a.'.repeat(40000), 'https://' + 'a.'.repeat(40000), 'a-'.repeat(40000) + '.1', 'x.1'.repeat(25000) + '?', 'ga napa '.repeat(10000),
     // what the clause-start, plan and "apa aja" checks look ahead or back over
-    'thank you '.repeat(5000) + 'is it', 'apa aja '.repeat(5000) + 'boleh', 'saya kabari kapan '.repeat(3000), 'gak bisa '.repeat(5000)]
-  const expected = [false, false, true, false, false, false, true, false, false, false, false, false, true, false, true, true, false, false]
+    'thank you '.repeat(5000) + 'is it', 'apa aja '.repeat(5000) + 'boleh', 'saya kabari kapan '.repeat(3000), 'gak bisa '.repeat(5000),
+    // what the "gimana … aja" and "I will" checks look ahead over
+    'gimana kakak kakak '.repeat(5000) + 'aja', 'gimana kakak aja '.repeat(5000), 'i will '.repeat(10000) + 'when']
+  const expected = [false, false, true, false, false, false, true, false, false, false, false, false, true, false, true, true, false, false,
+    true, false, false]
   // One quadratic pass over one of these takes seconds; two linear rounds of all of them stay far below the budget.
   const started = performance.now()
   for (let round = 0; round < 2; round++) {

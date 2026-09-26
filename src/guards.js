@@ -311,8 +311,18 @@ const foldRepeats = word => String(word ?? '').replace(/(\p{L})\1+/gu, '$1') // 
 // makasih"), so it is a particle.
 const QUESTION_WORDS = new Set(wordsOf('apa apakah apaan ngapain berapa berapakah brp brapa kapan kapankah kpn dimana dimanakah dmn mana ' +
   'manakah kemana darimana gimana gmn gmana bagaimana bagaimanakah bgmn kenapa knp napa mengapa siapa siapakah kah bisakah ' +
-  'bolehkah adakah benarkah betulkah masihkah sudahkah haruskah perlukah mungkinkah maukah tanya nanya ' +
+  'bolehkah adakah benarkah betulkah masihkah sudahkah haruskah perlukah mungkinkah maukah ' +
   'what whats when where wheres which who whos whom whose why how hows does'))
+// "tanya" asks only as a request to ask: after a wish or a permission ("mau tanya", "boleh nanya", "numpang tanya",
+// "sekalian tanya") or opening its clause ("tanya dong kak", "kak, tanya harga"). An apology ("maaf banyak tanya",
+// "maaf nanya terus") or the customer's plan ("nanti saya tanya lagi", see TELLS) asks nothing (send-path-r3-1).
+const ASK_WORDS = new Set(wordsOf('tanya nanya bertanya'))
+const WANTS = new Set(wordsOf('mau mo mw mao pengen pingin pgn ingin boleh blh numpang izin ijin sekalian'))
+const ASKING_AGAIN = new Set(wordsOf('terus trus trs mulu melulu'))
+// "siapa tau" is "maybe": "siapa tau nanti order lagi" (send-path-r3-1).
+const MAYBE_AFTER = new Set(wordsOf('tau tahu tw taw'))
+// "gimana kakak aja", "gimana baiknya aja", "gimana nanti aja": the customer leaves it to us (send-path-r3-1).
+const HOW = new Set(wordsOf('gimana gmn gmana bagaimana bgmn'))
 // An English question puts these first, so they ask only at the start of a clause, after soft words or a greeting
 // ("hi, do you deliver", "ok is it open on sunday", "let me know the price"); inside one they state: "thank you, that
 // is it" (send-path-r2-3).
@@ -337,7 +347,10 @@ const SOFT_WORDS = new Set([...Object.values(THANKS_PHRASES).flat().flatMap(phra
 // Words that only make a yes stronger or say "go ahead" are nothing to request either: "boleh banget kak", "bisa bgt",
 // "tentu bisa", "udah bisa kak makasih", "masih ada kak", "yes please do", "please go ahead" (send-path-r2-2). They are
 // not soft words: "udah belum" is still a tag question.
-const YES_WORDS = new Set(wordsOf('banget bget bgt sekali tentu pasti udah uda sudah sdh masih do go ahead'))
+// The one-word "alright then" (yaudah, ywdh, yowes) and "go ahead" (lanjut, gas, sekalian, mangga) are yes words
+// too: "yaudah boleh kak", "boleh kak lanjut", "ok kak boleh sekalian" (send-path-r3-2).
+const YES_WORDS = new Set(wordsOf('banget bget bgt sekali tentu pasti udah uda sudah sdh masih do go ahead ' +
+  'yaudah yaudh yauda ywdh yawdah yasudah yodah yowes yawes lanjut lanjutkan gas mangga monggo sekalian'))
 // "info harga kak" asks; "makasih infonya", "makasih info nya", "thanks for the info", "nanti saya info lagi" and "info
 // diterima" do not.
 const THANKED_FOR = new Set(wordsOf('the for atas untuk buat your makasih kasih thanks thx tq'))
@@ -356,16 +369,31 @@ const NO_PROBLEM = new Set(wordsOf('apa napa knp kenapa mengapa ngapain'))
 // dulu mau yang mana", "I'll let you know when I'm there", "I know where it is", "terserah kak apa aja". Only right
 // after "saya", "I", "nanti", "will" …: "saya mau info harganya" and "saya belum dapat info kapan dikirim" still ask
 // (send-path-r2-3).
-const TELLS = new Set(wordsOf('kabari kabarin kabarkan kasih kasi kasitau info infoin infokan pikir pikirin pikirkan mikir let tell know think decide'))
+const TELLS = new Set(wordsOf('kabari kabarin kabarkan kasih kasi kasitau info infoin infokan pikir pikirin pikirkan mikir tanya nanya ' +
+  'let tell know think decide'))
 const TELL_LEADS = new Set([...FIRST_PERSON, ...wordsOf('nanti ntar akan coba ll will')])
+// So is anything after an English "I will", "we'll", "I'm going to": "thanks, I will pay when I pick up", "ok, I'll
+// transfer when I get home"; "I want to know when you open" still asks (send-path-r3-4).
+const PLANNERS = new Set(wordsOf('i we'))
+const FUTURE = new Set(wordsOf('will ll shall gonna'))
+const BE = new Set(wordsOf('am m are re'))
 // A question word used as a relative or an exclamation asks nothing: "that's what I needed", "exactly what I was
-// looking for", "how lovely", "how nice of you", "why not", and "apa aja boleh" or "kapan aja bisa" (anything is fine).
-const RELATIVE_AFTER = new Set(wordsOf('s thats exactly just'))
+// looking for", "thanks for what you did", "I love what you made", "the one who will pick it up", "how lovely", "how
+// nice of you", "what a lovely cake", "see you when I see you", "why not", and "apa aja boleh" or "kapan aja bisa"
+// (anything is fine).
+const RELATIVE_AFTER = new Set(wordsOf('s thats exactly just for love loved like liked one'))
 const EXCLAIMS = new Set(wordsOf('lovely nice sweet kind cute cool great wonderful amazing awesome beautiful perfect fast quick helpful'))
 const ANY = new Set(wordsOf('aja saja'))
+const LEFT_TO_US = new Set([...HONORIFICS, ...wordsOf('kaka kakaknya baiknya enaknya bagusnya maunya nanti ntar')])
+// "ada" asks where it opens its clause ("ada brownies kak", "kak, masih ada stok coklat"). Inside one it mostly states
+// ("kalau ada apa-apa saya hubungi lagi", "besok ada yang ambil", "soalnya ada acara"), and so does "there is someone"
+// ("ada teman yang ambil", "ada yang jemput") (send-path-r3-3).
+const STILL = new Set(wordsOf('masih msh masi'))
+const SOMEONE = new Set(wordsOf('teman temen tmn orang org saudara sodara adik adek suami istri anak keluarga driver kurir ojol supir sopir'))
+const COMES = new Set(wordsOf('ambil ngambil ambilin jemput jemputin datang dateng'))
 const PHRASE_STARTS = new Set([...QUESTION_PHRASES].map(phrase => phrase.split(' ')[0]))
 // A clause without any of these asks nothing.
-const CUES = new Set([...QUESTION_WORDS, ...REQUEST_WORDS, ...TAGS, ...PHRASE_STARTS, 'info'])
+const CUES = new Set([...QUESTION_WORDS, ...ASK_WORDS, ...REQUEST_WORDS, ...TAGS, ...PHRASE_STARTS, 'info'])
 
 function clauseAsks (clause) {
   const tokens = clause.match(/[\p{L}\p{N}]+/gu) ?? []
@@ -381,6 +409,7 @@ function clauseAsks (clause) {
   for (let index = 0, firstPerson = false; index < count && plainFrom === count; index++) {
     const token = tokens[index]
     if (token === 'terserah' || (firstPerson && TELLS.has(token) && TELL_LEADS.has(tokens[index - 1]))) plainFrom = index
+    else if (PLANNERS.has(token) && (FUTURE.has(tokens[index + 1]) || (BE.has(tokens[index + 1]) && ['going', 'gonna'].includes(tokens[index + 2])))) plainFrom = index + 1
     if (FIRST_PERSON.has(token)) firstPerson = true
   }
   const quietFrom = new Uint8Array(count + 1).fill(1) // tokens[i..] only say yes
@@ -390,13 +419,24 @@ function clauseAsks (clause) {
     requestFrom[index] = requestFrom[index + 1] || REQUEST_WORDS.has(tokens[index]) ? 1 : 0
   }
   const anyIsFine = index => QUESTION_WORDS.has(tokens[index]) && ANY.has(tokens[index + 1]) && quietFrom[index + 2] && requestFrom[index + 2]
-  const other = yes.some((only, index) => !only && !anyIsFine(index))
+  // "gimana", one to three of "kakak", "baiknya", "nanti" …, then "aja". A fixed look-ahead from each "gimana": linear.
+  const leftToUs = new Uint8Array(count)
+  for (let index = 0; index < count; index++) {
+    if (!HOW.has(tokens[index])) continue
+    let end = index + 1
+    while (end < count && end <= index + 3 && LEFT_TO_US.has(tokens[end])) end++
+    if (end > index + 1 && ANY.has(tokens[end])) leftToUs.fill(1, index, end + 1)
+  }
+  const other = yes.some((only, index) => !only && !anyIsFine(index) && !leftToUs[index])
   const noProblem = index => NO_PROBLEM.has(tokens[index]) &&
     (NEGATIONS.has(tokens[index - 1]) || (NO_PROBLEM.has(tokens[index - 1]) && NEGATIONS.has(tokens[index - 2])))
   const plainQuestion = (token, index, before, after) =>
     RELATIVE_AFTER.has(before) || (before === 'is' && ['that', 'this', 'it'].includes(tokens[index - 2])) ||
-    anyIsFine(index) ||
+    anyIsFine(index) || leftToUs[index] === 1 || (token === 'siapa' && MAYBE_AFTER.has(after)) ||
+    (token === 'what' && (after === 'a' || after === 'an')) || (token === 'when' && (before === 'you' || before === 'u')) ||
     (token === 'how' && EXCLAIMS.has(after) && quietFrom[index + 2]) || (token === 'why' && after === 'not' && quietFrom[index + 2])
+  const opensClause = (index, before) => index <= lead || (STILL.has(before) && index - 1 <= lead)
+  const statesThere = (after, index) => after === 'apa' || after === 'apa2' || SOMEONE.has(after) || (after === 'yang' && COMES.has(tokens[index + 2]))
   const asks = (token, index) => {
     const before = tokens[index - 1]
     const after = tokens[index + 1]
@@ -406,8 +446,10 @@ function clauseAsks (clause) {
     if (token === 'would' && after === 'like') return !NOT_WANTED.has(tokens[index + 2] ?? 'that')
     if (index >= plainFrom) return false
     if (QUESTION_WORDS.has(token)) return !noProblem(index) && !plainQuestion(token, index, before, after)
+    if (ASK_WORDS.has(token)) return WANTS.has(before) || (index <= lead && before !== 'banyak' && !ASKING_AGAIN.has(after))
     if (token === 'info') return after !== 'nya' && !RECEIVED.has(after) && !THANKED_FOR.has(before) && !FIRST_PERSON.has(before)
     if (!REQUEST_WORDS.has(token) || !other || FIRST_PERSON.has(before) || saysNo(before)) return false
+    if (token === 'ada') return opensClause(index, before) && !statesThere(after, index)
     return !MODALS.has(token) || SUBJECTS.has(after)
   }
   if (tokens.some(asks)) return true

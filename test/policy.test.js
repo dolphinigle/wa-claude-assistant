@@ -280,6 +280,24 @@ test('a fact-cited answer to a no, an emphatic or English yes, or a closing with
   }
 })
 
+test('a fact-cited answer to an apology, a "maybe", a deferral, a one-word yes, a statement with "ada" or an English plan is a draft (send-path-r3-1..4)', () => {
+  const order = { decision: 'answer', reply: 'Sama-sama Kak! Pemesanan bisa langsung lewat chat ini ya.', facts_used: ['F13'] }
+  const delivery = { decision: 'answer', reply: 'Baik Kak, pengiriman dalam Kota Bandung pakai kurir instan (GoSend atau GrabExpress), ongkir dibayar pembeli ya.', facts_used: ['F3'] }
+  const deposit = { decision: 'answer', reply: 'Siap Kak, pesanan dianggap masuk setelah DP 50% ya.', facts_used: ['F10'] }
+  const hours = { decision: 'answer', reply: 'Siap Kak, kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya.', facts_used: ['F1'] }
+  const cash = { decision: 'answer', reply: 'Sure! Cash on pick-up is fine.', facts_used: ['F4'] }
+  for (const [triage, incomingText] of [
+    [order, 'makasih kak, siapa tau nanti order lagi'], [order, 'makasih kak, maaf ya banyak tanya'], [order, 'oke kak, nanti saya tanya lagi'],
+    [delivery, 'ok kak, gimana kakak aja'], [deposit, 'yaudah boleh kak'], [deposit, 'ywdh boleh'], [deposit, 'boleh kak lanjut'], [deposit, 'ok gas kak boleh'],
+    [order, 'makasih kak, nanti kalau ada apa-apa saya hubungi lagi'], [hours, 'iya kak, besok ada yang ambil'], [hours, 'makasih kak, udah ada yang jemput'],
+    [cash, 'thanks, I will pay when I pick up'], [cash, 'ok, I will transfer when I get home']
+  ]) {
+    const guard = guardTriage(triage, { knowledge, config, incomingText })
+    assert.deepEqual(guard, { ok: true, reasons: [] }, `${incomingText}: the guards alone would let it out`)
+    assert.deepEqual(decide(triageResult(triage), { ...baseContext(), incomingText, guard }), { action: 'escalate', reasons: ['decision:answer', 'no_question'] }, incomingText)
+  }
+})
+
 test('an answer to a message that asks something goes on to the other gates, a burst where one message asks too', () => {
   const autoSent = { action: 'auto_send', reasons: ['decision:answer', 'all_gates_passed'] }
   const open = incomingText => ({ ...baseContext(), incomingText })

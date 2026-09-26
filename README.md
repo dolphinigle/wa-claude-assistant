@@ -233,24 +233,31 @@ cancelled.
 - **What counts as asking** is matched the other way round (`asksSomething`): no list knows every way to thank or
   agree (`makasih bang`, `sama2`, `betul`), so it lists what asks, and a missed question only costs a draft. A
   message asks something if it has a `?` (fullwidth too), a question word (`apa`, `berapa`, `kapan`, `dimana`,
-  `mana`, `gimana`, `kenapa`, `siapa`, `tanya`, `bisakah` and the other `-kah` questions; `what`, `when`,
-  `where`, `which`, `who`, `why`, `how`, `does` …), an English question opening at the start of a clause (`do you`,
+  `mana`, `gimana`, `kenapa`, `siapa`, `bisakah` and the other `-kah` questions; `what`, `when`,
+  `where`, `which`, `who`, `why`, `how`, `does` …), `tanya` as a request to ask (`mau tanya`, `boleh nanya`,
+  `numpang tanya`, `tanya dong kak`; not `maaf banyak tanya`, `maaf nanya terus` or `nanti saya tanya lagi`), an
+  English question opening at the start of a clause (`do you`,
   `is there`, `is it`, `are you`, `will you`, `may i`, `tell me`, `let me know`; inside one it states: `thank you,
   that is it`), `would like` with something to want (`I would like the address`, not `I would like that` or `would
   like to thank you`), `info` as a request (`info harga`, not `makasih infonya`, `thanks for the info`, `nanti saya
   info lagi` or `info diterima`), a request word with something to request in its clause (`bisa kirim ke Bekasi`,
   `boleh minta alamatnya`, `tolong kirim besok`, `please send the menu`; `can`, `could` and `would` only before
-  their subject: `can you deliver`, `could I pay by transfer`), or a tag question at the end of a clause (`tokonya
+  their subject: `can you deliver`, `could I pay by transfer`; `ada` only where it opens its clause: `ada brownies
+  kak`, `kak, masih ada stok coklat`, not `kalau ada apa-apa saya hubungi lagi`, `besok ada yang ambil` or `ada
+  teman yang ambil`), or a tag question at the end of a clause (`tokonya
   buka gak kak`, `ready ga`, `sudah sampai belum`, `buka minggu kan`). A request word alone or with only an
-  intensifier says yes (`bisa kak`, `boleh banget kak`, `bisa bgt`, `tentu bisa`, `masih ada kak`, `tolong ya`,
+  intensifier or a go-ahead says yes (`bisa kak`, `boleh banget kak`, `bisa bgt`, `tentu bisa`, `masih ada kak`,
+  `yaudah boleh kak`, `boleh kak lanjut`, `tolong ya`,
   `yes please`, `please go ahead`, `that would be great`, `sure you can`), after a negation it says no (`gak ada
   kak, makasih`, `gak bisa kak`, `belum ada`), and after `saya` or `I` it states (`saya bisa ambil besok`).
   Reduplicated question words ask nothing (`nggak apa-apa`, `kapan-kapan`), and neither do `apa`, `napa`, `knp`,
   `kenapa`, `mengapa` or `ngapain` after a negation ("no problem" however it is spelled: `gak apa kak`, `ga napa`,
   `tidak mengapa`), a question word after the customer's own "I'll tell you" or "I think" (`nanti saya kabari
   kapan ambilnya`, `saya pikir-pikir dulu mau yang mana`, `I'll let you know when I'm there`, `I know where it
-  is`) or after `terserah`, a relative (`that's what I needed`), an exclamation (`how lovely`, `why not`) or
-  "anything is fine" (`apa aja boleh`, `kapan aja bisa`). `kok`
+  is`, `I will pay when I pick up`) or after `terserah`, a relative (`that's what I needed`, `thanks for what you
+  did`, `the one who will pick it up`, `see you when I see you`), an exclamation (`how lovely`, `what a lovely
+  cake`, `why not`), "maybe" (`siapa tau nanti order lagi`), "whatever you think" (`gimana kakak aja`, `gimana
+  baiknya aja`) or "anything is fine" (`apa aja boleh`, `kapan aja bisa`). `kok`
   is a particle (`bisa kok kak`), not a question word. A shared link is left out, so the `?` of its query string
   (`https://maps.app.goo.gl/…?g_st=iw`) or a word in its path asks nothing; a bare `kak.kirim` is no link. A burst asks
   if any of its messages does, and a question with a thanks (`makasih kak, jam berapa tutup?`) goes on to the other
@@ -428,8 +435,8 @@ Prototype limits of this code:
 - Drafts can still over-promise or invent details (e.g. "we don't have sugar-free options"): that is why escalations
   always wait for you.
 - Whether a message asks something is read from its words, not its meaning: a statement with a question or request
-  word in it (`kalau ada apa-apa kabarin ya`, `saya tanya suami dulu`) or a `?` goes on to the other gates like a
-  question, and a question without any of them (`harga brownies kak`) is only a draft.
+  word in it (`saya mau tanya suami dulu`, `ada acara kantor besok`) or a `?` goes on to the other gates like a
+  question, and a question without any of them (`harga brownies kak`, `besok ada brownies kak`) is only a draft.
 - The guards check concrete details, not meaning: a wrong statement without numbers ("we deliver to Jakarta") can
   pass, and so can a detail moved to the wrong item inside one cited fact ("brownies keep 1 month" citing F12,
   where 1 month is the cookies'). The prompt's rule to answer only what the facts fully cover, the rule that every
