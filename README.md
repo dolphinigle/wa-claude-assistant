@@ -84,8 +84,10 @@ npm start                 # run on WhatsApp in shadow mode
 1. Edit `knowledge.md` for your business: stable fact ids in `## Facts`, your tone in `## Voice`, hard rules in
    `## Never`. Only `## Facts` counts as ground truth for auto-replies.
 2. `npm run pair`: scan the QR from WhatsApp → Settings → Linked devices. PASS keeps the session in `auth/`
-   (mode 0700, gitignored; it is a long-lived credential, never share it or paste it into an AI tool).
-3. `npm start`: an "Assistant online" notice should land in "Message yourself". If it does not, set
+   (mode 0700, gitignored; it is a long-lived credential, never share it or paste it into an AI tool). Pair runs
+   only once: on an existing link it refuses, because connecting would consume the messages WhatsApp queued for
+   the device while the assistant was stopped (`--force` overrides). Use `npm start` to check a link.
+3. `npm start`, right after pairing: an "Assistant online" notice should land in "Message yourself". If it does not, set
    `whatsapp.selfChatJid` (see Config) and tell the maintainer which form worked (open question below).
 4. Run in shadow mode for a while. Every would-be auto-reply shows up in "Message yourself" as `[SHADOW] Would
    auto-reply`, and drafts work as usual except that `/ok` sends nothing.
