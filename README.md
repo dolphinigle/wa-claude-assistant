@@ -179,6 +179,16 @@ triaged, and drafts made from them are cancelled.
   triage is running discards that result and re-triages the whole burst.
 - Everything is logged to `data/audit.jsonl`; state is in `data/state.json` (atomic temp+rename writes).
 
+## Model and latency
+
+The brain runs Sonnet (`claude.model: "sonnet"`) with thinking off (`MAX_THINKING_TOKENS=0`). Each triage is one
+`claude -p` process: research measured about 11 s from spawn to exit for Sonnet 5 with thinking off (2–5 s of that is
+CLI start-up), against 4.5–7.8 s for Haiku. An auto-reply therefore lands roughly half a minute after the customer's
+last message: the 15 s debounce, then the triage. `timeoutMs` is 90 s, several times a typical call, so a
+structured-output retry on a busy machine still fits; a triage that times out is escalated to you. With
+`concurrency: 2`, a third chat waits for a free slot. Thinking on (`maxThinkingTokens: null`) measured 10–14 s in
+research and uses more of your subscription quota. Re-run `npm run eval` after changing the model or thinking.
+
 ## Config reference
 
 `config.json` holds the defaults; `config.local.json` (gitignored) is deep-merged over it (arrays replace).
@@ -200,7 +210,9 @@ triaged, and drafts made from them are cancelled.
 | `guards.maxReplyChars` / `guards.sensitiveTerms` | `600` / list | auto-reply length cap; terms that force a draft unless in the facts |
 | `guards.ownerIdentifiers` | `[]` | your details that must never reach a customer, e.g. your Claude account email; with your local username, HOME and the app's paths they force a draft (and a warning on drafts) |
 | `quota.maxFiveHourUtilization` / `maxSevenDayUtilization` | `0.8` / `0.9` | stop auto-replying above these |
-| `claude.bin` / `model` / `timeoutMs` / `concurrency` / `maxStructuredOutputRetries` | `claude` / `haiku` / `60000` / `2` / `2` | the locked CLI call |
+| `claude.model` | `sonnet` | CLI model alias; it floats, and the eval report shows the model id it resolved to |
+| `claude.maxThinkingTokens` | `0` | `0` = thinking off; `null` = the CLI's default (adaptive thinking on Sonnet 5: slower, more quota); a positive number is passed on as `MAX_THINKING_TOKENS` but is untested on Sonnet 5, whose API has no fixed thinking budget |
+| `claude.bin` / `timeoutMs` / `concurrency` / `maxStructuredOutputRetries` | `claude` / `90000` / `2` / `2` | the locked CLI call; the timeout is per call, spawn to exit |
 | `whatsapp.selfChatJid` | `null` | force the "Message yourself" JID if auto-detection picks the wrong form; it must be your own PN or LID, anything else is refused |
 | `whatsapp.caughtUpWatchdogMs` / `maxReconnectAttempts` / `stableConnectionMs` | `180000` / `10` / `120000` | #2810 watchdog; give up after this many connections in a row that open and drop again before staying caught up and open for `stableConnectionMs`. A network outage (no connection opens at all) is retried every ≤ 60 s for as long as it lasts, and an outage of 5 min or more is reported in "Message yourself" once the connection is back |
 | `timezone` | `Asia/Jakarta` | the `now:` line given to Claude |

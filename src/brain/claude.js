@@ -24,13 +24,17 @@ export function buildArgs ({ model, systemPromptFile, schemaJson }) {
 }
 
 // Explicit and minimal: nothing else from process.env is inherited, so ANTHROPIC_API_KEY can never switch billing.
-export function buildEnv ({ maxStructuredOutputRetries }, parentEnv = process.env) {
+// maxThinkingTokens 0 turns thinking off; null leaves MAX_THINKING_TOKENS unset, which is the CLI's default thinking.
+export function buildEnv ({ maxStructuredOutputRetries, maxThinkingTokens = 0 }, parentEnv = process.env) {
+  if (maxThinkingTokens !== null && !(Number.isInteger(maxThinkingTokens) && maxThinkingTokens >= 0)) {
+    throw new Error(`claude.maxThinkingTokens must be null or an integer >= 0, got ${JSON.stringify(maxThinkingTokens)}`)
+  }
   return {
     HOME: parentEnv.HOME,
     PATH: parentEnv.PATH,
     LANG: 'C.UTF-8',
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
-    MAX_THINKING_TOKENS: '0',
+    ...(maxThinkingTokens !== null && { MAX_THINKING_TOKENS: String(maxThinkingTokens) }),
     ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
     DISABLE_AUTOUPDATER: '1',
     MAX_STRUCTURED_OUTPUT_RETRIES: String(maxStructuredOutputRetries)
@@ -118,6 +122,7 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
   const systemPromptFile = renderSystemPrompt({ promptsDir: config.paths.prompts, outDir: path.join(dataDir, 'prompt'), knowledgeText: knowledge.promptText })
   const schemaJson = JSON.stringify(JSON.parse(readFileSync(path.join(config.paths.prompts, 'triage-schema.json'), 'utf8')))
   const args = buildArgs({ model: claude.model, systemPromptFile, schemaJson })
+  const env = buildEnv(claude) // a bad thinking setting stops the start, not every call
   const limit = createLimiter(Math.max(1, claude.concurrency ?? 1))
   const running = new Set() // kill functions of the calls whose child is alive
   let closed = false
@@ -154,7 +159,7 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
       try {
         // Its own process group: a timeout or shutdown then also reaches whatever it started (a wrapper script that
         // does not exec, a helper process), which would otherwise keep stdout open and the call pending.
-        child = spawn(claude.bin, args, { cwd: sandboxDir, env: buildEnv(claude), stdio: ['pipe', 'pipe', 'pipe'], shell: false, detached: true })
+        child = spawn(claude.bin, args, { cwd: sandboxDir, env, stdio: ['pipe', 'pipe', 'pipe'], shell: false, detached: true })
       } catch (error) {
         resolve({ ok: false, error: `spawn_failed: ${error.message}`, meta: { durationMs: 0 } })
         return

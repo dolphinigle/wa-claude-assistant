@@ -109,11 +109,13 @@ REUSABLE FILES
 
 ## Locked `claude -p` invocation
 
-cd "$EMPTY_DIR" && env -i HOME="$HOME" PATH="$PATH" LANG=C.UTF-8 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 MAX_THINKING_TOKENS=0 ENABLE_CLAUDEAI_MCP_SERVERS=false DISABLE_AUTOUPDATER=1 MAX_STRUCTURED_OUTPUT_RETRIES=2 claude -p --model haiku --output-format stream-json --verbose --safe-mode --setting-sources "" --strict-mcp-config --tools "" --disallowedTools "mcp__*" --disable-slash-commands --no-session-persistence --system-prompt-file "$PROMPT_DIR/triage-system.txt" --json-schema "$(cat "$PROMPT_DIR/triage-schema.json")" < message.txt
+Owner decision (2026-09-26, after the research): the model is `sonnet` (was `haiku`), `MAX_THINKING_TOKENS` comes from `claude.maxThinkingTokens` (default 0; `null` leaves it unset, i.e. the CLI's default thinking) and the timeout is 90 s (was 60 s). Everything else below is unchanged.
+
+cd "$EMPTY_DIR" && env -i HOME="$HOME" PATH="$PATH" LANG=C.UTF-8 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 MAX_THINKING_TOKENS=0 ENABLE_CLAUDEAI_MCP_SERVERS=false DISABLE_AUTOUPDATER=1 MAX_STRUCTURED_OUTPUT_RETRIES=2 claude -p --model sonnet --output-format stream-json --verbose --safe-mode --setting-sources "" --strict-mcp-config --tools "" --disallowedTools "mcp__*" --disable-slash-commands --no-session-persistence --system-prompt-file "$PROMPT_DIR/triage-system.txt" --json-schema "$(cat "$PROMPT_DIR/triage-schema.json")" < message.txt
 
 The untrusted text goes ONLY on stdin, as `<message from=".." name="..">\n{text}\n</message>`, with & and < escaped in both the text and the attributes.
 
-From Node: spawn('claude', ARGS, {cwd: EMPTY_DIR, env: {HOME, PATH, LANG:'C.UTF-8', CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1', MAX_THINKING_TOKENS:'0', ENABLE_CLAUDEAI_MCP_SERVERS:'false', DISABLE_AUTOUPDATER:'1', MAX_STRUCTURED_OUTPUT_RETRIES:'2'}, stdio:['pipe','pipe','pipe']}), no shell, then child.stdin.end(wrapped), with a 60 s SIGTERM timeout (exit 143).
+From Node: spawn('claude', ARGS, {cwd: EMPTY_DIR, env: {HOME, PATH, LANG:'C.UTF-8', CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1', MAX_THINKING_TOKENS:'0', ENABLE_CLAUDEAI_MCP_SERVERS:'false', DISABLE_AUTOUPDATER:'1', MAX_STRUCTURED_OUTPUT_RETRIES:'2'}, stdio:['pipe','pipe','pipe']}), no shell, then child.stdin.end(wrapped), with a 90 s SIGTERM timeout (exit 143).
 
 Schema: {"type":"object","properties":{"category":{"type":"string","enum":["simple","complex","important","ignore"]},"confidence":{"type":"number","minimum":0,"maximum":1},"reply":{"type":"string"},"reason":{"type":"string"}},"required":["category","confidence","reply","reason"],"additionalProperties":false}
 

@@ -14,7 +14,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 const init = {
   type: 'system', subtype: 'init', cwd: process.cwd(), tools: ['StructuredOutput'], mcp_servers: [], skills: [], slash_commands: [],
   plugins: [{ name: 'agents-md', path: 'builtin', source: 'agents-md@builtin' }, { name: 'telemetry', path: 'builtin', source: 'telemetry@builtin' }],
-  apiKeySource: 'none', model: 'claude-haiku-fake', claude_code_version: '0.0.0-fake'
+  apiKeySource: 'none', model: 'claude-sonnet-fake', claude_code_version: '0.0.0-fake'
 }
 const rateLimit = {
   type: 'rate_limit_event',

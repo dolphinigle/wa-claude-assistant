@@ -33,8 +33,9 @@
   },
   "claude": {
     "bin": "claude",
-    "model": "haiku",
-    "timeoutMs": 60000,
+    "model": "sonnet",
+    "maxThinkingTokens": 0,
+    "timeoutMs": 90000,
     "concurrency": 2,
     "maxStructuredOutputRetries": 2
   },

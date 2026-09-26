@@ -19,9 +19,9 @@ function brainFor (t, claudeOverrides = {}, { dataDir = tempDir(t), knowledge: b
 const ask = (brain, text, name = 'Sari') => brain.triage({ chat: { name }, history: [], messages: [{ text, timestamp: NOW / 1000 }] })
 
 test('locked argv: exact flag set, schema and prompt file only, never message text', () => {
-  const args = buildArgs({ model: 'haiku', systemPromptFile: '/p/triage-system.txt', schemaJson: '{"x":1}' })
+  const args = buildArgs({ model: 'sonnet', systemPromptFile: '/p/triage-system.txt', schemaJson: '{"x":1}' })
   assert.deepEqual(args, [
-    '-p', '--model', 'haiku', '--output-format', 'stream-json', '--verbose', '--safe-mode', '--setting-sources', '',
+    '-p', '--model', 'sonnet', '--output-format', 'stream-json', '--verbose', '--safe-mode', '--setting-sources', '',
     '--strict-mcp-config', '--tools', '', '--disallowedTools', 'mcp__*', '--disable-slash-commands', '--no-session-persistence',
     '--system-prompt-file', '/p/triage-system.txt', '--json-schema', '{"x":1}'
   ])
@@ -33,6 +33,17 @@ test('locked env: explicit allow-list, API key never inherited', () => {
     HOME: '/h', PATH: '/bin', LANG: 'C.UTF-8', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', MAX_THINKING_TOKENS: '0',
     ENABLE_CLAUDEAI_MCP_SERVERS: 'false', DISABLE_AUTOUPDATER: '1', MAX_STRUCTURED_OUTPUT_RETRIES: '2'
   })
+})
+
+test('thinking is off by default and configurable; a bad value refuses to start', t => {
+  assert.equal(buildEnv({ maxStructuredOutputRetries: 2, maxThinkingTokens: 4000 }, {}).MAX_THINKING_TOKENS, '4000')
+  assert.ok(!('MAX_THINKING_TOKENS' in buildEnv({ maxStructuredOutputRetries: 2, maxThinkingTokens: null }, {})), 'null: the CLI default')
+  assert.equal(makeConfig().claude.maxThinkingTokens, 0)
+  assert.equal(makeConfig().claude.model, 'sonnet')
+  for (const bad of [-1, 1.5, '0', false]) {
+    assert.throws(() => buildEnv({ maxStructuredOutputRetries: 2, maxThinkingTokens: bad }, {}), /maxThinkingTokens/)
+  }
+  assert.throws(() => brainFor(t, { maxThinkingTokens: 'lots' }), /maxThinkingTokens/)
 })
 
 test('checkInit and validateTriage', () => {
@@ -60,7 +71,7 @@ test('success: structured output, rate limit and meta are returned', async t => 
   assert.equal(result.ok, true, result.error)
   assert.equal(result.triage.category, 'simple')
   assert.deepEqual(result.rateLimit, { status: 'allowed', fiveHourUtilization: 0.42, sevenDayUtilization: 0.24, resetsAt: 1790419800 })
-  assert.equal(result.meta.model, 'claude-haiku-fake')
+  assert.equal(result.meta.model, 'claude-sonnet-fake')
   assert.equal(result.meta.claudeCodeVersion, '0.0.0-fake')
   assert.equal(result.meta.exitCode, 0)
 })
