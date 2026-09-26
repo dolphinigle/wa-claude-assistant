@@ -311,12 +311,56 @@ test('a shared link is not a question: its query string and path are left out (s
   }
 })
 
+test('a no asks nothing: a request word right after a negation says no (send-path-r2-1)', () => {
+  for (const text of ['Makasih kak, ga ada lagi kok', 'tidak ada, terima kasih', 'gak ada kak, makasih', 'nggak ada kak, makasih banyak',
+    'tidak ada lagi, terima kasih banyak', 'ga ada pertanyaan lagi kak makasih', 'makasih kak udah dibantu, ga ada lagi', 'udah ga ada kak makasih',
+    'gak bisa kak', 'tidak bisa kak', 'nggak ada', 'ga ada kak', 'gak ada', 'gakk ada kak', 'belum bisa kak', 'belum ada kak']) {
+    assert.equal(asksSomething(text), false, text)
+  }
+  // a real "no, can't …?" still has its "?" or its tag
+  for (const text of ['gak bisa kirim hari ini ya kak?', 'ga ada yang ukuran kecil kak?', 'masih ada nggak', 'bisa kirim ke Bekasi gak']) assert.equal(asksSomething(text), true, text)
+})
+
+test('an emphatic or English yes asks nothing: intensifiers are nothing to request, an English modal asks before its subject (send-path-r2-2)', () => {
+  for (const text of ['boleh banget kak', 'boleh bangettt kak', 'bisa bgt', 'boleh bgt kak', 'iya boleh bgt kak makasih', 'wah bisa banget kak, makasih',
+    'tentu bisa kak', 'pasti bisa', 'bisa sekali', 'udah bisa kak makasih', 'masih ada kak makasih',
+    'that would be great, thanks', 'yes, that would be lovely', 'that would be perfect, thank you', 'yes please do', 'please go ahead', 'can do',
+    'sure you can', 'would love that', 'I would like that']) {
+    assert.equal(asksSomething(text), false, text)
+  }
+  for (const text of ['can you deliver tomorrow', 'could I pay by transfer', 'would it be possible to deliver', 'can u send the menu', 'please send the menu',
+    'I would like the address', 'masih bisa pesan untuk besok', 'udah belum kak', 'bisa banget dikirim hari ini kak']) {
+    assert.equal(asksSomething(text), true, text)
+  }
+})
+
+test('an English question phrase asks only at the start of a clause; a relative, an exclamation or the customer\'s own plan asks nothing (send-path-r2-3)', () => {
+  for (const text of ['thank you, that is it', 'ok that is it for now, thanks', 'I would like to thank you for the fast delivery', "Thanks, that's what I needed",
+    'perfect, thats exactly what I was looking for, thanks', 'that is what I needed', 'thanks, I know where it is', "I'll let you know when I'm there",
+    'ok kak nanti saya kabari kapan ambilnya', 'makasih kak, nanti saya kabari mau yang mana', 'oke kak, saya pikir-pikir dulu mau yang mana',
+    'iya kak nanti saya kasih tau berapa loyang', 'makasih kak, nanti saya info lagi', 'siap kak, info diterima', 'terserah kak apa aja', 'apa aja boleh',
+    'kapan aja bisa kak', 'how lovely', 'how nice of you', 'wow thanks, how fast', 'why not, thanks']) {
+    assert.equal(asksSomething(text), false, text)
+  }
+  for (const text of ['is it open on sunday', 'hi do you deliver to Bekasi', 'ok is it open sunday', 'thanks, are you open tomorrow', 'have you got brownies',
+    'tell me the price', 'I want to know when you open', 'saya mau tau jam berapa buka', 'saya mau info harganya', 'saya belum dapat info kapan dikirim',
+    'kak saya mau order brownies harganya berapa ya', 'menunya apa aja kak', 'apa aja kak', 'how much is it', 'how long is delivery', 'why not open on sunday']) {
+    assert.equal(asksSomething(text), true, text)
+  }
+})
+
+test('"let me know …" asks: three-word phrases are looked up too (consistency-r2-2)', () => {
+  for (const text of ['let me know your opening hours', 'let me know the price kak', 'ok, let me know']) assert.equal(asksSomething(text), true, text)
+})
+
 test('asksSomething scans a long message once', () => {
   const adversarial = ['good bye '.repeat(5000) + 'x', 'ok '.repeat(20000), 'x '.repeat(20000) + 'berapa', 'bisa boleh '.repeat(10000),
     'kak '.repeat(20000) + 'gak', 'apa '.repeat(20000), 'buka gak kak, '.repeat(5000), '🙏'.repeat(20000), 'saya belum '.repeat(10000),
     // what the URL pattern of the reply checks backtracks on
-    'a.'.repeat(40000), 'https://' + 'a.'.repeat(40000), 'a-'.repeat(40000) + '.1', 'x.1'.repeat(25000) + '?', 'ga napa '.repeat(10000)]
-  const expected = [false, false, true, false, false, false, true, false, false, false, false, false, true, false]
+    'a.'.repeat(40000), 'https://' + 'a.'.repeat(40000), 'a-'.repeat(40000) + '.1', 'x.1'.repeat(25000) + '?', 'ga napa '.repeat(10000),
+    // what the clause-start, plan and "apa aja" checks look ahead or back over
+    'thank you '.repeat(5000) + 'is it', 'apa aja '.repeat(5000) + 'boleh', 'saya kabari kapan '.repeat(3000), 'gak bisa '.repeat(5000)]
+  const expected = [false, false, true, false, false, false, true, false, false, false, false, false, true, false, true, true, false, false]
   // One quadratic pass over one of these takes seconds; two linear rounds of all of them stay far below the budget.
   const started = performance.now()
   for (let round = 0; round < 2; round++) {

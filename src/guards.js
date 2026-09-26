@@ -300,53 +300,118 @@ export const isThanks = input => readThanks(input) !== undefined
 export const thanksAgrees = input => readThanks(input)?.agrees === true
 
 // asksSomething chooses the auto-send (owner decision, 2026-09-27): only an answer to a message that asks something may
-// go out on its own. A thanks, a yes, "gapapa", "saya tunggu" or "saya mau ambil besok" asks nothing, so a fact cited
-// there only licenses a promise nobody asked for. No list knows every way to thank or agree ("makasih bang", "sama2",
-// "betul"), so this one lists what asks instead: a missed question only costs a draft, and a false one only puts the
-// answer back on the other gates.
+// go out on its own. A thanks, a yes, a no, "gapapa", "saya tunggu" or "saya mau ambil besok" asks nothing, so a fact
+// cited there only licenses a promise nobody asked for. No list knows every way to thank or agree ("makasih bang",
+// "sama2", "betul"), so this one lists what asks instead: a missed question only costs a draft, and a false one only
+// puts the answer back on the other gates.
 const wordsOf = list => list.split(' ')
-// Ask wherever they stand. Chat questions often have no question mark ("buka jam berapa kak").
-// Not "kok": in chat it mostly stresses a statement ("bisa kok kak", "udah sampai kok, makasih"), so it is a particle.
+const foldRepeats = word => String(word ?? '').replace(/(\p{L})\1+/gu, '$1') // chat doubles letters: "bangett", "gakk"
+// Ask wherever they stand, but see plainFrom and plainQuestion below. Chat questions often have no question mark
+// ("buka jam berapa kak"). Not "kok": in chat it mostly stresses a statement ("bisa kok kak", "udah sampai kok,
+// makasih"), so it is a particle.
 const QUESTION_WORDS = new Set(wordsOf('apa apakah apaan ngapain berapa berapakah brp brapa kapan kapankah kpn dimana dimanakah dmn mana ' +
   'manakah kemana darimana gimana gmn gmana bagaimana bagaimanakah bgmn kenapa knp napa mengapa siapa siapakah kah bisakah ' +
   'bolehkah adakah benarkah betulkah masihkah sudahkah haruskah perlukah mungkinkah maukah tanya nanya ' +
   'what whats when where wheres which who whos whom whose why how hows does'))
+// An English question puts these first, so they ask only at the start of a clause, after soft words or a greeting
+// ("hi, do you deliver", "ok is it open on sunday", "let me know the price"); inside one they state: "thank you, that
+// is it" (send-path-r2-3).
 const QUESTION_PHRASES = new Set(['do you', 'do i', 'did you', 'is there', 'are there', 'is it', 'are you', 'will you', 'may i', 'tell me',
-  'let me know', 'have you', 'should i', 'would like'])
-// Ask only with something to request in their clause, and not after "saya" or "I": alone they say yes ("bisa kak",
-// "boleh", "ada", "tolong ya", "yes please"), and after "I" they state ("saya bisa ambil besok", "I can come at 5").
+  'let me know', 'have you', 'should i'])
+const LEADS = new Set(wordsOf('hi hello hey hai halo hallo helo also btw so but then or well sorry excuse me'))
+// "I would like the address" asks wherever it stands; "I would like that" and "I would like to thank you" do not.
+const NOT_WANTED = new Set(wordsOf('that it this them to'))
+// Ask only with something to request in their clause, and not after "saya" or "I" or after a no: alone they say yes
+// ("bisa kak", "boleh", "ada", "tolong ya", "yes please"), after "I" they state ("saya bisa ambil besok", "I can come
+// at 5"), and after a no they say no ("gak ada kak, makasih", "gak bisa kak", "belum ada") (send-path-r2-1).
 const REQUEST_WORDS = new Set(wordsOf('bisa bs boleh blh ada minta mohon tolong tlg please pls plz can could would'))
+// An English request puts its modal before the subject ("can you", "could I", "would it"): "that would be great",
+// "can do" and "sure you can" say yes (send-path-r2-2).
+const MODALS = new Set(wordsOf('can could would'))
+const SUBJECTS = new Set(wordsOf('you u i we it they he she this that these those there someone somebody anyone anybody my your our the a'))
 const FIRST_PERSON = new Set(wordsOf('saya sy aku ak gue gw gua kami kita i we'))
 // What a clause may hold besides a request word and still only say yes: every word of the thanks vocabulary, more
 // honorifics, particles, and an apology ("minta maaf", "mohon maaf").
 const SOFT_WORDS = new Set([...Object.values(THANKS_PHRASES).flat().flatMap(phrase => phrase.split(' ')),
   ...wordsOf('kaka kk mba sist bang om bro bos sob bund bunda yah sih dong tuh aja saja lah loh lho kok koq maaf')])
-// "info harga kak" asks; "makasih infonya", "makasih info nya" and "thanks for the info" do not.
+// Words that only make a yes stronger or say "go ahead" are nothing to request either: "boleh banget kak", "bisa bgt",
+// "tentu bisa", "udah bisa kak makasih", "masih ada kak", "yes please do", "please go ahead" (send-path-r2-2). They are
+// not soft words: "udah belum" is still a tag question.
+const YES_WORDS = new Set(wordsOf('banget bget bgt sekali tentu pasti udah uda sudah sdh masih do go ahead'))
+// "info harga kak" asks; "makasih infonya", "makasih info nya", "thanks for the info", "nanti saya info lagi" and "info
+// diterima" do not.
 const THANKED_FOR = new Set(wordsOf('the for atas untuk buat your makasih kasih thanks thx tq'))
+const RECEIVED = new Set(wordsOf('diterima received'))
 // A tag at the end of a clause ("buka gak kak", "sudah sampai belum", "masih ada nggak"), after a word it asks about:
 // "belum", "gak kak", "iya kan" and "saya belum" answer.
 const NEGATIONS = new Set(wordsOf('gak ga nggak ngga enggak engga nggk ngak gk tidak tdk ndak nda kagak'))
 const TAGS = new Set([...NEGATIONS, ...wordsOf('belum blm bukan kan')])
+const NOT_YET = new Set([...NEGATIONS, ...wordsOf('belum blm')])
+const saysNo = word => NOT_YET.has(word) || NOT_YET.has(foldRepeats(word))
 // After a negation these ask nothing: "gak apa", "ga napa", "gak knp", "tidak mengapa", "nggak kenapa-napa" (no
 // problem), "gak ngapain" (nothing).
 const NO_PROBLEM = new Set(wordsOf('apa napa knp kenapa mengapa ngapain'))
+// After the customer's own "I'll tell you" or "I think", or after "terserah" (whatever), a question or request word is
+// their plan or their choice: "nanti saya kabari kapan ambilnya", "saya kasih tau berapa loyang", "saya pikir-pikir
+// dulu mau yang mana", "I'll let you know when I'm there", "I know where it is", "terserah kak apa aja". Only right
+// after "saya", "I", "nanti", "will" …: "saya mau info harganya" and "saya belum dapat info kapan dikirim" still ask
+// (send-path-r2-3).
+const TELLS = new Set(wordsOf('kabari kabarin kabarkan kasih kasi kasitau info infoin infokan pikir pikirin pikirkan mikir let tell know think decide'))
+const TELL_LEADS = new Set([...FIRST_PERSON, ...wordsOf('nanti ntar akan coba ll will')])
+// A question word used as a relative or an exclamation asks nothing: "that's what I needed", "exactly what I was
+// looking for", "how lovely", "how nice of you", "why not", and "apa aja boleh" or "kapan aja bisa" (anything is fine).
+const RELATIVE_AFTER = new Set(wordsOf('s thats exactly just'))
+const EXCLAIMS = new Set(wordsOf('lovely nice sweet kind cute cool great wonderful amazing awesome beautiful perfect fast quick helpful'))
+const ANY = new Set(wordsOf('aja saja'))
+const PHRASE_STARTS = new Set([...QUESTION_PHRASES].map(phrase => phrase.split(' ')[0]))
+// A clause without any of these asks nothing.
+const CUES = new Set([...QUESTION_WORDS, ...REQUEST_WORDS, ...TAGS, ...PHRASE_STARTS, 'info'])
 
 function clauseAsks (clause) {
   const tokens = clause.match(/[\p{L}\p{N}]+/gu) ?? []
-  const other = tokens.some(token => !SOFT_WORDS.has(token) && !REQUEST_WORDS.has(token))
+  if (!tokens.some(token => CUES.has(token))) return false // most clauses of a long message: nothing to look at
+  const count = tokens.length
+  // Linear: which words only say yes, where the leading soft words end, where the customer's plan starts, and what the
+  // rest of the clause holds.
+  const yes = tokens.map(token => SOFT_WORDS.has(token) || REQUEST_WORDS.has(token) || YES_WORDS.has(token) ||
+    (/(\p{L})\1/u.test(token) && YES_WORDS.has(foldRepeats(token))))
+  let lead = 0
+  while (lead < count && (SOFT_WORDS.has(tokens[lead]) || LEADS.has(tokens[lead]))) lead++
+  let plainFrom = count
+  for (let index = 0, firstPerson = false; index < count && plainFrom === count; index++) {
+    const token = tokens[index]
+    if (token === 'terserah' || (firstPerson && TELLS.has(token) && TELL_LEADS.has(tokens[index - 1]))) plainFrom = index
+    if (FIRST_PERSON.has(token)) firstPerson = true
+  }
+  const quietFrom = new Uint8Array(count + 1).fill(1) // tokens[i..] only say yes
+  const requestFrom = new Uint8Array(count + 1) // tokens[i..] hold a request word
+  for (let index = count - 1; index >= 0; index--) {
+    quietFrom[index] = quietFrom[index + 1] && (yes[index] || tokens[index] === 'of') ? 1 : 0
+    requestFrom[index] = requestFrom[index + 1] || REQUEST_WORDS.has(tokens[index]) ? 1 : 0
+  }
+  const anyIsFine = index => QUESTION_WORDS.has(tokens[index]) && ANY.has(tokens[index + 1]) && quietFrom[index + 2] && requestFrom[index + 2]
+  const other = yes.some((only, index) => !only && !anyIsFine(index))
   const noProblem = index => NO_PROBLEM.has(tokens[index]) &&
     (NEGATIONS.has(tokens[index - 1]) || (NO_PROBLEM.has(tokens[index - 1]) && NEGATIONS.has(tokens[index - 2])))
+  const plainQuestion = (token, index, before, after) =>
+    RELATIVE_AFTER.has(before) || (before === 'is' && ['that', 'this', 'it'].includes(tokens[index - 2])) ||
+    anyIsFine(index) ||
+    (token === 'how' && EXCLAIMS.has(after) && quietFrom[index + 2]) || (token === 'why' && after === 'not' && quietFrom[index + 2])
   const asks = (token, index) => {
     const before = tokens[index - 1]
     const after = tokens[index + 1]
     if (before === token || after === token) return false // "apa-apa" (anything), "kapan-kapan" (some time), "mana-mana"
-    if (QUESTION_PHRASES.has(`${token} ${after}`)) return true
-    if (QUESTION_WORDS.has(token)) return !noProblem(index)
-    if (token === 'info') return after !== 'nya' && !THANKED_FOR.has(before)
-    return REQUEST_WORDS.has(token) && other && !FIRST_PERSON.has(before)
+    if (index <= lead && PHRASE_STARTS.has(token) &&
+      (QUESTION_PHRASES.has(`${token} ${after}`) || QUESTION_PHRASES.has(`${token} ${after} ${tokens[index + 2]}`))) return true
+    if (token === 'would' && after === 'like') return !NOT_WANTED.has(tokens[index + 2] ?? 'that')
+    if (index >= plainFrom) return false
+    if (QUESTION_WORDS.has(token)) return !noProblem(index) && !plainQuestion(token, index, before, after)
+    if (token === 'info') return after !== 'nya' && !RECEIVED.has(after) && !THANKED_FOR.has(before) && !FIRST_PERSON.has(before)
+    if (!REQUEST_WORDS.has(token) || !other || FIRST_PERSON.has(before) || saysNo(before)) return false
+    return !MODALS.has(token) || SUBJECTS.has(after)
   }
   if (tokens.some(asks)) return true
-  let last = tokens.length - 1
+  let last = count - 1
   while (last > 0 && SOFT_WORDS.has(tokens[last])) last--
   const previous = tokens[last - 1]
   return TAGS.has(tokens[last]) && previous !== undefined && !TAGS.has(previous) && !SOFT_WORDS.has(previous) && !FIRST_PERSON.has(previous)

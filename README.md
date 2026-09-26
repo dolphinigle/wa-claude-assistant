@@ -198,7 +198,7 @@ cancelled.
   customer stays out of the history, but its time is kept the same way.
 - **Only an answer to a message that asks something is auto-sent** (owner decision, 2026-09-27; a thanks since
   2026-09-26). Whatever Claude decides and whatever facts it cites, an answer to a message that asks nothing (a
-  thanks, a yes, a greeting, a statement) is a draft whose notice leads with `no_question`, so Claude's thanks-back
+  thanks, a yes, a no, a greeting, a statement) is a draft whose notice leads with `no_question`, so Claude's thanks-back
   (`Sama-sama, Kak 🙏`) waits for your `/ok`, and so does a fact-backed promise to an `iya kak` that may agree to
   something your side offered. A thanks is skipped, with no reply and no notice (audited as action
   `skip`, `closing_already_sent`), only right after a closing this session with nothing new since. A closing is a
@@ -232,14 +232,23 @@ cancelled.
   agree (`makasih bang`, `sama2`, `betul`), so it lists what asks, and a missed question only costs a draft. A
   message asks something if it has a `?` (fullwidth too), a question word (`apa`, `berapa`, `kapan`, `dimana`,
   `mana`, `gimana`, `kenapa`, `siapa`, `tanya`, `bisakah` and the other `-kah` questions; `what`, `when`,
-  `where`, `which`, `who`, `why`, `how`, `does`, `do you`, `is there`, `are you`, `will you`, `may i`, `tell me`,
-  `would like` …), `info` as a request (`info harga`, not `makasih infonya` or `thanks for the info`), a request
-  word with something to request in its clause (`bisa kirim ke Bekasi`, `boleh minta alamatnya`, `tolong kirim
-  besok`, `please send the menu`, `can you deliver`; alone they say yes: `bisa kak`, `boleh`, `ada`, `tolong ya`,
-  `yes please`, and after `saya` or `I` they state: `saya bisa ambil besok`), or a tag question at the end of a
-  clause (`tokonya buka gak kak`, `ready ga`, `sudah sampai belum`, `buka minggu kan`). Reduplicated question words
-  ask nothing (`nggak apa-apa`, `kapan-kapan`), and neither do `apa`, `napa`, `knp`, `kenapa`, `mengapa` or
-  `ngapain` after a negation ("no problem" however it is spelled: `gak apa kak`, `ga napa`, `tidak mengapa`). `kok`
+  `where`, `which`, `who`, `why`, `how`, `does` …), an English question opening at the start of a clause (`do you`,
+  `is there`, `is it`, `are you`, `will you`, `may i`, `tell me`, `let me know`; inside one it states: `thank you,
+  that is it`), `would like` with something to want (`I would like the address`, not `I would like that` or `would
+  like to thank you`), `info` as a request (`info harga`, not `makasih infonya`, `thanks for the info`, `nanti saya
+  info lagi` or `info diterima`), a request word with something to request in its clause (`bisa kirim ke Bekasi`,
+  `boleh minta alamatnya`, `tolong kirim besok`, `please send the menu`; `can`, `could` and `would` only before
+  their subject: `can you deliver`, `could I pay by transfer`), or a tag question at the end of a clause (`tokonya
+  buka gak kak`, `ready ga`, `sudah sampai belum`, `buka minggu kan`). A request word alone or with only an
+  intensifier says yes (`bisa kak`, `boleh banget kak`, `bisa bgt`, `tentu bisa`, `masih ada kak`, `tolong ya`,
+  `yes please`, `please go ahead`, `that would be great`, `sure you can`), after a negation it says no (`gak ada
+  kak, makasih`, `gak bisa kak`, `belum ada`), and after `saya` or `I` it states (`saya bisa ambil besok`).
+  Reduplicated question words ask nothing (`nggak apa-apa`, `kapan-kapan`), and neither do `apa`, `napa`, `knp`,
+  `kenapa`, `mengapa` or `ngapain` after a negation ("no problem" however it is spelled: `gak apa kak`, `ga napa`,
+  `tidak mengapa`), a question word after the customer's own "I'll tell you" or "I think" (`nanti saya kabari
+  kapan ambilnya`, `saya pikir-pikir dulu mau yang mana`, `I'll let you know when I'm there`, `I know where it
+  is`) or after `terserah`, a relative (`that's what I needed`), an exclamation (`how lovely`, `why not`) or
+  "anything is fine" (`apa aja boleh`, `kapan aja bisa`). `kok`
   is a particle (`bisa kok kak`), not a question word. A shared link is left out, so the `?` of its query string
   (`https://maps.app.goo.gl/…?g_st=iw`) or a word in its path asks nothing; a bare `kak.kirim` is no link. A burst asks
   if any of its messages does, and a question with a thanks (`makasih kak, jam berapa tutup?`) goes on to the other
@@ -336,7 +345,8 @@ its auto-send is forbidden: it asks nothing, so the policy drafts it. The key nu
   the current guards and policy, after the change that auto-sends only an answer to a message that asks something
   (it replaced the social matchers and the thanks-back reply check of the review rounds before; untriaged content and
   quotes are never skipped over, and a thanks that agrees is skipped only after our closing reply), re-run after its
-  review fixes (`kok` a particle, "no problem" spellings, links, a `ya` before a thanks, stickers and reactions):
+  review fixes (`kok` a particle, "no problem" spellings, links, a `ya` before a thanks, stickers and reactions; round
+  2: a no, an emphatic or English yes, English openings only at the start of a clause, the customer's own plans):
   **0 forbidden auto-sends**, **0 skipped escalations**, decision **20/20**, **3/3 allowed cases auto-sent**.
   Sonnet's `Sama-sama, Kak 🙏` to "ok makasih kak 🙏" is a draft (`no_question`; the guards add `no_facts_used`).
 - The full run on `claude-sonnet-5` with thinking off (2026-09-26, 20 calls), after the closing rules were tightened

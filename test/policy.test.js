@@ -263,6 +263,23 @@ test('a fact-cited answer to a yes with "kok", a spelled-out "no problem" or a s
   }
 })
 
+test('a fact-cited answer to a no, an emphatic or English yes, or a closing with a question word in it is a draft (send-path-r2-1, send-path-r2-2, send-path-r2-3)', () => {
+  const hours = { decision: 'answer', reply: 'Sama-sama, Kak 🙏 Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya.', facts_used: ['F1'] }
+  const preorder = { decision: 'answer', reply: 'Siap, Kak. Pesan paling lambat 2 hari sebelumnya ya.', facts_used: ['F9'] }
+  const hoursEn = { decision: 'answer', reply: "You're welcome! We're open Monday–Saturday 08.00–17.00 WIB.", facts_used: ['F1'] }
+  for (const [triage, incomingText] of [
+    [hours, 'tidak ada, terima kasih'], [hours, 'Makasih kak, ga ada lagi kok'], [hours, 'gak ada kak, makasih'], [hours, 'nggak ada kak, makasih banyak'],
+    [hours, 'makasih kak udah dibantu, ga ada lagi'], [hours, 'gak bisa kak'],
+    [preorder, 'boleh banget kak'], [preorder, 'bisa bgt kak'], [preorder, 'iya boleh bgt kak makasih'], [preorder, 'masih ada kak makasih'],
+    [hoursEn, 'that would be great, thanks'], [hoursEn, 'yes please do'], [hoursEn, 'thank you, that is it'], [hoursEn, 'ok that is it for now, thanks'],
+    [hoursEn, 'I would like to thank you for the fast delivery'], [hours, 'makasih kak, nanti saya kabari mau yang mana']
+  ]) {
+    const guard = guardTriage(triage, { knowledge, config, incomingText })
+    assert.deepEqual(guard, { ok: true, reasons: [] }, `${incomingText}: the guards alone would let it out`)
+    assert.deepEqual(decide(triageResult(triage), { ...baseContext(), incomingText, guard }), { action: 'escalate', reasons: ['decision:answer', 'no_question'] }, incomingText)
+  }
+})
+
 test('an answer to a message that asks something goes on to the other gates, a burst where one message asks too', () => {
   const autoSent = { action: 'auto_send', reasons: ['decision:answer', 'all_gates_passed'] }
   const open = incomingText => ({ ...baseContext(), incomingText })
