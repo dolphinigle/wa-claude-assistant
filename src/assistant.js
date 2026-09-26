@@ -1,7 +1,7 @@
 // Orchestrator: dedupe, loop guard, takeover, debounce, triage, policy, and the ONE send gate.
 import { findPrivateDetails, guardTriage, privateIdentifiersFor } from './guards.js'
 import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice, jidUser } from './owner.js'
-import { decide } from './policy.js'
+import { decide, isClosing } from './policy.js'
 
 const MINUTE_MS = 60 * 1000
 const HOUR_MS = 60 * MINUTE_MS
@@ -31,6 +31,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   }
   const contactName = chatId => store.chat(chatId).name ?? chatId.split('@')[0] // what Claude sees
   const contactLabel = chatId => formatContact(chatId, store.existingChat(chatId)) // what the owner sees
+  // A burst as the owner sees it: a file is named, since only its caption reaches Claude.
+  const describe = batch => batch.map(message => (message.attachment ? `[${message.attachment}] ${message.text}`.trim() : message.text)).join(' / ')
   // The owner's reply can arrive on the other addressing form of the customer's chat (PN vs LID), so takeover state
   // is read across both records.
   const linkedChats = (chatId, chatIdAlt) => store.linkedChatIds(chatId, chatIdAlt).map(id => store.existingChat(id)).filter(Boolean)
@@ -54,6 +56,10 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   const blocklistUnchecked = chatId => chatId.endsWith('@lid') &&
     !store.linkedChatIds(chatId).some(id => id.endsWith('@s.whatsapp.net')) &&
     (config.blocklist ?? []).some(phoneEntry)
+  const openDrafts = chatId => {
+    const chatIds = store.linkedChatIds(chatId)
+    return store.pendingDrafts().filter(draft => chatIds.includes(draft.chatId))
+  }
 
   // --- the send gate: every outgoing message passes through one of these two functions ------------------------
 
@@ -253,7 +259,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const batch = state.pending.slice()
     const batchIds = new Set(batch.map(message => message.id))
     const history = (transport.getHistory?.(chatId, config.contextMessages + batch.length) ?? [])
-      .filter(item => item.text && !batchIds.has(item.id))
+      .filter(item => (item.text || item.attachment) && !batchIds.has(item.id))
       .slice(-config.contextMessages)
 
     let result
@@ -271,7 +277,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     state.pending = state.pending.filter(message => !batchIds.has(message.id))
     if (result.rateLimit) store.setLastRateLimit(result.rateLimit)
     try {
-      await route(chatId, batch, result, generation)
+      await route(chatId, batch, history, result, generation)
     } finally {
       store.removeFromInbox([...batchIds])
     }
@@ -306,19 +312,30 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const ids = list => list.map(message => message.id)
     store.audit('inbox_recovered', { retried: ids(retry), tooOld: ids(tooOld), blocked: ids(blocked), answeredByOwner: ids(answered) })
     if (tooOld.length === 0) return
-    const lines = tooOld.map(message => `• ${contactLabel(message.chatId)}: "${excerpt(message.text, 120)}"`)
+    const lines = tooOld.map(message => `• ${contactLabel(message.chatId)}: "${excerpt(describe([message]), 120)}"`)
     track(sendToOwner(`${BOT_PREFIX} ⚠️ ${tooOld.length} message(s) arrived before the assistant stopped and were never triaged. Please answer them yourself:\n${lines.join('\n')}`))
   }
 
-  async function route (chatId, batch, result, generation) {
+  async function route (chatId, batch, history, result, generation) {
     const triage = result.triage
     const chat = store.chat(chatId)
-    const guard = guardTriage(triage, { knowledge, config, incomingText: batch.map(message => message.text).join('\n') })
+    const incomingText = batch.map(message => message.text).join('\n')
+    const guard = guardTriage(triage, { knowledge, config, incomingText })
     const decision = decide(result, {
       config,
       guard,
+      incomingText,
+      attachments: [...new Set(batch.map(message => message.attachment).filter(Boolean))],
+      history,
       paused: store.paused,
-      chat: { muted: chat.muted, blocked: isBlocked(chatId), blocklistUnchecked: blocklistUnchecked(chatId), takeoverUntil: takeoverUntil(chatId) },
+      chat: {
+        muted: chat.muted,
+        blocked: isBlocked(chatId),
+        blocklistUnchecked: blocklistUnchecked(chatId),
+        takeoverUntil: takeoverUntil(chatId),
+        openDraft: openDrafts(chatId).length > 0,
+        lastClosingAt: chat.lastClosingAt
+      },
       now: now(),
       chatAutoSendsLastHour: store.countChatAutoSends(chatId, HOUR_MS),
       autoSendsLastDay: store.countAutoSends(DAY_MS),
@@ -328,7 +345,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     store.audit('decision', {
       chatId,
       ids: batch.map(message => message.id),
-      text: excerpt(batch.map(message => message.text).join(' / '), 300),
+      text: excerpt(describe(batch), 300),
       ok: result.ok,
       error: result.error,
       decision: triage?.decision,
@@ -342,11 +359,12 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       meta: result.meta
     })
 
-    if (decision.action === 'auto_send') return autoSend(chatId, batch, triage, decision, generation)
+    if (decision.action === 'auto_send') return autoSend(chatId, batch, triage, decision, generation, isClosing(triage, incomingText))
+    if (decision.action === 'skip') return // a closing after a closing: no reply, no draft, no blue ticks
     return postDraft(chatId, batch, result, decision)
   }
 
-  async function autoSend (chatId, batch, triage, decision, generation) {
+  async function autoSend (chatId, batch, triage, decision, generation, closing) {
     const state = runtime(chatId)
     if (generation !== state.generation) return // the owner started typing or new messages arrived meanwhile
     const live = config.mode === 'live'
@@ -358,27 +376,27 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
 
     // Counted before the first await, so another chat's triage finishing during this send sees the slot as taken.
     // Counted in shadow too, so shadow mode shows what the rate limits would do.
-    const slot = store.recordAutoSend(chatId)
+    const slot = store.recordAutoSend(chatId, { perChat: !closing })
     const outcome = await sendToCustomer(chatId, text, { quotedRaw: last.raw, source: 'auto_send' })
     if (!outcome.sent && !outcome.shadow) {
-      store.releaseAutoSend(chatId, slot)
+      store.releaseAutoSend(chatId, slot, { perChat: !closing })
       const reasons = [...decision.reasons.filter(reason => reason !== 'all_gates_passed'), `send_failed:${outcome.error}`]
       return postDraft(chatId, batch, { ok: true, triage }, { action: 'escalate', reasons })
     }
     if (needsDisclosure) store.updateChat(chatId, { [disclosureKey]: now() })
+    if (closing) store.updateChat(chatId, { lastClosingAt: now() }) // shadow too, like the rate limits
     if (outcome.sent) await markReadUnlessOpen(chatId, batch)
     const name = contactLabel(chatId)
     if (outcome.shadow) {
-      await sendToOwner(`${BOT_PREFIX} [SHADOW] Would auto-reply to ${name}\nThey wrote: "${excerpt(batch.map(message => message.text).join(' / '))}"\nReply:\n${text}`)
+      await sendToOwner(`${BOT_PREFIX} [SHADOW] Would auto-reply to ${name}\nThey wrote: "${excerpt(describe(batch))}"\nReply:\n${text}`)
     } else if (config.notifyOwnerOnAutoSend) {
-      await sendToOwner(`${BOT_PREFIX} ✅ Auto-replied to ${name}\nThey wrote: "${excerpt(batch.map(message => message.text).join(' / '))}"\nReply:\n${triage.reply}`)
+      await sendToOwner(`${BOT_PREFIX} ✅ Auto-replied to ${name}\nThey wrote: "${excerpt(describe(batch))}"\nReply:\n${triage.reply}`)
     }
   }
 
   /** Blue ticks say "seen": never while a draft of this chat is still waiting for the owner. */
   async function markReadUnlessOpen (chatId, batch) {
-    const chatIds = store.linkedChatIds(chatId)
-    const open = store.pendingDrafts().filter(draft => chatIds.includes(draft.chatId))
+    const open = openDrafts(chatId)
     if (open.length > 0) {
       store.audit('mark_read_skipped', { chatId, ids: batch.map(message => message.id), openDrafts: open.map(draft => draft.id) })
       return
@@ -392,7 +410,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const draft = store.createDraft({
       chatId,
       contactName: contactLabel(chatId),
-      excerpt: excerpt(batch.map(message => message.text).join(' / ')),
+      excerpt: excerpt(describe(batch)),
       draft: triage?.reply?.trim() ?? '',
       reason: triage?.reason ?? `Triage failed (${result.error}); nothing was sent.`,
       summary: triage?.summary,

@@ -168,20 +168,23 @@ export class Store {
     return Object.entries(this.state.chats).filter(([, chat]) => chat.name?.toLowerCase().includes(needle)).map(([chatId]) => chatId)
   }
 
-  /** Returns the recorded time, which releaseAutoSend() takes to give the slot back when the send fails. */
-  recordAutoSend (chatId) {
+  /**
+   * Returns the recorded time, which releaseAutoSend() takes to give the slot back when the send fails. A social
+   * closing (`perChat: false`) counts toward the daily total only; the policy limits it per chat on its own.
+   */
+  recordAutoSend (chatId, { perChat = true } = {}) {
     const at = this.now()
     const chat = this.chat(chatId)
-    chat.autoSendTimes = [...chat.autoSendTimes.filter(ts => at - ts < DAY_MS), at]
+    if (perChat) chat.autoSendTimes = [...chat.autoSendTimes.filter(ts => at - ts < DAY_MS), at]
     this.state.autoSendLog = [...this.state.autoSendLog.filter(ts => at - ts < DAY_MS), at].slice(-MAX_AUTO_SEND_LOG)
     this.save()
     return at
   }
 
-  releaseAutoSend (chatId, at) {
+  releaseAutoSend (chatId, at, { perChat = true } = {}) {
     const withoutOne = list => { const index = list.lastIndexOf(at); return index === -1 ? list : list.toSpliced(index, 1) }
     const chat = this.chat(chatId)
-    chat.autoSendTimes = withoutOne(chat.autoSendTimes)
+    if (perChat) chat.autoSendTimes = withoutOne(chat.autoSendTimes)
     this.state.autoSendLog = withoutOne(this.state.autoSendLog)
     this.save()
   }
@@ -199,8 +202,8 @@ export class Store {
   // --- inbound messages accepted but not routed yet --------------------------
 
   /** Kept until triage has decided, so a restart or crash between accepting and routing cannot lose it silently. */
-  addToInbox ({ id, chatId, chatIdAlt, senderName, text, timestamp, kind, isBacklog }) {
-    this.state.inbox[id] = { id, chatId, chatIdAlt, senderName, text, timestamp, kind, isBacklog, acceptedAt: this.now() }
+  addToInbox ({ id, chatId, chatIdAlt, senderName, text, attachment, timestamp, kind, isBacklog }) {
+    this.state.inbox[id] = { id, chatId, chatIdAlt, senderName, text, attachment, timestamp, kind, isBacklog, acceptedAt: this.now() }
     this.save()
   }
 

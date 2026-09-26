@@ -29,6 +29,13 @@ export function extractText (message) {
   return { text: text ?? undefined, contentType, quotedText: quotedText ?? undefined, isForwarded }
 }
 
+// Files whose content nobody but the owner can see: only their caption reaches Claude. Stickers and reactions are not
+// included, and carry no text anyway.
+const ATTACHMENT_KINDS = { imageMessage: 'image', videoMessage: 'video', ptvMessage: 'video', documentMessage: 'document', audioMessage: 'audio' }
+
+/** 'image' | 'video' | 'document' | 'audio' for a message that carries a file, else undefined. */
+export const attachmentKind = contentType => ATTACHMENT_KINDS[contentType]
+
 export function toEpochSeconds (timestamp) {
   if (timestamp === null || timestamp === undefined) return 0
   if (typeof timestamp === 'number') return timestamp
@@ -74,6 +81,7 @@ export function normalizeUpsert (raw, { type, meIds }) {
     kind: type === 'notify' ? 'notify' : 'append',
     quotedText,
     contentType,
+    attachment: attachmentKind(contentType), // a caption ("makasih kak") can come with a payment proof
     isForwarded, // someone else's words: never an owner command, even in "Message yourself"
     raw
   }

@@ -22,11 +22,17 @@ export function formatLocalTime (epochSeconds, timeZone = 'Asia/Jakarta', { with
   return withWeekday ? `${parts.weekday} ${stamp}` : stamp
 }
 
+// Our attribute, never the sender's text: a caption cannot claim or hide a file. Claude cannot see the file itself.
+const attachmentAttribute = items => {
+  const kinds = [...new Set(items.map(item => item.attachment).filter(Boolean))]
+  return kinds.length > 0 ? ` attachment="${escapeAttribute(kinds.join(' '))}"` : ''
+}
+
 /**
  * @param {object} input
  * @param {{name?: string}} input.chat
- * @param {{fromMe: boolean, text: string, timestamp: number}[]} input.history  older messages, oldest first
- * @param {{text: string, timestamp: number}[]} input.messages  the debounced burst to triage, oldest first
+ * @param {{fromMe: boolean, text: string, timestamp: number, attachment?: string}[]} input.history  older messages, oldest first
+ * @param {{text: string, timestamp: number, attachment?: string}[]} input.messages  the debounced burst to triage, oldest first
  * @param {number} input.now  epoch seconds
  */
 export function buildUserTurn ({ chat = {}, history = [], messages, now, timeZone = 'Asia/Jakarta', contextMessages = 8 }) {
@@ -40,7 +46,7 @@ export function buildUserTurn ({ chat = {}, history = [], messages, now, timeZon
     lines.push('<history>')
     for (const item of recent) {
       const role = item.fromMe ? 'owner' : 'customer'
-      lines.push(`<msg role="${role}" time="${formatLocalTime(item.timestamp, timeZone)}">`)
+      lines.push(`<msg role="${role}" time="${formatLocalTime(item.timestamp, timeZone)}"${attachmentAttribute([item])}>`)
       lines.push(escapeText(truncate(String(item.text ?? ''), MAX_HISTORY_CHARS)))
       lines.push('</msg>')
     }
@@ -49,7 +55,7 @@ export function buildUserTurn ({ chat = {}, history = [], messages, now, timeZon
 
   const name = escapeAttribute(truncate(String(chat.name ?? 'unknown'), MAX_NAME_CHARS))
   const last = messages[messages.length - 1]
-  lines.push(`<message from="customer" name="${name}" time="${formatLocalTime(last.timestamp ?? now, timeZone)}">`)
+  lines.push(`<message from="customer" name="${name}" time="${formatLocalTime(last.timestamp ?? now, timeZone)}"${attachmentAttribute(messages)}>`)
   lines.push(escapeText(truncate(messages.map(message => String(message.text ?? '')).join('\n'), MAX_MESSAGE_CHARS)))
   lines.push('</message>')
   return `${lines.join('\n')}\n`

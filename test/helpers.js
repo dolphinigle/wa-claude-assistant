@@ -68,11 +68,17 @@ export function createFakeTransport () {
     sendDelayMs: 0,
     toCustomer: () => sent.filter(item => item.chatId !== 'self'),
     toSelf: () => sent.filter(item => item.chatId === 'self').map(item => item.text),
+    /** Like the Baileys adapter, every message of a customer chat, ours included, lands in that chat's history. */
+    remember ({ id, chatId, fromMe, text, attachment, timestamp }) {
+      if (chatId === 'self') return
+      history.set(chatId, [...(history.get(chatId) ?? []), { id, fromMe, text, attachment, timestamp }])
+    },
     async send (chatId, text, options = {}) {
       if (this.sendDelayMs) await new Promise(resolve => setTimeout(resolve, this.sendDelayMs))
       if (this.down) throw new Error('whatsapp not connected')
       const id = options.messageId ?? `SENT${++counter}`
       sent.push({ chatId, text, id, quotedRaw: options.quotedRaw })
+      this.remember({ id, chatId, fromMe: true, text, timestamp: Math.floor(Date.now() / 1000) })
       return { id }
     },
     async sendToSelf (text, options = {}) {

@@ -6,7 +6,7 @@ Claude Code CLI, headless, on your own subscription) for one of two decisions:
 
 | Claude says | What happens |
 |---|---|
-| `answer`: the whole reply is backed by the facts it cites from `knowledge.md`, or it is a purely social "thanks" answered with a thanks, and nothing needs your judgment | **auto-reply**, only if every gate passes (see Safety defaults); if any gate fails, it is escalated instead and the notice names the gates |
+| `answer`: the whole reply is backed by the facts it cites from `knowledge.md`, or it is a purely social "thanks" answered with a thanks, and nothing needs your judgment | **auto-reply**, only if every gate passes (see Safety defaults); if any gate fails, it is escalated instead and the notice names the gates. A thanks that follows a closing already sent gets no reply and no notice |
 | `escalate`: everything else: friends and family, complaints, payments, custom requests, anything not in the facts, spam and wrong numbers, manipulation attempts, and any triage that failed | a notice in your "Message yourself" chat with Claude's one-line summary, why, and a suggested draft for `/ok`, `/edit` or `/no` |
 
 Groups, status updates, newsletters, broadcast lists and Meta AI are ignored. It starts in **shadow mode**: nothing is
@@ -47,6 +47,7 @@ flowchart LR
   G --> P["policy.js<br/>pure decide()"]
   P -->|"answer, every gate passed"| S{{"send gate<br/>shadow mode stops here"}}
   P -->|"escalate, or a gate failed"| N["notice to 'Message yourself'"]
+  P -.->|"a thanks after a closing"| K["skipped: no reply, no notice"]
   A -->|"/ok /edit /no …"| O["owner.js"]
   O --> S
   S --> T
@@ -159,8 +160,18 @@ triaged, and drafts made from them are cancelled.
 
 - **Shadow mode** by default; live mode is an explicit `config.local.json` change.
 - **Auto-send needs all of:** mode live, `autoSend.enabled`, decision `answer`, guards pass, not paused, chat not muted or blocklisted, no human takeover, ≤ 3 auto-replies per chat per hour and ≤ 30 per day,
-  Claude quota known with 5-hour utilization < 0.8 and 7-day < 0.9, and the message is not offline backlog. A missing
-  `rate_limit_event` counts as "quota unknown" and blocks auto-send.
+  Claude quota known with 5-hour utilization < 0.8 and 7-day < 0.9, the message is not offline backlog, and it
+  carries no attachment. A missing `rate_limit_event` counts as "quota unknown" and blocks auto-send.
+- **Attachments are never auto-answered:** Claude sees a photo's, video's or document's caption and is told a file
+  is attached, but never the file, so a `makasih kak 🙏` on a transfer screenshot is a draft (`attachment:image`),
+  gets no blue ticks, and the notice shows `[image] makasih kak 🙏`. A photo without a caption is not triaged, but it
+  stays in the chat history, so a thanks after it is a draft too.
+- **Social closings (a thanks answered with a thanks)** go out only when nothing in the chat waits for you: no open
+  draft in that chat (`open_draft`), no earlier customer message left unanswered (`unanswered_message`), and your own
+  last message asked nothing that the customer's "ok" could be answering (`answers_owner_question`); otherwise they
+  are drafts. At most one closing per chat per session (`disclosure.sessionGapHours`); a thanks after a closing that
+  you, the bot or an approved draft already sent gets no reply and no notice (audited as action `skip`). A closing
+  uses none of the chat's 3 slots per hour, but counts toward the 30 per day.
 - **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with a short
   Indonesian/English line saying it is an automated AI reply. Approved drafts carry no marker.
 - **Contacts are shown with their number:** notices say `Name (+62…)`, because the name is the sender's own
@@ -179,7 +190,7 @@ triaged, and drafts made from them are cancelled.
   not run (audited only): send it again once the assistant is back.
 - **Notices are never dropped:** a draft or other notice that fails because WhatsApp is reconnecting is
   kept in `data/state.json` and re-sent, marked "Delayed", on the next connection.
-- **Blue ticks only after an auto-reply** (`markRead`), never for escalated messages, and not while the chat still has
+- **Blue ticks only after an auto-reply** (`markRead`), never for escalated or skipped messages, and not while the chat still has
   a draft waiting for you (an auto-answered "jam berapa tutup?" does not mark read a chat
   whose "saya sudah transfer" is still unanswered).
 - **Pending drafts from the four-category version** (before the answer/escalate switch) stay in `data/state.json` and
@@ -209,7 +220,7 @@ answer/escalate switch; delete the key).
 |---|---|---|
 | `mode` | `"shadow"` | `shadow` never messages anyone but you; `live` really sends |
 | `autoSend.enabled` | `true` | `false` = drafts only, even in live mode |
-| `autoSend.maxPerChatPerHour` / `maxPerDay` | `3` / `30` | rolling-window caps (shadow would-sends count too) |
+| `autoSend.maxPerChatPerHour` / `maxPerDay` | `3` / `30` | rolling-window caps (shadow would-sends count too); a social closing counts toward the daily cap only |
 | `humanTakeoverMinutes` | `30` | bot stays out of a chat after you type in it |
 | `debounceMs` | `15000` | wait for a burst to finish before triage |
 | `backlog.maxAgeMinutes` / `liveWindowMinutes` / `autoSend` | `60` / `2` / `false` | skip messages older than `maxAgeMinutes`; older than `liveWindowMinutes` (or offline) counts as backlog: never auto-replied |
@@ -300,8 +311,9 @@ more work):
 
 Prototype limits of this code:
 
-- Text only: incoming media without a caption, edits and deletions (`messages.update`) are ignored; no typing
-  indicator. Your own replies from the phone start the human takeover whatever they are (voice note, sticker,
+- Text only: incoming media without a caption is not triaged (it only shows in the history Claude gets), captioned
+  media is triaged on its caption and never auto-answered, edits and deletions (`messages.update`) are ignored; no
+  typing indicator. Your own replies from the phone start the human takeover whatever they are (voice note, sticker,
   photo, reaction).
 - Drafts can still over-promise or invent details (e.g. "we don't have sugar-free options"): that is why escalations
   always wait for you.
@@ -309,7 +321,8 @@ Prototype limits of this code:
   pass, and so can a detail moved to the wrong item inside one cited fact ("brownies keep 1 month" citing F12,
   where 1 month is the cookies'). The prompt's rule to answer only what the facts fully cover, the social-vocabulary
   check for replies without facts, and shadow mode are the defense there. There is no self-reported confidence score (owner decision).
-- The in-memory history per chat starts empty after a restart (plus whatever history sync delivers), and state is a
-  single JSON file: fine for one owner, not for volume.
+- The in-memory history per chat starts empty after a restart (plus whatever history sync delivers), so right after
+  one the checks for a social closing see only open drafts and the one-closing-per-session record, not an unanswered
+  message or a closing sent before the restart. State is a single JSON file: fine for one owner, not for volume.
 - Only one process may run per `auth/`: a second copy replaces the first, which gets status 440 and stops rather
   than fight.

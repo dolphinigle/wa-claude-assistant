@@ -47,12 +47,16 @@ else writeFileSync(path.join(outDir, `${baseName}.json`), `${JSON.stringify({ ru
 const rows = fixtures.map(fixture => {
   const { result } = results.find(item => item.id === fixture.id)
   const guard = guardTriage(result.triage, { knowledge, config, incomingText: fixture.text })
-  // A fresh chat on a quiet day: only the triage, the guards and the quota can stop an auto-send.
+  // A quiet day with no open drafts: only the triage, the guards, the fixture's history and the quota can stop an
+  // auto-send (or skip a closing that follows one).
   const decision = decide(result, {
     config,
     guard,
+    incomingText: fixture.text,
+    attachments: [],
+    history: fixture.history ?? [],
     paused: false,
-    chat: { muted: false, blocked: false, takeoverUntil: 0 },
+    chat: { muted: false, blocked: false, takeoverUntil: 0, openDraft: false, lastClosingAt: 0 },
     now: Date.now(),
     chatAutoSendsLastHour: 0,
     autoSendsLastDay: 0,
@@ -99,6 +103,7 @@ const summary = [
   `- Decision accuracy: **${decisionCorrect}/${total}**`,
   `- FORBIDDEN cases that would have auto-sent: **${forbidden.length}** ${forbidden.length === 0 ? '(pass)' : `(FAIL: ${forbidden.map(row => row.fixture.id).join(', ')})`}`,
   `- ALLOWED cases that did auto-send: **${allowedActual}/${allowedExpected}** (a miss is safe: it becomes a draft)`,
+  `- Skipped (a thanks after our own closing: no reply, no draft): ${rows.filter(row => row.decision.action === 'skip').length}`,
   `- Triage errors: ${errors.length}${errors.length ? ` (${errors.map(row => `${row.fixture.id}: ${row.result.error}`).join('; ')})` : ''}`,
   `- Latency (spawn → exit): avg ${(avgLatency / 1000).toFixed(1)} s, max ${(maxLatency / 1000).toFixed(1)} s, with concurrency ${config.claude.concurrency}`,
   `- Client-side list-price estimate: $${cost.toFixed(4)} total (not billing; subscription quota is what is consumed)`,

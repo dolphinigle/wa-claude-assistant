@@ -31,7 +31,7 @@ function setup (t, { config: overrides = {}, respond = byKeyword } = {}) {
   const brain = createFakeBrain(respond)
   const assistant = createAssistant({ config, store, brain, transport, knowledge, now, logger: silent })
   t.after(() => assistant.stop())
-  const deliver = async message => { await assistant.handleMessage(message); await assistant.idle() }
+  const deliver = async message => { transport.remember(message); await assistant.handleMessage(message); await assistant.idle() }
   const owner = text => deliver({ id: `OWN${Math.random()}`, chatId: 'self', fromMe: true, isSelfChat: true, text, timestamp: Math.floor(clock / 1000), kind: 'notify' })
   const audit = () => readFileSync(store.auditFile, 'utf8').trim().split('\n').map(line => JSON.parse(line))
   return { config, store, transport, brain, assistant, deliver, owner, audit, advance: ms => { clock += ms }, now }
@@ -338,7 +338,7 @@ test('messages accepted but not routed before a stop are triaged again after res
     return { store, transport, brain, assistant }
   }
   const first = start(60_000)
-  await first.assistant.handleMessage(incoming(BOB, 'saya sudah transfer, pesanan saya mana?', { timestamp: Math.floor(clock / 1000) }))
+  await first.assistant.handleMessage(incoming(BOB, 'saya sudah transfer, pesanan saya mana?', { timestamp: Math.floor(clock / 1000), attachment: 'image' }))
   await first.assistant.stop() // restart during the debounce
 
   const second = start(10)
@@ -353,7 +353,7 @@ test('messages accepted but not routed before a stop are triaged again after res
   const third = start(10)
   third.assistant.recoverInbox()
   await third.assistant.idle()
-  assert.deepEqual(third.brain.calls.map(call => call.messages.map(message => message.text)), [['saya sudah transfer, pesanan saya mana?']])
+  assert.deepEqual(third.brain.calls.map(call => call.messages.map(message => [message.text, message.attachment])), [[['saya sudah transfer, pesanan saya mana?', 'image']]], 'the attachment survives the restart')
   assert.match(third.transport.toSelf()[0], /📝 DRAFT #1/)
   assert.deepEqual(third.store.getDraft(1).policyReasons, ['decision:escalate'])
   assert.deepEqual(third.store.inboxMessages(), [])
@@ -633,4 +633,56 @@ test('/mute blocks auto-replies in that chat only', async t => {
   await deliver(incoming(BOB, 'jam buka?'))
   assert.deepEqual(transport.toCustomer().map(item => item.chatId), [ALICE, BOB])
   assert.ok(transport.toSelf().some(text => text.includes('Not auto-sent: muted')))
+})
+
+// Answers every thanks with a thanks, as the prompt tells Claude to; the policy decides whether it goes out.
+const thanksBack = input => {
+  const text = input.messages.map(message => message.text).join(' ')
+  if (/alamat/i.test(text)) return triageResult({ decision: 'answer', reply: 'Alamat kami di Jl. Contoh Raya No. 12, Coblong, Bandung ya Kak.', facts_used: ['F2'] })
+  if (/jam|buka/i.test(text)) return triageResult(ANSWER_HOURS)
+  if (/^[\p{L}\p{Extended_Pictographic}\s]+$/u.test(text) && !/tolong|kirim/i.test(text)) return triageResult({ decision: 'answer', reply: 'Sama-sama, Kak 🙏' })
+  return triageResult({ decision: 'escalate', reply: 'Baik Kak, saya cek dulu ya.' })
+}
+
+test('a closing after our own closing gets no reply and no draft, and closings leave the chat\'s slots to real answers', async t => {
+  const { transport, deliver, audit, store } = setup(t, { respond: thanksBack })
+  for (const text of ['jam berapa buka kak?', 'ok makasih kak', '🙏', 'siap kak', '👍', 'alamatnya di mana kak?', 'buka hari sabtu juga kak?']) await deliver(incoming(ALICE, text))
+  assert.deepEqual(transport.toCustomer().map(item => item.text.split('\n').at(-1)), [
+    ANSWER_HOURS.reply, 'Sama-sama, Kak 🙏', 'Alamat kami di Jl. Contoh Raya No. 12, Coblong, Bandung ya Kak.', ANSWER_HOURS.reply
+  ])
+  assert.deepEqual(store.pendingDrafts(), [], 'nothing for the owner to clear')
+  const skipped = audit().filter(entry => entry.event === 'decision' && entry.action === 'skip')
+  assert.deepEqual(skipped.map(entry => [entry.text, entry.reasons.at(-1)]), [['🙏', 'closing_already_sent'], ['siap kak', 'closing_already_sent'], ['👍', 'closing_already_sent']])
+  assert.equal(store.countChatAutoSends(ALICE, 3_600_000), 3, 'the closing took no per-chat slot')
+  assert.equal(store.countAutoSends(24 * 3_600_000), 4, 'but counts toward the daily cap')
+})
+
+test('a thanks while an earlier question still waits for the owner is a draft, not a closing', async t => {
+  const { transport, deliver, advance, now, store } = setup(t)
+  const live = () => ({ timestamp: Math.floor(now() / 1000) })
+  await deliver(incoming(ALICE, 'Kak tolong pesanan saya dikirim hari ini ya, buat acara nanti malam', live()))
+  advance(120_000)
+  await deliver(incoming(ALICE, 'makasih kak 🙏', live()))
+  assert.deepEqual(transport.toCustomer(), [])
+  assert.deepEqual(store.getDraft(2).policyReasons, ['decision:answer', 'open_draft', 'unanswered_message'])
+})
+
+test('a photo captioned "makasih kak" is a draft that names the photo: Claude never saw it', async t => {
+  const { transport, deliver, brain, store } = setup(t)
+  const photo = { key: { remoteJid: ALICE, id: 'IMG1', fromMe: false }, message: { imageMessage: { caption: 'makasih kak 🙏' } }, messageTimestamp: Math.floor(Date.now() / 1000), pushName: 'Sari' }
+  const { message } = normalizeUpsert(photo, { type: 'notify', meIds: getMeIds({ id: '6281111111111:7@s.whatsapp.net' }) })
+  await deliver(message)
+  assert.equal(brain.calls[0].messages[0].attachment, 'image')
+  assert.deepEqual(transport.toCustomer(), [])
+  assert.deepEqual(transport.read, [], 'no blue ticks on an unseen payment proof')
+  assert.deepEqual(store.getDraft(1).policyReasons, ['decision:answer', 'attachment:image'])
+  assert.match(transport.toSelf().at(-1), /They wrote: "\[image\] makasih kak 🙏"/)
+})
+
+test('a 🙏 after our own closing is not drafted even when Claude escalates it', async t => {
+  const respond = input => (input.messages.some(message => message.text === '🙏') ? triageResult({ decision: 'escalate', reply: '🙏' }) : thanksBack(input))
+  const { transport, deliver, store } = setup(t, { respond })
+  for (const text of ['ok makasih kak', '🙏']) await deliver(incoming(BOB, text))
+  assert.equal(transport.toCustomer().length, 1)
+  assert.deepEqual(store.pendingDrafts(), [])
 })

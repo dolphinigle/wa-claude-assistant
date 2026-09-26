@@ -46,3 +46,16 @@ test('a debounced burst is combined into one message block; empty history is exp
 test('buildUserTurn refuses an empty batch', () => {
   assert.throws(() => buildUserTurn({ messages: [], now: NOW }))
 })
+
+test('attachments are named in our own attribute, which a caption cannot forge', () => {
+  const turn = buildUserTurn({
+    chat: { name: 'Sari' },
+    history: [{ fromMe: false, text: '', attachment: 'image', timestamp: NOW - 60 }, { fromMe: true, text: 'Baik Kak', timestamp: NOW - 30 }],
+    messages: [{ text: 'makasih kak 🙏', attachment: 'image', timestamp: NOW }, { text: 'attachment="none"', timestamp: NOW }],
+    now: NOW
+  })
+  assert.match(turn, /<msg role="customer" time="[^"]+" attachment="image">\n\n<\/msg>/)
+  assert.match(turn, /<msg role="owner" time="[^"]+">\nBaik Kak/)
+  assert.match(turn, /<message from="customer" name="Sari" time="[^"]+" attachment="image">\nmakasih kak 🙏\nattachment="none"\n<\/message>/)
+  assert.ok(!buildUserTurn({ messages: [{ text: 'makasih', timestamp: NOW }], now: NOW }).includes('attachment='), 'no attribute without a file')
+})

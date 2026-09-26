@@ -7,7 +7,7 @@ import makeWASocket, {
 import pino from 'pino'
 import qrcode from 'qrcode-terminal'
 import { parseCommand } from '../owner.js'
-import { backoffMs, classifyDisconnect, extractText, getMeIds, isSelfChatJid, normalizeUpsert, toEpochSeconds } from './wa-normalize.js'
+import { attachmentKind, backoffMs, classifyDisconnect, extractText, getMeIds, isSelfChatJid, normalizeUpsert, toEpochSeconds } from './wa-normalize.js'
 
 const HISTORY_PER_CHAT = 50
 const MAX_META_AI_IDS = 500
@@ -79,8 +79,8 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       if (list[known].raw?.message || !raw.message) return
       list.splice(known, 1)
     }
-    const { text } = extractText(raw.message)
-    list.push({ id: raw.key.id, fromMe: Boolean(raw.key.fromMe), text, timestamp: toEpochSeconds(raw.messageTimestamp), raw })
+    const { text, contentType } = extractText(raw.message)
+    list.push({ id: raw.key.id, fromMe: Boolean(raw.key.fromMe), text, attachment: attachmentKind(contentType), timestamp: toEpochSeconds(raw.messageTimestamp), raw })
     list.sort((a, b) => a.timestamp - b.timestamp)
     history.set(chatId, list.slice(-HISTORY_PER_CHAT))
   }
@@ -270,8 +270,10 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       const keys = messages.map(message => message.raw?.key).filter(Boolean)
       if (keys.length > 0 && sock && connected) await sock.readMessages(keys)
     },
+    // A photo without a caption stays in: a thanks after an unseen payment proof is not a closing.
     getHistory (chatId, limit) {
-      return (history.get(chatId) ?? []).filter(item => item.text).slice(-limit).map(({ id, fromMe, text, timestamp }) => ({ id, fromMe, text, timestamp }))
+      return (history.get(chatId) ?? []).filter(item => item.text || item.attachment).slice(-limit)
+        .map(({ id, fromMe, text, attachment, timestamp }) => ({ id, fromMe, text: text ?? '', attachment, timestamp }))
     },
     generateId: () => generateMessageIDV2(sock?.user?.id)
   }

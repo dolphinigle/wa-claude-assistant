@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { decide } from '../src/policy.js'
+import { conversationState, decide } from '../src/policy.js'
 import { ANSWER_HOURS, makeConfig, okRateLimit, triageResult } from './helpers.js'
 
 const config = makeConfig()
@@ -87,4 +87,70 @@ test('allowed_warning quota passes; there is no confidence gate', () => {
   ctx.rateLimit = { ...okRateLimit, status: 'allowed_warning' }
   assert.equal(decide(triageResult(ANSWER_HOURS), ctx).action, 'auto_send')
   assert.equal(config.autoSend.minConfidence, undefined)
+})
+
+const THANKS = { decision: 'answer', reply: 'Sama-sama, Kak 🙏', facts_used: [] }
+const DISCLOSURE = makeConfig().disclosure.text
+const customer = text => ({ fromMe: false, text })
+const ours = text => ({ fromMe: true, text })
+const closingContext = (history, chat = {}) => ({ ...baseContext(), incomingText: 'ok makasih kak 🙏', history, chat: { ...baseContext().chat, ...chat } })
+
+test('conversationState reads the chat from the newest message back, passing over the customer\'s thanks', () => {
+  assert.equal(conversationState([]), undefined)
+  assert.equal(conversationState([customer('jam buka?'), ours('Buka 08.00–17.00 ya Kak.')]), 'answered')
+  assert.equal(conversationState([customer('Kak tolong dikirim hari ini ya'), customer('🙏')]), 'waiting')
+  assert.equal(conversationState([customer('makasih kak'), { fromMe: false, text: '', attachment: 'image' }]), 'waiting', 'an unseen photo waits')
+  assert.equal(conversationState([customer('brownies berapa?'), ours('Rp 85.000 ya Kak, mau pesan berapa?')]), 'question')
+  assert.equal(conversationState([customer('ok makasih kak'), ours('Sama-sama, Kak 🙏'), customer('🙏'), customer('siap kak')]), 'closed')
+  assert.equal(conversationState([customer('makasih'), ours(`${DISCLOSURE}\n\nSama-sama, Kak 🙏`)], { disclosureText: DISCLOSURE }), 'closed', 'the AI disclosure is not part of the closing')
+})
+
+test('a closing after a closing is skipped, whatever the other gates say', () => {
+  for (const ctx of [
+    closingContext([customer('ok makasih kak'), ours('Sama-sama, Kak 🙏')]),
+    closingContext([customer('jam buka?'), ours('Buka 08.00–17.00 ya Kak.')], { lastClosingAt: NOW - 60 * 60 * 1000 }) // one per session
+  ]) {
+    ctx.paused = true
+    ctx.chatAutoSendsLastHour = 3
+    assert.deepEqual(decide(triageResult(THANKS), ctx), { action: 'skip', reasons: ['decision:answer', 'closing_already_sent'] })
+  }
+  const nextSession = closingContext([customer('jam buka?'), ours('Buka 08.00–17.00 ya Kak.')], { lastClosingAt: NOW - 13 * 60 * 60 * 1000 })
+  assert.equal(decide(triageResult(THANKS), nextSession).action, 'auto_send')
+})
+
+test('after our own closing, a thanks is skipped whatever Claude made of it; the once-per-session limit needs an answer', () => {
+  const closed = closingContext([customer('ok makasih kak'), ours('Sama-sama, Kak 🙏')])
+  for (const result of [triageResult({ decision: 'escalate', reply: '🙏' }), { ok: false, error: 'timeout' }]) {
+    assert.equal(decide(result, closed).action, 'skip')
+  }
+  assert.deepEqual(decide(triageResult({ decision: 'escalate', reply: '🙏' }), closed).reasons, ['decision:escalate', 'closing_already_sent'])
+  const sameSession = closingContext([customer('jam buka?'), ours('Buka 08.00–17.00 ya Kak.')], { lastClosingAt: NOW - 60 * 1000 })
+  assert.equal(decide(triageResult({ ...THANKS, decision: 'escalate' }), sameSession).action, 'escalate', 'Claude\'s escalation stands there')
+  const question = { ...closed, incomingText: 'ok, kalau besok bisa?' }
+  assert.equal(decide(triageResult({ decision: 'escalate' }), question).action, 'escalate', 'a new question after a closing is not skipped')
+})
+
+test('a closing is held while something in the chat still waits for the owner', () => {
+  const held = (history, chat) => decide(triageResult(THANKS), closingContext(history, chat)).reasons
+  assert.deepEqual(held([customer('Kak tolong pesanan saya dikirim hari ini ya, buat acara nanti malam')]), ['decision:answer', 'unanswered_message'])
+  assert.deepEqual(held([customer('brownies berapa?'), ours('Rp 85.000 ya Kak, mau pesan berapa?')]), ['decision:answer', 'answers_owner_question'])
+  assert.deepEqual(held([], { openDraft: true }), ['decision:answer', 'open_draft'])
+  assert.deepEqual(held([ours('Sama-sama, Kak 🙏')], { openDraft: true }), ['decision:answer', 'open_draft'], 'an open draft is never skipped')
+  const factual = { ...baseContext(), incomingText: 'jam buka?', history: [customer('Kak saya sudah transfer')], chat: { ...baseContext().chat, openDraft: true } }
+  assert.equal(decide(triageResult(ANSWER_HOURS), factual).action, 'auto_send', 'an answer from the facts is not held by an earlier open question')
+})
+
+test('an attachment holds any answer: Claude only saw the caption', () => {
+  for (const triage of [THANKS, ANSWER_HOURS]) {
+    const ctx = { ...closingContext([ours('Sama-sama, Kak 🙏')]), attachments: ['image'] }
+    assert.deepEqual(decide(triageResult(triage), ctx).reasons, ['decision:answer', 'attachment:image'])
+  }
+})
+
+test('a closing uses no per-chat slot; the daily cap still counts it', () => {
+  const ctx = closingContext([customer('jam buka?'), ours('Buka 08.00–17.00 ya Kak.')])
+  ctx.chatAutoSendsLastHour = 3
+  assert.equal(decide(triageResult(THANKS), ctx).action, 'auto_send')
+  ctx.autoSendsLastDay = 30
+  assert.deepEqual(decide(triageResult(THANKS), ctx).reasons, ['decision:answer', 'daily_rate_limit'])
 })

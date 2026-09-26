@@ -112,6 +112,16 @@ test('auto-send counters use rolling windows', t => {
   assert.equal(store.countAutoSends(24 * 60 * 60 * 1000), 0)
 })
 
+test('a social closing counts toward the daily total but uses no per-chat slot', t => {
+  const store = new Store(tempDir(t), { now: () => 1_000_000_000 })
+  store.recordAutoSend('a')
+  const closing = store.recordAutoSend('a', { perChat: false })
+  assert.equal(store.countChatAutoSends('a', 60 * 60 * 1000), 1)
+  assert.equal(store.countAutoSends(60 * 60 * 1000), 2)
+  store.releaseAutoSend('a', closing, { perChat: false })
+  assert.deepEqual([store.countChatAutoSends('a', 60 * 60 * 1000), store.countAutoSends(60 * 60 * 1000)], [1, 1], 'the release leaves the chat slot')
+})
+
 test('drafts: cancel per chat, expire by age', t => {
   let clock = 0
   const store = new Store(tempDir(t), { now: () => clock })

@@ -115,7 +115,10 @@ test('send: pre-generated message id, quotes text only, history and markRead', a
   await transport.send(CUSTOMER, 'ok', { quotedRaw: image, messageId: 'BOT2' })
   assert.deepEqual(sockets[0].sent[1].options, { messageId: 'BOT2' }, 'quoted media replies do not render on mobile')
 
-  assert.deepEqual(transport.getHistory(CUSTOMER, 10).map(item => [item.fromMe, item.text]), [[false, 'jam buka?'], [false, 'ini?'], [true, 'Buka 08.00'], [true, 'ok']])
+  assert.deepEqual(transport.getHistory(CUSTOMER, 10).map(item => [item.fromMe, item.text, item.attachment]), [[false, 'jam buka?', undefined], [false, 'ini?', 'image'], [true, 'Buka 08.00', undefined], [true, 'ok', undefined]])
+  emit('messages.upsert', { type: 'notify', messages: [raw(CUSTOMER, { imageMessage: { mimetype: 'image/jpeg' } }), raw(CUSTOMER, { stickerMessage: {} })] })
+  await sleep(5)
+  assert.deepEqual(transport.getHistory(CUSTOMER, 1).map(item => [item.text, item.attachment]), [['', 'image']], 'a photo without a caption stays in the history; a sticker does not')
   await transport.markRead([{ raw: text }])
   assert.deepEqual(sockets[0].read, [text.key])
   assert.equal(typeof transport.generateId(), 'string')

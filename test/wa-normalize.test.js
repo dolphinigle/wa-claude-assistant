@@ -37,7 +37,7 @@ test('plain conversation', () => {
   const { message } = normalizeUpsert(wa({ conversation: 'Kak, buka jam berapa?' }), { type: 'notify', meIds })
   assert.deepEqual({ ...message, raw: undefined }, {
     id: '3EB0A1B2C3D4E5F6', chatId: CUSTOMER, chatIdAlt: undefined, fromMe: false, isSelfChat: false, senderName: 'Sari',
-    text: 'Kak, buka jam berapa?', timestamp: 1790400000, kind: 'notify', quotedText: undefined, contentType: 'conversation', isForwarded: false, raw: undefined
+    text: 'Kak, buka jam berapa?', timestamp: 1790400000, kind: 'notify', quotedText: undefined, contentType: 'conversation', attachment: undefined, isForwarded: false, raw: undefined
   })
 })
 
@@ -60,6 +60,9 @@ test('ephemeral, viewOnce and document-with-caption wrappers are unwrapped', () 
   assert.equal(viewOnce.contentType, 'imageMessage')
   assert.equal(normalizeUpsert(wa({ documentWithCaptionMessage: { message: { documentMessage: { caption: 'invoice' } } } }), { type: 'notify', meIds }).message.text, 'invoice')
   assert.equal(normalizeUpsert(wa({ videoMessage: { caption: 'video kue' } }), { type: 'notify', meIds }).message.text, 'video kue')
+  assert.equal(viewOnce.attachment, 'image', 'a captioned file is marked, so a thanks with a payment proof is not a closing')
+  assert.equal(normalizeUpsert(wa({ documentWithCaptionMessage: { message: { documentMessage: { caption: 'invoice' } } } }), { type: 'notify', meIds }).message.attachment, 'document')
+  assert.equal(normalizeUpsert(wa({ conversation: 'makasih kak' }), { type: 'notify', meIds }).message.attachment, undefined)
 })
 
 test('skips: status, broadcast list, group, newsletter, Meta AI, non-text, reactions, protocol, ciphertext', () => {
