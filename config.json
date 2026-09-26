@@ -24,7 +24,7 @@
   "draftTtlHours": 24,
   "guards": {
     "maxReplyChars": 600,
-    "sensitiveTerms": ["diskon", "discount", "disc", "potongan", "promo", "sale", "cashback", "bonus", "refund", "uang kembali", "kembalikan", "pengembalian", "ganti rugi", "gratis", "free", "rekening", "account number", "no. rek", "norek", "garansi", "guarantee", "jamin", "janji", "promise"]
+    "sensitiveTerms": ["diskon", "discount", "disc", "potongan", "promo", "sale", "cashback", "bonus", "voucher", "kupon", "coupon", "hadiah", "gift", "murah", "hemat", "spesial", "special", "off", "refund", "uang kembali", "kembalikan", "pengembalian", "ganti rugi", "gratis", "free", "rekening", "account number", "no. rek", "norek", "garansi", "guarantee", "jamin", "janji", "promise"]
   },
   "quota": {
     "maxFiveHourUtilization": 0.8,

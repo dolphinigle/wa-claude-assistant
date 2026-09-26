@@ -95,6 +95,23 @@ test('numbers without ASCII digits fail closed: words, fullwidth and other scrip
   assert.equal(checkReply({ reply: 'Kue kering tahan sebulan ya Kak', factsUsed: ['F1'] }, { knowledge: custom }).ok, true, 'a number word from the cited fact is fine')
 })
 
+test('digit-free fractions, ordinals and multiples, and offer words, fail unless the cited facts have them', () => {
+  for (const [reply, facts, reason] of [
+    ['Brownies tahan sepekan di suhu ruang ya Kak.', ['F12'], 'unsupported_number_word:sepekan'],
+    ['Brownies panggang Rp 85.000 ya Kak, hari ini separuh harga.', ['F5'], 'unsupported_number_word:separuh'],
+    ['The brownies are Rp 85.000, and a quarter off if you order twice.', ['F5'], 'unsupported_number_word:quarter,twice'],
+    ['The brownies are Rp 85.000, and a quarter off if you order twice.', ['F5'], 'sensitive_term:off'],
+    ['Brownies Rp 85.000 ya Kak, pakai voucher bisa lebih hemat.', ['F5'], 'sensitive_term:voucher'],
+    ['Brownies Rp 85.000 ya Kak, pakai voucher bisa lebih hemat.', ['F5'], 'sensitive_term:hemat'],
+    ['Brownies Rp 85.000 ya Kak, dapat hadiah kue kering juga.', ['F5'], 'sensitive_term:hadiah'],
+    ['Brownies Rp 85.000 ya Kak, loyang kedua sepertiga harga.', ['F5'], 'unsupported_number_word:kedua,sepertiga'],
+    ['Brownies Rp 85.000, double the size for a couple more days.', ['F5'], 'unsupported_number_word:double,couple']
+  ]) {
+    const result = check(reply, facts)
+    assert.ok(result.reasons.includes(reason), `${reply}: ${result.reasons}`)
+  }
+})
+
 test('sensitive terms match Indonesian affixes and doubled letters, not unrelated words', () => {
   const terms = makeConfig().guards.sensitiveTerms
   for (const reply of ['ada diskonnya ya Kak', 'bisa direfund ya Kak', 'gratiss ongkir ya Kak', 'ongkirnya digratiskan', 'promonya ada', 'garansinya ada', 'ada potongannya', 'dijamin enak', 'uangnya dikembalikan', 'lagi sale', 'ada cashback']) {

@@ -66,9 +66,10 @@ flowchart LR
   (`Rp 85.000`, `85rb` and `85.000` are the same amount; `08.00`, `8 AM` and `jam 8 pagi` the same hour; `3 hari`,
   `3 pekan` and `3 bln` are durations, `20%` a percentage). Kinds stay apart: the 3 of `3 hari` never licenses a
   bare 3, and a number with any other word (`3 loyang`, `25 Desember`) must appear with that same word. Numbers
-  written as words, digits of other scripts and any bare domain fail unless the cited facts have them. `facts_used` must name existing facts; no placeholders, no fact ids, a length
-  cap, no sensitive terms (discount, refund, bank account …, including affixed forms like `diskonnya`, `direfund`)
-  unless the cited facts contain them, and the reply must be in the sender's language. Any failure turns the reply
+  written as words (`seratus ribu`, `sepekan`, `separuh`, `kedua`, `twice`, `a quarter`), digits of other scripts
+  and any bare domain fail unless the cited facts have them. `facts_used` must name existing facts; no placeholders, no fact ids, a length
+  cap, no sensitive terms (discount, voucher, gift, refund, bank account …, including affixed forms like
+  `diskonnya`, `direfund`) unless the cited facts contain them, and the reply must be in the sender's language. Any failure turns the reply
   into a draft with the reason.
 
 ## Setup

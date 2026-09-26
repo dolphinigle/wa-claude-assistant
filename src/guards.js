@@ -40,11 +40,13 @@ const TIME_WORDS = /\b(?:jam|pukul|buka|tutup|open|opens|close|closes|closed|wib
 // Numbers written as words carry no digits for the checks above ("seratus ribu", "seminggu", "one hundred"), so any
 // such word must also appear in the cited facts. Common words like "satu" (salah satu) or "one" just mean a draft.
 const NUMBER_WORDS = new Set(('nol satu dua tiga empat lima enam tujuh delapan sembilan sepuluh sebelas seratus seribu sejuta ' +
-  'setengah seperempat lusin selusin sejam sehari seminggu sebulan setahun zero one two three four five six seven eight nine ' +
+  'setengah seperempat sepertiga seperdua separuh separo lusin selusin sepasang ' +
+  'sedetik semenit sejam sehari seminggu sepekan sebulan setahun zero one two three four five six seven eight nine ' +
   'ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy ' +
-  'eighty ninety hundred thousand million dozen half').split(' '))
+  'eighty ninety hundred thousand million dozen half quarter third fourth fifth once twice thrice double triple couple pair').split(' '))
 const NUMBER_WORD_ENDINGS = /(?:belas|puluh|ratus|ribu|juta|miliar)(?:an)?$/ // duabelas, limapuluh, ratusan
-const isNumberWord = word => NUMBER_WORDS.has(word) || NUMBER_WORD_ENDINGS.test(word)
+const ORDINAL = /^ke(?:satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|sebelas|seratus|seribu)(?:nya)?$/ // kedua, ketiganya
+const isNumberWord = word => NUMBER_WORDS.has(word) || NUMBER_WORD_ENDINGS.test(word) || ORDINAL.test(word)
 
 function parseDecimal (text) {
   if (THOUSANDS.test(text)) return Number(text.replace(/[.,]/g, ''))
