@@ -28,11 +28,15 @@ const attachmentAttribute = items => {
   return kinds.length > 0 ? ` attachment="${escapeAttribute(kinds.join(' '))}"` : ''
 }
 
+// A reply names what it replies to: "iya kak" under an older question answers that question. The sender's app supplies
+// the quote, so it is escaped like their text.
+const quotedLine = message => (message.quotedText ? `<quoted>${escapeText(truncate(String(message.quotedText), MAX_HISTORY_CHARS))}</quoted>\n` : '')
+
 /**
  * @param {object} input
  * @param {{name?: string}} input.chat
  * @param {{fromMe: boolean, text: string, timestamp: number, attachment?: string}[]} input.history  older messages, oldest first
- * @param {{text: string, timestamp: number, attachment?: string}[]} input.messages  the debounced burst to triage, oldest first
+ * @param {{text: string, timestamp: number, attachment?: string, quotedText?: string}[]} input.messages  the debounced burst to triage, oldest first
  * @param {number} input.now  epoch seconds
  */
 export function buildUserTurn ({ chat = {}, history = [], messages, now, timeZone = 'Asia/Jakarta', contextMessages = 8 }) {
@@ -56,7 +60,16 @@ export function buildUserTurn ({ chat = {}, history = [], messages, now, timeZon
   const name = escapeAttribute(truncate(String(chat.name ?? 'unknown'), MAX_NAME_CHARS))
   const last = messages[messages.length - 1]
   lines.push(`<message from="customer" name="${name}" time="${formatLocalTime(last.timestamp ?? now, timeZone)}"${attachmentAttribute(messages)}>`)
-  lines.push(escapeText(truncate(messages.map(message => String(message.text ?? '')).join('\n'), MAX_MESSAGE_CHARS)))
+  const parts = []
+  let budget = MAX_MESSAGE_CHARS // for the burst's text together, quotes aside
+  for (const message of messages) {
+    const text = String(message.text ?? '')
+    const room = Math.max(budget, 0)
+    parts.push(quotedLine(message) + escapeText(truncate(text, room)))
+    if (text.length > room) break
+    budget = room - text.length - 1
+  }
+  lines.push(parts.join('\n'))
   lines.push('</message>')
   return `${lines.join('\n')}\n`
 }

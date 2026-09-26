@@ -91,6 +91,9 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
   const chatName = chatId => formatContact(chatId, store.existingChat(chatId))
   // Drafts whose send is in flight: two self-chat commands run concurrently (Baileys does not await listeners).
   const sending = new Set()
+  // Whatever the owner did with a thanks (sent it, edited it, discarded it) closes the chat for the session, like a
+  // closing the bot sent: the next 🙏 is skipped instead of drafted again.
+  const resolveClosing = draft => { if (draft.closing) store.updateChat(draft.chatId, { lastClosingAt: now() }) }
 
   function pendingDraft (id, commandTimestampMs) {
     const draft = store.getDraft(id)
@@ -113,10 +116,12 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
     }
     if (outcome.shadow) {
       store.resolveDraft(draft.id, `${status}_shadow`, { sentText: text })
+      resolveClosing(draft)
       return `${BOT_PREFIX} [SHADOW] Draft #${draft.id} approved. Would send to ${draft.contactName}:\n${text}`
     }
     if (!outcome.sent) return `${BOT_PREFIX} ⚠️ Sending draft #${draft.id} failed (${outcome.error}). It is still pending.`
     store.resolveDraft(draft.id, status, { sentText: text })
+    resolveClosing(draft)
     return `${BOT_PREFIX} ✅ Sent to ${draft.contactName} (draft #${draft.id}).`
   }
 
@@ -181,6 +186,7 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
         const { draft, error } = pendingDraft(command.draftId, timestampMs)
         if (error) return `${BOT_PREFIX} ${error}`
         store.resolveDraft(draft.id, 'rejected')
+        resolveClosing(draft)
         return `${BOT_PREFIX} 🗑️ Discarded draft #${draft.id} (${draft.contactName}).`
       }
       case 'pause':

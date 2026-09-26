@@ -12,6 +12,8 @@ test('state survives a restart', t => {
   const store = new Store(dir)
   store.markProcessed('A')
   store.markSentByBot('B')
+  store.markAutoReply('R')
+  store.addToInbox({ id: 'Q', chatId: 'c', text: 'iya kak', quotedText: 'Mau diantar Sabtu kak?', timestamp: 1 })
   store.seedHistoryFloor(1000)
   store.seedHistoryFloor(2000)
   store.setPaused(true, 5000)
@@ -21,6 +23,8 @@ test('state survives a restart', t => {
   const reloaded = new Store(dir)
   assert.ok(reloaded.hasProcessed('A'))
   assert.ok(reloaded.isSentByBot('B'))
+  assert.ok(reloaded.isAutoReply('R') && !reloaded.isAutoReply('B'), 'auto-replies are told apart from other bot sends')
+  assert.equal(reloaded.inboxMessages()[0].quotedText, 'Mau diantar Sabtu kak?', 'a recovered message keeps what it replied to')
   assert.equal(reloaded.historyFloorTs, 1000, 'the floor is set once')
   assert.equal(reloaded.paused, true)
   assert.equal(reloaded.pauseChangedAt, 5000)
@@ -89,8 +93,9 @@ test('writeFileAtomic replaces content in one step', t => {
 })
 
 test('bounded id sets drop the oldest entries', t => {
-  const store = new Store(tempDir(t), { limits: { sentByBot: 5, processed: 3 } })
-  for (let index = 0; index < 8; index++) { store.markSentByBot(`S${index}`); store.markProcessed(`P${index}`) }
+  const store = new Store(tempDir(t), { limits: { sentByBot: 5, processed: 3, autoReplies: 2 } })
+  for (let index = 0; index < 8; index++) { store.markSentByBot(`S${index}`); store.markProcessed(`P${index}`); store.markAutoReply(`R${index}`) }
+  assert.deepEqual(store.state.autoReplies, ['R6', 'R7'])
   assert.equal(store.state.sentByBot.length, 5)
   assert.ok(!store.isSentByBot('S2') && store.isSentByBot('S3') && store.isSentByBot('S7'))
   assert.deepEqual(store.state.processed, ['P5', 'P6', 'P7'])

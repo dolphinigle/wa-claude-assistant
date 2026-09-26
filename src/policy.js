@@ -1,36 +1,51 @@
 // PURE routing decision. Claude either answers or escalates. An answer is auto-sent only if every gate passes; a
-// failed gate escalates it instead, with the gates as reasons for the owner. The one exception is a social closing
-// that follows a closing already sent: it is skipped, since nothing is waiting and a second "sama-sama" only adds
-// volume. Shadow mode is not decided here: the send gate in assistant.js turns an approved send into a notice.
-import { isSocialMessage, isSocialReply } from './guards.js'
+// failed gate escalates it instead, with the gates as reasons for the owner. The one exception is a thanks that adds
+// nothing: after a closing our side sent or handled this session, or while an open draft already holds the chat, it
+// is skipped, since another "sama-sama" or another draft only adds volume. Shadow mode is not decided here: the send
+// gate in assistant.js turns an approved send into a notice.
+import { isSocialMessage, isSocialReply, normalizeText } from './guards.js'
 
 const QUOTA_OK_STATUSES = new Set(['allowed', 'allowed_warning'])
 const HOUR_MS = 60 * 60 * 1000
 
 /**
  * Where the chat stands before the new messages, read from the newest one back; the customer's own thanks and 👍 are
- * passed over. 'waiting': a customer message nobody has answered (an attachment counts: nobody has seen it);
- * 'question': our side's last message asked something, so an "ok" answers it; 'closed': our side's last message was
- * itself a closing; 'answered': our side replied; undefined: no history. Our side is the owner and the bot alike.
- * @param {{fromMe: boolean, text?: string, attachment?: string}[]} history  oldest first
+ * passed over. Our side is the owner and the bot alike.
+ * - 'drafted': an open draft holds this message and everything before it (also when the history does not reach it)
+ * - 'waiting': a customer message nobody has answered; `attachment` names one Claude cannot read (a photo, a
+ *   location pin): nobody has seen it
+ * - 'closed': our side's last message was a closing, or a closing was handled after it (`closingHandledAt`: sent, or
+ *   its draft resolved), within this session (after `sessionStart`)
+ * - 'question': our side's last message asked something, so an "ok" answers it
+ * - 'owner': our side's last message was not one of the bot's auto-replies (`autoReply`): an "ok" may agree to it
+ * - 'answered': the bot's auto-reply, or a closing of an earlier session, was the last word
+ * - undefined: no history
+ * @param {{id?: string, fromMe: boolean, text?: string, attachment?: string, timestamp?: number, autoReply?: boolean}[]} history
+ *   oldest first; timestamps in epoch seconds
+ * @param {{disclosureText?: string, openDrafts?: {messageIds?: string[]}[], closingHandledAt?: number, sessionStart?: number}} [options]
+ * @returns {{state?: string, attachment?: string}}
  */
-export function conversationState (history = [], { disclosureText } = {}) {
+export function conversationState (history = [], { disclosureText, openDrafts = [], closingHandledAt = 0, sessionStart = 0 } = {}) {
+  const drafted = new Set(openDrafts.flatMap(draft => draft.messageIds ?? []))
   for (const item of [...history].reverse()) {
+    if (drafted.has(item.id)) return { state: 'drafted' }
     const text = String(item.text ?? '')
     if (!item.fromMe) {
-      if (item.attachment || !isSocialMessage(text)) return 'waiting'
+      if (item.attachment) return { state: 'waiting', attachment: item.attachment }
+      if (!isSocialMessage(text)) return { state: 'waiting' }
       continue
     }
+    const sentAt = (item.timestamp ?? 0) * 1000 // unknown age: not this session
     const own = disclosureText && text.startsWith(disclosureText) ? text.slice(disclosureText.length) : text
-    if (/[?¿]/.test(own)) return 'question'
-    return isSocialReply(own) ? 'closed' : 'answered'
+    if (isSocialReply(own)) return { state: sentAt > sessionStart ? 'closed' : 'answered' }
+    if (closingHandledAt > sentAt && closingHandledAt > sessionStart) return { state: 'closed' }
+    if (/[?¿]/.test(own)) return { state: 'question' }
+    return { state: item.autoReply ? 'answered' : 'owner' }
   }
-  return undefined
+  return { state: openDrafts.length > 0 ? 'drafted' : undefined }
 }
 
-/** Claude answers a purely social message without a fact: a thanks answered with a thanks. */
-export const isClosing = (triage, incomingText) =>
-  triage?.decision === 'answer' && !(triage.facts_used?.length > 0) && incomingText !== undefined && isSocialMessage(incomingText)
+const flatText = text => normalizeText(text).replace(/\s+/g, ' ').trim()
 
 /**
  * @param {{ok: boolean, triage?: object, error?: string}} result  brain.triage() output
@@ -39,9 +54,11 @@ export const isClosing = (triage, incomingText) =>
  * @param {{ok: boolean, reasons: string[]}} [ctx.guard]  guards.checkReply() output for the reply
  * @param {string} [ctx.incomingText]  the new messages' text, joined
  * @param {string[]} [ctx.attachments]  kinds of the files attached to the new messages (image, video, …)
+ * @param {string[]} [ctx.quoted]  texts of the earlier messages the new ones reply to (WhatsApp quotes)
  * @param {object[]} [ctx.history]  earlier messages of the chat, oldest first (see conversationState)
  * @param {boolean} ctx.paused
- * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, openDraft?: boolean, lastClosingAt?: number}} ctx.chat
+ * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, openDrafts?: {messageIds?: string[]}[], lastClosingAt?: number}} ctx.chat
+ *   `openDrafts`: the chat's pending drafts; `lastClosingAt`: when a closing was last sent, or a closing draft resolved
  * @param {number} ctx.now  epoch ms
  * @param {number} ctx.chatAutoSendsLastHour
  * @param {number} ctx.autoSendsLastDay
@@ -51,27 +68,38 @@ export const isClosing = (triage, incomingText) =>
  */
 export function decide (result, ctx) {
   const { config, chat = {}, rateLimit } = ctx
-  const conversation = conversationState(ctx.history, { disclosureText: config.disclosure?.text })
+  const history = ctx.history ?? []
   const attachments = ctx.attachments ?? []
-  // A thanks or 🙏 after our side's own closing needs nothing from anyone, whatever Claude made of it.
+  const openDrafts = chat.openDrafts ?? []
+  const sessionMs = (config.disclosure?.sessionGapHours ?? 12) * HOUR_MS
+  const { state: conversation, attachment: unseen } = conversationState(history, {
+    disclosureText: config.disclosure?.text, openDrafts, closingHandledAt: chat.lastClosingAt, sessionStart: ctx.now - sessionMs
+  })
   const socialMessage = ctx.incomingText !== undefined && isSocialMessage(ctx.incomingText)
-  if (socialMessage && conversation === 'closed' && attachments.length === 0 && !chat.openDraft) {
-    return { action: 'skip', reasons: [`decision:${result?.triage?.decision ?? 'none'}`, 'closing_already_sent'] }
-  }
+  // "iya kak" quoting an earlier message answers that message, not our side's last one.
+  const lastOurs = history.findLast(item => item.fromMe)
+  const quotesEarlier = (ctx.quoted ?? []).some(text => !lastOurs || flatText(text) !== flatText(lastOurs.text))
 
   if (!result?.ok || !result.triage) return { action: 'escalate', reasons: [`triage_failed:${result?.error ?? 'unknown'}`] }
   const { decision } = result.triage
+  // A thanks or 🙏 that adds nothing needs nothing from anyone, whatever Claude made of it.
+  if (socialMessage && attachments.length === 0 && !quotesEarlier) {
+    if (conversation === 'closed') return { action: 'skip', reasons: [`decision:${decision}`, 'closing_already_sent'] }
+    if (conversation === 'drafted') return { action: 'skip', reasons: [`decision:${decision}`, 'open_draft'] }
+  }
   if (decision !== 'answer') return { action: 'escalate', reasons: [`decision:${decision}`] }
 
-  // The prompt's "nothing is still waiting" for a closing is checked here too, and one closing per session is enough.
-  const closing = isClosing(result.triage, ctx.incomingText)
+  // An answer to a thanks is a closing whatever it cites (the guards accept only a thanks-back without facts). The
+  // prompt's "nothing is still waiting" is checked here too, and one closing per session is enough.
+  const closing = socialMessage
   const held = attachments.map(kind => `attachment:${kind}`) // Claude cannot see it: a payment proof?
   if (closing) {
-    if (chat.openDraft) held.push('open_draft')
-    if (conversation === 'waiting') held.push('unanswered_message')
+    if (openDrafts.length > 0) held.push('open_draft')
+    if (conversation === 'waiting') held.push(unseen ? `unanswered_attachment:${unseen}` : 'unanswered_message')
     if (conversation === 'question') held.push('answers_owner_question')
-    const sessionMs = (config.disclosure?.sessionGapHours ?? 12) * HOUR_MS
-    if (held.length === 0 && ctx.now - (chat.lastClosingAt ?? 0) < sessionMs) {
+    if (conversation === 'owner') held.push('answers_owner_message')
+    if (quotesEarlier) held.push('quotes_earlier_message')
+    if (held.length === 0 && ctx.guard?.ok && ctx.now - (chat.lastClosingAt ?? 0) < sessionMs) {
       return { action: 'skip', reasons: ['decision:answer', 'closing_already_sent'] }
     }
   }

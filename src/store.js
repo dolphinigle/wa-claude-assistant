@@ -4,6 +4,7 @@ import path from 'node:path'
 
 const MAX_SENT_BY_BOT = 2000
 const MAX_PROCESSED = 5000
+const MAX_AUTO_REPLIES = 2000
 const MAX_AUTO_SEND_LOG = 500
 const MAX_OWNER_OUTBOX = 50
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -15,6 +16,7 @@ const emptyState = () => ({
   drafts: {},
   chats: {},
   sentByBot: [],
+  autoReplies: [],
   processed: [],
   autoSendLog: [],
   historyFloorTs: 0,
@@ -47,7 +49,7 @@ export function writeFileAtomic (file, contents) {
 export class Store {
   constructor (dataDir, { now = () => Date.now(), logger = console, limits = {} } = {}) {
     this.dataDir = dataDir
-    this.limits = { sentByBot: MAX_SENT_BY_BOT, processed: MAX_PROCESSED, ...limits }
+    this.limits = { sentByBot: MAX_SENT_BY_BOT, processed: MAX_PROCESSED, autoReplies: MAX_AUTO_REPLIES, ...limits }
     this.file = path.join(dataDir, 'state.json')
     this.auditFile = path.join(dataDir, 'audit.jsonl')
     this.now = now
@@ -55,6 +57,7 @@ export class Store {
     mkdirSync(dataDir, { recursive: true, mode: 0o700 })
     this.state = this.#load()
     this.sentByBotSet = new Set(this.state.sentByBot)
+    this.autoReplySet = new Set(this.state.autoReplies)
     this.processedSet = new Set(this.state.processed)
   }
 
@@ -92,6 +95,10 @@ export class Store {
 
   isSentByBot (id) { return this.sentByBotSet.has(id) }
   markSentByBot (id) { this.#remember(this.state.sentByBot, this.sentByBotSet, id, this.limits.sentByBot); this.save() }
+
+  /** The bot's own auto-replies, as opposed to what the owner typed or approved: only after one may a thanks be closed. */
+  isAutoReply (id) { return this.autoReplySet.has(id) }
+  markAutoReply (id) { this.#remember(this.state.autoReplies, this.autoReplySet, id, this.limits.autoReplies); this.save() }
 
   hasProcessed (id) { return this.processedSet.has(id) }
   markProcessed (id) { this.#remember(this.state.processed, this.processedSet, id, this.limits.processed); this.save() }
@@ -202,8 +209,8 @@ export class Store {
   // --- inbound messages accepted but not routed yet --------------------------
 
   /** Kept until triage has decided, so a restart or crash between accepting and routing cannot lose it silently. */
-  addToInbox ({ id, chatId, chatIdAlt, senderName, text, attachment, timestamp, kind, isBacklog }) {
-    this.state.inbox[id] = { id, chatId, chatIdAlt, senderName, text, attachment, timestamp, kind, isBacklog, acceptedAt: this.now() }
+  addToInbox ({ id, chatId, chatIdAlt, senderName, text, attachment, quotedText, timestamp, kind, isBacklog }) {
+    this.state.inbox[id] = { id, chatId, chatIdAlt, senderName, text, attachment, quotedText, timestamp, kind, isBacklog, acceptedAt: this.now() }
     this.save()
   }
 

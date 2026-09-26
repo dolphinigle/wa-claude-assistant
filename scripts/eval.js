@@ -28,14 +28,17 @@ const knowledge = loadKnowledge(config.paths.knowledge)
 const startedAt = saved ? new Date(saved.runAt) : new Date()
 const baseName = saved ? path.basename(rescoreFile, '.json') : only ? 'last-run-partial' : 'last-run'
 const outDir = saved ? path.dirname(path.resolve(rescoreFile)) : path.join(ROOT_DIR, 'eval')
+// History one minute apart, or `minutesAgo` for an older message (a closing from yesterday); `autoReply` marks the
+// bot's own replies. The same ages go to Claude and, at scoring time, to the policy.
+const timedHistory = (fixture, nowSeconds) =>
+  (fixture.history ?? []).map((item, index, all) => ({ ...item, timestamp: nowSeconds - 60 * (item.minutesAgo ?? all.length - index) }))
 
 async function collect () {
   const brain = createClaudeBrain({ config, knowledge })
   const nowSeconds = Math.floor(Date.now() / 1000)
   console.log(`eval: ${fixtures.length} fixture(s), ${fixtures.length} claude call(s), concurrency ${config.claude.concurrency}, model ${config.claude.model}\n`)
   return Promise.all(fixtures.map(async fixture => {
-    const history = (fixture.history ?? []).map((item, index, all) => ({ ...item, timestamp: nowSeconds - 60 * (all.length - index) }))
-    const result = await brain.triage({ chat: { name: fixture.name }, history, messages: [{ text: fixture.text, timestamp: nowSeconds }] })
+    const result = await brain.triage({ chat: { name: fixture.name }, history: timedHistory(fixture, nowSeconds), messages: [{ text: fixture.text, timestamp: nowSeconds }] })
     return { id: fixture.id, result }
   }))
 }
@@ -48,16 +51,18 @@ const rows = fixtures.map(fixture => {
   const { result } = results.find(item => item.id === fixture.id)
   const guard = guardTriage(result.triage, { knowledge, config, incomingText: fixture.text })
   // A quiet day with no open drafts: only the triage, the guards, the fixture's history and the quota can stop an
-  // auto-send (or skip a closing that follows one).
+  // auto-send (or skip a thanks that follows a closing).
+  const now = Date.now()
   const decision = decide(result, {
     config,
     guard,
     incomingText: fixture.text,
     attachments: [],
-    history: fixture.history ?? [],
+    quoted: [],
+    history: timedHistory(fixture, Math.floor(now / 1000)),
     paused: false,
-    chat: { muted: false, blocked: false, takeoverUntil: 0, openDraft: false, lastClosingAt: 0 },
-    now: Date.now(),
+    chat: { muted: false, blocked: false, takeoverUntil: 0, openDrafts: [], lastClosingAt: 0 },
+    now,
     chatAutoSendsLastHour: 0,
     autoSendsLastDay: 0,
     rateLimit: result.rateLimit,

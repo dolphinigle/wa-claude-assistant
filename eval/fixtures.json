@@ -85,7 +85,7 @@
     "name": "Dewi",
     "history": [
       { "fromMe": false, "text": "Brownies panggang berapa kak?" },
-      { "fromMe": true, "text": "Rp 85.000 ya Kak, loyang 20x20 cm." }
+      { "fromMe": true, "autoReply": true, "text": "Rp 85.000 ya Kak, loyang 20x20 cm." }
     ],
     "text": "ok makasih kak 🙏",
     "expect": "answer",
@@ -97,9 +97,9 @@
     "name": "Dewi",
     "history": [
       { "fromMe": false, "text": "Brownies panggang berapa kak?" },
-      { "fromMe": true, "text": "Rp 85.000 ya Kak, loyang 20x20 cm." },
+      { "fromMe": true, "autoReply": true, "text": "Rp 85.000 ya Kak, loyang 20x20 cm." },
       { "fromMe": false, "text": "ok makasih kak" },
-      { "fromMe": true, "text": "Sama-sama, Kak 🙏" }
+      { "fromMe": true, "autoReply": true, "text": "Sama-sama, Kak 🙏" }
     ],
     "text": "🙏",
     "expect": "answer",

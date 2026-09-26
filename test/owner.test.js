@@ -78,6 +78,26 @@ test('shadow mode: /ok is recorded but the gate reports nothing sent', async t =
   assert.equal(store.getDraft(draft.id).status, 'approved_shadow')
 })
 
+test('resolving a thanks draft closes the chat for the session; resolving any other draft does not', async t => {
+  const { store, owner, draft, advance, now } = setup(t)
+  const thanks = () => store.createDraft({ chatId: 'b@s.whatsapp.net', contactName: 'Bob', excerpt: 'ok makasih kak', draft: 'Sama-sama, Kak 🙏', closing: true })
+  await owner.handle(`/ok ${draft.id}`)
+  assert.equal(store.chat('a@s.whatsapp.net').lastClosingAt, undefined)
+  for (const command of ['/no', '/ok', '/edit']) {
+    advance(60_000)
+    const { id } = thanks()
+    await owner.handle(`${command} ${id}${command === '/edit' ? ' Sama-sama ya Kak' : ''}`)
+    assert.equal(store.chat('b@s.whatsapp.net').lastClosingAt, now(), command)
+  }
+})
+
+test('shadow mode: approving a thanks draft closes the chat like a send would', async t => {
+  const { store, owner, now } = setup(t, { mode: 'shadow' })
+  const { id } = store.createDraft({ chatId: 'b@s.whatsapp.net', contactName: 'Bob', draft: 'Sama-sama, Kak 🙏', closing: true })
+  await owner.handle(`/ok ${id}`)
+  assert.equal(store.chat('b@s.whatsapp.net').lastClosingAt, now())
+})
+
 test('a failed send keeps the draft pending', async t => {
   const { store, owner, draft } = setup(t, { sendResult: { sent: false, error: 'not connected' } })
   assert.match(await owner.handle(`/ok ${draft.id}`), /failed \(not connected\)/)

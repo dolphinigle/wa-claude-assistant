@@ -1,7 +1,7 @@
 // Orchestrator: dedupe, loop guard, takeover, debounce, triage, policy, and the ONE send gate.
-import { findPrivateDetails, guardTriage, privateIdentifiersFor } from './guards.js'
+import { findPrivateDetails, guardTriage, isSocialMessage, privateIdentifiersFor } from './guards.js'
 import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice, jidUser } from './owner.js'
-import { decide, isClosing } from './policy.js'
+import { decide } from './policy.js'
 
 const MINUTE_MS = 60 * 1000
 const HOUR_MS = 60 * MINUTE_MS
@@ -320,20 +320,24 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const triage = result.triage
     const chat = store.chat(chatId)
     const incomingText = batch.map(message => message.text).join('\n')
+    const attachments = [...new Set(batch.map(message => message.attachment).filter(Boolean))]
+    // Only a thanks, ack or goodbye: its auto-reply or its resolved draft closes the chat for the session.
+    const closing = attachments.length === 0 && isSocialMessage(incomingText)
     const guard = guardTriage(triage, { knowledge, config, incomingText })
     const decision = decide(result, {
       config,
       guard,
       incomingText,
-      attachments: [...new Set(batch.map(message => message.attachment).filter(Boolean))],
-      history,
+      attachments,
+      quoted: batch.map(message => message.quotedText).filter(Boolean),
+      history: history.map(item => (item.fromMe ? { ...item, autoReply: store.isAutoReply(item.id) } : item)),
       paused: store.paused,
       chat: {
         muted: chat.muted,
         blocked: isBlocked(chatId),
         blocklistUnchecked: blocklistUnchecked(chatId),
         takeoverUntil: takeoverUntil(chatId),
-        openDraft: openDrafts(chatId).length > 0,
+        openDrafts: openDrafts(chatId),
         lastClosingAt: chat.lastClosingAt
       },
       now: now(),
@@ -359,9 +363,9 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       meta: result.meta
     })
 
-    if (decision.action === 'auto_send') return autoSend(chatId, batch, triage, decision, generation, isClosing(triage, incomingText))
-    if (decision.action === 'skip') return // a closing after a closing: no reply, no draft, no blue ticks
-    return postDraft(chatId, batch, result, decision)
+    if (decision.action === 'auto_send') return autoSend(chatId, batch, triage, decision, generation, closing)
+    if (decision.action === 'skip') return // a thanks that adds nothing: no reply, no draft, no blue ticks
+    return postDraft(chatId, batch, result, decision, closing)
   }
 
   async function autoSend (chatId, batch, triage, decision, generation, closing) {
@@ -381,8 +385,9 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     if (!outcome.sent && !outcome.shadow) {
       store.releaseAutoSend(chatId, slot, { perChat: !closing })
       const reasons = [...decision.reasons.filter(reason => reason !== 'all_gates_passed'), `send_failed:${outcome.error}`]
-      return postDraft(chatId, batch, { ok: true, triage }, { action: 'escalate', reasons })
+      return postDraft(chatId, batch, { ok: true, triage }, { action: 'escalate', reasons }, closing)
     }
+    if (outcome.sent) store.markAutoReply(outcome.id)
     if (needsDisclosure) store.updateChat(chatId, { [disclosureKey]: now() })
     if (closing) store.updateChat(chatId, { lastClosingAt: now() }) // shadow too, like the rate limits
     if (outcome.sent) await markReadUnlessOpen(chatId, batch)
@@ -405,7 +410,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   }
 
   /** Every escalation, whether Claude chose it or a gate stopped its answer, is a draft for /ok, /edit or /no. */
-  async function postDraft (chatId, batch, result, decision) {
+  async function postDraft (chatId, batch, result, decision, closing) {
     const triage = result.triage
     const draft = store.createDraft({
       chatId,
@@ -417,6 +422,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       policyReasons: decision.reasons,
       messageIds: batch.map(message => message.id),
       lastMessageAt: Math.max(...batch.map(message => message.timestamp)) * 1000, // an owner reply after it answers it
+      closing,
       privateDetails: findPrivateDetails(triage?.reply ?? '', privateIdentifiersFor(config))
     })
     const notice = await sendToOwner(formatDraftNotice(draft))
