@@ -357,7 +357,9 @@ its auto-send is forbidden: it asks nothing, so the policy drafts it. The key nu
   (it replaced the social matchers and the thanks-back reply check of the review rounds before; untriaged content and
   quotes are never skipped over, and a thanks that agrees is skipped only after our closing reply), re-run after its
   review fixes (`kok` a particle, "no problem" spellings, links, a `ya` before a thanks, stickers and reactions; round
-  2: a no, an emphatic or English yes, English openings only at the start of a clause, the customer's own plans):
+  2: a no, an emphatic or English yes, English openings only at the start of a clause, the customer's own plans;
+  round 3: `tanya` only as a request to ask, `siapa tau`, `gimana kakak aja`, `yaudah`/`lanjut` as yes words, `ada`
+  only opening its clause, `what a …`, English relatives and plans):
   **0 forbidden auto-sends**, **0 skipped escalations**, decision **20/20**, **3/3 allowed cases auto-sent**.
   Sonnet's `Sama-sama, Kak 🙏` to "ok makasih kak 🙏" is a draft (`no_question`; the guards add `no_facts_used`).
 - The full run on `claude-sonnet-5` with thinking off (2026-09-26, 20 calls), after the closing rules were tightened
