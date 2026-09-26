@@ -196,8 +196,9 @@ cancelled.
   other content without text is not triaged, but it stays in the chat history (Claude sees it as
   `attachment="location"` and so on) and its time is kept in `data/state.json`, so a thanks after it is never skipped:
   also when it came while a thanks draft waited and your `/ok` sent the closing after it, when it came on the other
-  addressing form, and after a restart. A sticker, a reaction (a 👍 on our offer may be a yes) or an edit from the
-  customer stays out of the history, but its time is kept the same way.
+  addressing form, and after a restart. A sticker, a reaction (a 👍 on our offer may be a yes), an edit or a call
+  from the customer (one that rang out, or one they ended first) stays out of the history, but its time is kept the
+  same way.
 - **Only an answer to a message that asks something is auto-sent** (owner decision, 2026-09-27; a thanks since
   2026-09-26). Whatever Claude decides and whatever facts it cites, an answer to a message that asks nothing (a
   thanks, a yes, a no, a greeting, a statement) is a draft whose notice leads with `no_question`, so Claude's thanks-back

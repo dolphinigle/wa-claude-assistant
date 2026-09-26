@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import { WAMessageStubType } from 'baileys'
 import { createAssistant } from '../src/assistant.js'
 import { closedThisSession } from '../src/policy.js'
 import { Store } from '../src/store.js'
@@ -278,6 +279,24 @@ test('a customer\'s content that is never triaged is reported with its chat and 
   assert.deepEqual(received.map(message => message.text), ['ini kak', ''], 'the captioned photo is triaged; the owner\'s own photo starts a takeover')
 })
 
+test('a customer\'s call offer is reported as untriaged, with its phone number for a LID; group calls, other statuses and our own are not (skip-safety-r3-3)', async t => {
+  const LID = '123456789012345@lid'
+  const { transport, untriaged, emit } = setup(t, {}, { lidToPn: { [LID]: CUSTOMER } })
+  await transport.start()
+  open(emit)
+  const date = new Date(1790400000 * 1000)
+  const call = (chatId, extra = {}) => ({ chatId, from: chatId, id: `CALL${Math.random()}`, date, offline: false, status: 'offer', isVideo: false, isGroup: false, ...extra })
+  emit('call', [call('6282222222222:12@s.whatsapp.net')])
+  emit('call', [call(`${LID.split('@')[0]}:3@lid`, { isVideo: true })])
+  emit('call', [call(CUSTOMER, { status: 'terminate' })])
+  emit('call', [call(CUSTOMER, { isGroup: true, groupJid: '120363000000000000@g.us' })])
+  emit('call', [call(OWNER_PN)])
+  emit('call', [call('120363000000000000@g.us')])
+  await sleep(5)
+  assert.deepEqual(untriaged.map(item => [item.chatId, item.chatIdAlt, item.attachment, item.timestamp]),
+    [[CUSTOMER, undefined, 'call', 1790400000], [LID, CUSTOMER, 'call', 1790400000]])
+})
+
 test('an untriaged file on a LID chat with no alt gets its phone number from the local LID mapping', async t => {
   const LID = '123456789012345@lid'
   const { transport, untriaged, emit } = setup(t, {}, { lidToPn: { [LID]: CUSTOMER } })
@@ -460,13 +479,13 @@ test('allowChats end to end: the listed contact is found through WhatsApp\'s LID
   assert.deepEqual(skips.map(({ ts, ...entry }) => entry), Array(4).fill({ event: 'skip_not_allowed', chatId: CUSTOMER }), 'the text, the photo, the stub and the owner\'s reply')
 })
 
-test('a sticker, reaction or edit after a discarded thanks holds the next thanks: drafted, not skipped (skip-safety-r1-2)', async t => {
+test('a sticker, reaction, edit or missed call after a discarded thanks holds the next thanks: drafted, not skipped (skip-safety-r1-2, skip-safety-r3-3)', async t => {
   const respond = input => {
     const text = input.messages.map(message => message.text).join(' ')
     return /makasih/.test(text) ? { ok: true, triage: { decision: 'answer', reply: 'Sama-sama, Kak 🙏', facts_used: [], reason: 'thanks' }, meta: {} }
       : { ok: true, triage: { decision: 'escalate', reply: 'Baik Kak, saya cek dulu ya.', facts_used: [], reason: 'ask' }, meta: {} }
   }
-  for (const variant of ['sticker', 'reaction', 'edit', 'none']) {
+  for (const variant of ['sticker', 'reaction', 'edit', 'missed call', 'call ended early', 'none']) {
     const dir = tempDir(t)
     const config = makeConfig({ mode: 'live', debounceMs: 5, whatsapp: { caughtUpWatchdogMs: 60_000 } }, dir)
     const store = new Store(dir, { logger: silent })
@@ -499,6 +518,15 @@ test('a sticker, reaction or edit after a discarded thanks holds the next thanks
       edit: { editedMessage: { message: { protocolMessage: { type: 14, key: { id: 'Q1' }, editedMessage: { conversation: 'kak brownies bisa dikirim besok?' } } } } }
     }[variant]
     if (sign) await step(customer('S1', sign, 120))
+    // As Baileys rc14 reports a call that rang out, and the offer of one the customer ended first.
+    const caller = '6282222222222:12@s.whatsapp.net'
+    if (variant === 'missed call') {
+      await step({ key: { remoteJid: caller, id: 'CALL1', fromMe: false }, message: null, messageStubType: WAMessageStubType.CALL_MISSED_VOICE, messageTimestamp: base + 120 })
+    }
+    if (variant === 'call ended early') {
+      emit('call', [{ chatId: caller, from: caller, id: 'CALL2', date: new Date((base + 120) * 1000), offline: false, status: 'offer', isVideo: false, isGroup: false }])
+      await sleep(10)
+    }
     await step(customer('T2', { conversation: 'makasih kak 🙏' }, 180))
     const drafted = store.pendingDrafts().map(draft => draft.excerpt)
     assert.deepEqual(drafted, variant === 'none' ? [] : ['makasih kak 🙏'], variant)

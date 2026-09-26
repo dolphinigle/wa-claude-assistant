@@ -71,6 +71,7 @@ INGEST: messages.upsert {messages, type:'notify'|'append', requestId}
 - Dedupe every message by key.id (#2822: Meta AI messages mimic self-chat and are redelivered every ~7 min).
 - Ciphertext stub: `!m.message && m.messageStubType===WAMessageStubType.CIPHERTEXT` → sock.requestPlaceholderResend(m.key), only while the message is younger than backlog.maxAgeMinutes.
 - Edits and revokes arrive as messages.update, not as upserts.
+- Calls (read in the rc14 source, 2026-09-27): the 'call' event carries {chatId, from, id, date, status 'offer'|'ringing'|'timeout'|'reject'|'accept'|'terminate', isVideo, isGroup, callerPn}; chatId is the call node's `from`. A call with status 'timeout' is also upserted as a stub with no message, key {remoteJid: call.chatId, fromMe: false} and messageStubType CALL_MISSED_VOICE/VIDEO (isRealMessage is false for it). Unverified: whether a linked device gets call nodes for 1:1 calls at all, and whether chatId carries a device suffix (the code normalizes it).
 - Filter order: isJidStatusBroadcast before isJidBroadcast (status@broadcast matches both), then isJidNewsletter, isJidMetaAI (@bot), and isJidGroup (skip in v1).
 - Text: `const c = normalizeMessageContent(m.message)`, then `c?.conversation ?? c?.extendedTextMessage?.text ?? c?.imageMessage?.caption ?? c?.videoMessage?.caption ?? c?.documentMessage?.caption`. Use getContentType(c) for the type. Do not use extractMessageContent for type detection.
 - Quoted message: c.extendedTextMessage.contextInfo {stanzaId, participant, quotedMessage}.

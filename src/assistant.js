@@ -233,9 +233,9 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
 
   /**
    * Content from a customer that is never triaged (a photo without a caption, a location pin, a contact card, a message
-   * that could not be decrypted yet, a sticker, a reaction, an edit) reaches the owner only on the phone. Its time is
-   * kept on the chat record, so a thanks after it is never skipped, even on the other addressing form or after a
-   * restart (policy.js).
+   * that could not be decrypted yet, a sticker, a reaction, an edit, a call) reaches the owner only on the phone. Its
+   * time is kept on the chat record, so a thanks after it is never skipped, even on the other addressing form or after
+   * a restart (policy.js).
    */
   function noteUntriaged ({ chatId, chatIdAlt, timestamp } = {}) {
     if (!chatId || !(timestamp > 0)) return

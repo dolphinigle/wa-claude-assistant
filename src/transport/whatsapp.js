@@ -8,7 +8,7 @@ import pino from 'pino'
 import qrcode from 'qrcode-terminal'
 import { isAllowedChat } from '../chat-lists.js'
 import { parseCommand } from '../owner.js'
-import { attachmentKind, backoffMs, classifyDisconnect, extractText, getMeIds, isCiphertextStub, isSelfChatJid, normalizeUpsert, toEpochSeconds } from './wa-normalize.js'
+import { attachmentKind, backoffMs, classifyDisconnect, classifyJid, extractText, getMeIds, isCiphertextStub, isSelfChatJid, normalizeUpsert, toEpochSeconds } from './wa-normalize.js'
 
 const HISTORY_PER_CHAT = 50
 const MAX_META_AI_IDS = 500
@@ -225,6 +225,19 @@ export function createWhatsAppTransport ({ config, store, onMessage, onUntriaged
     }
   }
 
+  // A 1:1 call that rings out comes back as a missed-call stub (normalizeUpsert); one the customer ends first leaves
+  // only its offer. Either may be about our last message, so it holds a thanks after it like a file (skip-safety-r3-3).
+  const handleCalls = async calls => {
+    for (const call of calls ?? []) {
+      if (call?.status !== 'offer' || call.isGroup || classifyJid(call.chatId) !== 'direct') continue
+      const chatId = jidNormalizedUser(call.chatId) // the caller, maybe with a device suffix
+      if (isSelfChatJid(chatId, meIds)) continue
+      const timestamp = Math.floor(new Date(call.date).getTime() / 1000)
+      const untriaged = { id: call.id, chatId, chatIdAlt: await resolvePhoneJid(chatId), timestamp, attachment: 'call' }
+      try { onUntriaged?.(untriaged) } catch (error) { logger.error(`[whatsapp] untriaged handler failed: ${error.stack ?? error.message}`) }
+    }
+  }
+
   async function connect () {
     if (stopped) return
     try {
@@ -247,6 +260,7 @@ export function createWhatsAppTransport ({ config, store, onMessage, onUntriaged
     })
     sock.ev.on('connection.update', handleConnection(sock, { caughtUp: false, opened: false, stable: false, stableTimer: undefined }))
     sock.ev.on('messages.upsert', handleUpsert)
+    sock.ev.on('call', handleCalls)
     sock.ev.on('messaging-history.set', ({ messages = [], lidPnMappings = [] }) => {
       for (const raw of messages) remember(raw)
       for (const mapping of lidPnMappings) learnMapping(mapping)

@@ -58,6 +58,10 @@ const SIGN_KINDS = { stickerMessage: 'sticker', lottieStickerMessage: 'sticker',
 const signKind = (content, contentType) =>
   SIGN_KINDS[contentType] ?? (content?.protocolMessage?.type === proto.Message.ProtocolMessage.Type.MESSAGE_EDIT ? 'edit' : undefined)
 
+// A 1:1 call that rang out arrives as a stub without content (Baileys' 'call' handler). The customer may have called
+// about our last message, so like a file it must hold a thanks after it (skip-safety-r3-3).
+const MISSED_CALLS = new Set([WAMessageStubType.CALL_MISSED_VOICE, WAMessageStubType.CALL_MISSED_VIDEO])
+
 /** A message that could not be decrypted (yet): Baileys asks for a retry or a resend, which arrives under the same id. */
 export const isCiphertextStub = raw => !raw?.message && raw?.messageStubType === WAMessageStubType.CIPHERTEXT
 
@@ -116,9 +120,11 @@ export function normalizeUpsert (raw, { type, meIds }) {
   if (key.fromMe && !isSelfChat && (contentType || isCiphertext)) return { message }
   // A customer's content that is never triaged, which a thanks after it must not be skipped over (assistant.js).
   const untriagedKind = !key.fromMe && !isSelfChat && !text?.trim()
-    ? (isCiphertext ? 'other' : message.attachment ?? signKind(normalizeMessageContent(raw.message), contentType))
+    ? (isCiphertext ? 'other' : message.attachment ?? signKind(normalizeMessageContent(raw.message), contentType) ?? (MISSED_CALLS.has(raw.messageStubType) ? 'call' : undefined))
     : undefined
-  const untriaged = untriagedKind ? { id: key.id, chatId: message.chatId, chatIdAlt, timestamp: message.timestamp, attachment: untriagedKind } : undefined
+  // A missed call's stub is keyed by the call's sender, which may carry a device suffix ("6281…:12@s.whatsapp.net").
+  const untriagedChatId = untriagedKind === 'call' ? jidNormalizedUser(message.chatId) : message.chatId
+  const untriaged = untriagedKind ? { id: key.id, chatId: untriagedChatId, chatIdAlt, timestamp: message.timestamp, attachment: untriagedKind } : undefined
   if (isCiphertext) return { skip: 'ciphertext', id: key.id, untriaged }
   if (!isRealMessage(raw)) return { skip: 'not_real', id: key.id, ...(untriaged && { untriaged }) }
   if (!text?.trim()) return { skip: 'no_text', id: key.id, contentType, untriaged }

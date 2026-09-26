@@ -110,6 +110,18 @@ test('a customer\'s sticker, reaction or edit is reported as untriaged: it may b
   }
 })
 
+test('a customer\'s missed call is reported as untriaged: they may have called about our offer (skip-safety-r3-3)', () => {
+  // As Baileys rc14 upserts a 1:1 call that rang out: no message, a stub type, the caller as remoteJid.
+  const call = (stubType, remoteJid = CUSTOMER) => normalizeUpsert({ key: { remoteJid, id: 'CALL1', fromMe: false }, messageTimestamp: 1790400000, messageStubType: stubType }, { type: 'notify', meIds })
+  for (const stubType of [WAMessageStubType.CALL_MISSED_VOICE, WAMessageStubType.CALL_MISSED_VIDEO]) {
+    const expected = { id: 'CALL1', chatId: CUSTOMER, chatIdAlt: undefined, timestamp: 1790400000, attachment: 'call' }
+    assert.deepEqual([call(stubType).skip, call(stubType).untriaged], ['not_real', expected], String(stubType))
+    assert.deepEqual(call(stubType, '6282222222222:12@s.whatsapp.net').untriaged, expected, 'a device suffix on the caller is dropped')
+  }
+  assert.equal(call(WAMessageStubType.CALL_MISSED_GROUP_VOICE, '120363000000000000@g.us').untriaged, undefined, 'a group call is no chat of ours')
+  assert.equal(call(WAMessageStubType.REVOKE).untriaged, undefined, 'another stub is not a call')
+})
+
 test('a quote of a message without text is still a quote: its id, and an empty text', () => {
   for (const quotedMessage of [{ imageMessage: { mimetype: 'image/jpeg' } }, { audioMessage: { ptt: true } }, { locationMessage: { degreesLatitude: -6.9 } }]) {
     const raw = wa({ extendedTextMessage: { text: 'ok makasih kak 👍', contextInfo: { stanzaId: 'P1', participant: '6281111111111@s.whatsapp.net', quotedMessage } } })
