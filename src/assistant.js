@@ -1,6 +1,7 @@
 // Orchestrator: dedupe, loop guard, takeover, debounce, triage, policy, and the ONE send gate.
 import { findPrivateDetails, guardTriage, isThanks, privateIdentifiersFor } from './guards.js'
-import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice, jidUser } from './owner.js'
+import { isAllowedChat, listNamesChat, phoneEntry } from './chat-lists.js'
+import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice } from './owner.js'
 import { decide } from './policy.js'
 
 const MINUTE_MS = 60 * 1000
@@ -46,19 +47,12 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   /** Epoch ms of a burst's newest message: a closing is dated by the thanks it closes, not by when it was handled. */
   const lastMessageAt = batch => Math.max(...batch.map(message => message.timestamp)) * 1000
 
-  // Entries are JIDs or phone numbers (08…, 62…, +62…); pushNames are not accepted because senders choose them.
   // A LID chat's phone number is known only from an alt JID (its messages, or WhatsApp's LID mapping), which is kept
-  // on the chat record.
-  const phoneEntry = entry => {
-    const value = String(entry).trim()
-    const digits = value.replace(/\D/g, '').replace(/^0/, '62')
-    return !value.includes('@') && digits.length >= 6 ? digits : undefined
-  }
-  function isBlocked (chatId, chatIdAlt) {
-    const ids = store.linkedChatIds(chatId, chatIdAlt)
-    const users = ids.map(jidUser)
-    return (config.blocklist ?? []).some(entry => ids.includes(String(entry).trim()) || users.includes(phoneEntry(entry)))
-  }
+  // on the chat record (chat-lists.js).
+  const isBlocked = (chatId, chatIdAlt) => listNamesChat(config.blocklist, store, chatId, chatIdAlt)
+  const isAllowed = (chatId, chatIdAlt) => isAllowedChat(config, store, chatId, chatIdAlt)
+  /** Only the ids: whatever another chat says stays out of the audit log, as it stays out of state.json. */
+  const skipNotAllowed = ({ chatId, chatIdAlt }) => store.audit('skip_not_allowed', { chatId, chatIdAlt })
   /** A LID chat with no known phone number cannot be matched against phone-number entries: fail closed (drafts). */
   const blocklistUnchecked = chatId => chatId.endsWith('@lid') &&
     !store.linkedChatIds(chatId).some(id => id.endsWith('@s.whatsapp.net')) &&
@@ -115,6 +109,11 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
    */
   async function sendToCustomer (chatId, text, { quotedRaw, source, draftId, closingReply = false } = {}) {
     if (!chatId || !text?.trim()) return { sent: false, error: 'nothing to send' }
+    // E.g. /ok of a draft created before allowChats was set: it stays pending, and nothing is recorded for the chat.
+    if (!isAllowed(chatId)) {
+      store.audit('send_refused_not_allowed', { chatId, source, draftId })
+      return { sent: false, error: 'chat is not in allowChats' }
+    }
     if (isBlocked(chatId)) {
       store.audit('send_refused_blocked', { chatId, source })
       return { sent: false, error: 'chat is blocklisted' }
@@ -157,6 +156,9 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       if (message.fromMe && message.text.trim().startsWith('/')) store.audit('owner_command_during_shutdown', { id: message.id, text: excerpt(message.text, 120) })
       return
     }
+    // With allowChats set, any other chat is ignored before anything is kept about it, not even its message id: the
+    // contact's messages and the owner's own replies there (no takeover) alike. "Message yourself" always works.
+    if (!message.isSelfChat && !isAllowed(message.chatId, message.chatIdAlt)) return skipNotAllowed(message)
     if (store.hasProcessed(message.id)) return
     store.markProcessed(message.id)
     sweepExpiredDrafts()
@@ -199,6 +201,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
    */
   function noteUntriaged ({ chatId, chatIdAlt, timestamp } = {}) {
     if (!chatId || !(timestamp > 0)) return
+    if (!isAllowed(chatId, chatIdAlt)) return skipNotAllowed({ chatId, chatIdAlt })
     const at = timestamp * 1000
     const chat = store.chat(chatId)
     store.updateChat(chatId, {
@@ -341,15 +344,17 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const unfinished = store.inboxMessages()
     if (unfinished.length === 0) return
     const maxAgeMs = config.backlog.maxAgeMinutes * MINUTE_MS
-    const blocked = unfinished.filter(message => isBlocked(message.chatId, message.chatIdAlt)) // blocklist changed
-    const answered = unfinished.filter(message => !blocked.includes(message) && message.timestamp * 1000 <= ownerRepliedAt(message.chatId, message.chatIdAlt))
-    const done = [...blocked, ...answered]
+    // The lists changed before the restart. A chat no longer allowed is dropped like a blocked one, never listed.
+    const notAllowed = unfinished.filter(message => !isAllowed(message.chatId, message.chatIdAlt))
+    const blocked = unfinished.filter(message => !notAllowed.includes(message) && isBlocked(message.chatId, message.chatIdAlt))
+    const answered = unfinished.filter(message => ![...notAllowed, ...blocked].includes(message) && message.timestamp * 1000 <= ownerRepliedAt(message.chatId, message.chatIdAlt))
+    const done = [...notAllowed, ...blocked, ...answered]
     const tooOld = unfinished.filter(message => !done.includes(message) && now() - message.timestamp * 1000 > maxAgeMs)
     const retry = unfinished.filter(message => !done.includes(message) && !tooOld.includes(message))
     store.removeFromInbox([...done, ...tooOld].map(message => message.id))
     for (const message of retry) enqueue({ ...message, isBacklog: true })
     const ids = list => list.map(message => message.id)
-    store.audit('inbox_recovered', { retried: ids(retry), tooOld: ids(tooOld), blocked: ids(blocked), answeredByOwner: ids(answered) })
+    store.audit('inbox_recovered', { retried: ids(retry), tooOld: ids(tooOld), notAllowed: ids(notAllowed), blocked: ids(blocked), answeredByOwner: ids(answered) })
     if (tooOld.length === 0) return
     const lines = tooOld.map(message => `• ${contactLabel(message.chatId)}: "${excerpt(describe([message]), 120)}"`)
     track(sendToOwner(`${BOT_PREFIX} ⚠️ ${tooOld.length} message(s) arrived before the assistant stopped and were never triaged. Please answer them yourself:\n${lines.join('\n')}`))

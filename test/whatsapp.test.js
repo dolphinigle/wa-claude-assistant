@@ -2,11 +2,13 @@
 // No network: createSocket is injected, so no real Baileys socket is ever created.
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import { createAssistant } from '../src/assistant.js'
 import { closedThisSession } from '../src/policy.js'
 import { Store } from '../src/store.js'
 import { createWhatsAppTransport } from '../src/transport/whatsapp.js'
-import { makeConfig, sleep, tempDir } from './helpers.js'
+import { createFakeBrain, knowledge, makeConfig, sleep, tempDir } from './helpers.js'
 
 const OWNER_PN = '6281111111111@s.whatsapp.net'
 const OWNER_LID = '99887766554433@lid'
@@ -399,4 +401,57 @@ test('a connection that stayed up resets the reconnect counter', async t => {
   }
   assert.deepEqual(fatal, [])
   assert.equal(sockets.length, 4)
+})
+
+test('allowChats end to end: the listed contact is found through WhatsApp\'s LID mapping; nothing is asked, sent or kept for any other chat', async t => {
+  const LID = '123456789012345@lid'
+  const OTHER_LID = '777777777777777@lid'
+  const dir = tempDir(t)
+  const config = makeConfig({ mode: 'live', debounceMs: 5, allowChats: ['081234567890'], whatsapp: { caughtUpWatchdogMs: 60_000 } }, dir)
+  const store = new Store(dir, { logger: silent })
+  store.updateChat(OTHER_LID, {}) // a record from before the list was set, which a mapping would otherwise update
+  const { sockets, createSocket } = fakeSockets({ [LID]: '6281234567890:0@s.whatsapp.net' })
+  const brain = createFakeBrain()
+  let assistant
+  // Wired as src/main.js wires them.
+  const transport = createWhatsAppTransport({
+    config, store, logger: silent, createSocket,
+    onMessage: message => assistant.handleMessage(message),
+    onUntriaged: item => assistant.noteUntriaged(item)
+  })
+  assistant = createAssistant({ config, store, brain, transport, knowledge, logger: silent })
+  t.after(async () => { await assistant.stop(); await transport.stop() })
+  await transport.start()
+  const emit = (event, payload) => sockets.at(-1).ev.emit(event, payload)
+  open(emit)
+
+  const stub = (remoteJid, id, fromMe = false) => ({ key: { remoteJid, id, fromMe }, message: null, messageStubType: 2, messageTimestamp: nowSeconds() })
+  const other = (id, message, fromMe = false) => raw(CUSTOMER, message, { key: { remoteJid: CUSTOMER, id, fromMe } })
+  emit('messages.upsert', {
+    type: 'notify',
+    messages: [
+      raw(LID, { conversation: 'jam buka?' }, { key: { remoteJid: LID, id: 'L1', fromMe: false } }), // no PN alt on the message
+      stub(LID, 'L2'),
+      other('C1', { conversation: 'jam buka?' }),
+      other('C2', { imageMessage: { mimetype: 'image/jpeg' } }),
+      stub(CUSTOMER, 'C3'),
+      other('C4', { conversation: 'bentar ya' }, true),
+      stub(OWNER_PN, 'S1', true)
+    ]
+  })
+  emit('lid-mapping.update', { lid: OTHER_LID, pn: '6287777777777@s.whatsapp.net' })
+  await sleep(10)
+  await assistant.idle()
+
+  assert.deepEqual(brain.calls.map(call => call.messages.map(message => message.id)), [['L1']])
+  assert.deepEqual(sockets[0].sent.map(item => item.jid), [LID, OWNER_PN], 'the auto-reply and its notice only')
+  assert.deepEqual(sockets[0].read.map(key => key.id), ['L1'])
+  assert.deepEqual(sockets[0].resends.map(key => key.id), ['L2', 'S1'], 'the phone is asked for the listed chat and "Message yourself" only')
+  assert.equal(store.existingChat(LID).chatIdAlt, '6281234567890@s.whatsapp.net')
+  assert.equal(store.existingChat(CUSTOMER), undefined)
+  assert.equal(store.existingChat(OTHER_LID).chatIdAlt, undefined, 'the mapping of an unlisted chat is not saved')
+  const state = readFileSync(store.file, 'utf8')
+  assert.ok(!state.includes('6282222222222') && !state.includes('6287777777777') && !/"C\d"/.test(state))
+  const skips = readFileSync(store.auditFile, 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(entry => entry.event === 'skip_not_allowed')
+  assert.deepEqual(skips.map(({ ts, ...entry }) => entry), Array(4).fill({ event: 'skip_not_allowed', chatId: CUSTOMER }), 'the text, the photo, the stub and the owner\'s reply')
 })

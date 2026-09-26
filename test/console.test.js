@@ -53,3 +53,29 @@ test('console REPL end to end with the keyword brain: echoes are loop-guarded, /
   assert.doesNotMatch(printed, /DRAFT #3/, 'the 🙏 after it is skipped: its echo marked the closing')
   assert.equal(store.chat('alice@console').takeoverUntil, 0, 'the echo of the auto-reply did not look like the owner typing')
 })
+
+test('console REPL with allowChats: only the listed contact is handled; "Message yourself" still is', async t => {
+  const dir = tempDir(t)
+  const config = makeConfig({ mode: 'live', debounceMs: 5, allowChats: ['alice@console'] }, dir)
+  const store = new Store(dir)
+  const input = new PassThrough()
+  const output = new PassThrough()
+  let printed = ''
+  output.on('data', chunk => { printed += chunk })
+  let assistant
+  const transport = createConsoleTransport({ onMessage: message => assistant.handleMessage(message), input, output })
+  assistant = createAssistant({ config, store, brain: createFakeBrain({ delayMs: 1 }), transport, knowledge, logger: { log () {}, warn () {}, error () {} } })
+  t.after(async () => { await assistant.stop(); await transport.stop() })
+  await transport.start()
+
+  const settle = async () => { for (let round = 0; round < 5; round++) { await sleep(20); await assistant.idle() } }
+  for (const line of ['bob: saya sudah transfer, tolong dicek', 'me@bob: bentar ya', 'alice: jam berapa buka?', 'me: /status']) {
+    input.write(`${line}\n`)
+    await settle()
+  }
+
+  assert.match(printed, /── to alice ──\n {2}│ 🤖 Balasan otomatis/)
+  assert.doesNotMatch(printed, /DRAFT|── to bob ──|You replied to bob/, 'bob gets no draft, no reply, no takeover')
+  assert.match(printed, /Only these chats \(allowChats\): alice@console/)
+  assert.equal(store.existingChat('bob@console'), undefined)
+})

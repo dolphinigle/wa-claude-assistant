@@ -14,6 +14,7 @@
   },
   "contextMessages": 8,
   "blocklist": [],
+  "allowChats": [],
   "disclosure": {
     "enabled": true,
     "text": "🤖 Balasan otomatis dari asisten AI toko. / Automated reply from our AI assistant.",

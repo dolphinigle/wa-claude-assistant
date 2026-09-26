@@ -79,6 +79,13 @@ export function formatDraftNotice (draft) {
   return lines.join('\n')
 }
 
+/** How much of WhatsApp the assistant handles, for the startup line and notice; '' when it handles every chat. */
+export function allowChatsSummary (config) {
+  const count = config.allowChats?.length ?? 0
+  if (count === 0) return ''
+  return `only ${count} listed chat${count === 1 ? ' is' : 's are'} handled (allowChats), every other chat is ignored`
+}
+
 export const formatClock = (epochMs, timeZone) => new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(epochMs))
 const percent = value => (typeof value === 'number' ? `${Math.round(value * 100)}%` : '?')
 
@@ -161,6 +168,7 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
     return [
       `${BOT_PREFIX} Status`,
       `Mode: ${config.mode === 'live' ? 'live' : 'shadow (nothing is sent to customers)'}`,
+      ...(config.allowChats?.length > 0 ? [`Only these chats (allowChats): ${config.allowChats.join(', ')}`] : []),
       `Auto-reply: ${autoSend}`,
       `Pending drafts: ${pending.length === 0 ? 'none' : pending.map(draft => `#${draft.id} ${draft.contactName}`).join(', ')}`,
       `Auto-replies in the last 24 h: ${store.countAutoSends(24 * HOUR_MS)}/${config.autoSend.maxPerDay}`,

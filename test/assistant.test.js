@@ -1090,3 +1090,116 @@ test('a draft from a LID chat whose number is unknown shows the blocklist hint, 
   }
   assert.equal(transport.toCustomer().length, 0)
 })
+
+// --- allowChats: a live test with one contact leaves every other chat alone ---------------------------------------
+
+const LUKI = '6281293850000@s.whatsapp.net'
+const onlyLuki = () => ({ config: { allowChats: ['081293850000'] } })
+/** Whether data/state.json holds `what` anywhere. */
+const stateMentions = (store, what) => readFileSync(store.file, 'utf8').includes(what)
+const notAllowedSkips = audit => audit().filter(entry => entry.event === 'skip_not_allowed').map(({ ts, ...entry }) => entry)
+
+test('allowChats: the listed chat is answered and drafted as today; another chat gets no Claude call, draft, notice, read receipt or record, and no text in the audit', async t => {
+  const { transport, deliver, owner, brain, store, audit } = setup(t, onlyLuki())
+  await deliver(incoming(LUKI, 'Kak jam berapa buka?'))
+  await deliver(incoming(LUKI, 'bisa kue custom unicorn?'))
+  await owner('/ok 1')
+  assert.equal(brain.calls.length, 2)
+  assert.deepEqual(transport.toCustomer().map(item => [item.chatId, item.text.endsWith(ANSWER_HOURS.reply)]), [[LUKI, true], [LUKI, false]], 'auto-answered, then the draft sent by /ok')
+  const before = { self: transport.toSelf().length, read: transport.read.length }
+
+  const bob = [incoming(BOB, 'Kak jam berapa buka?'), incoming(BOB, 'saya sudah transfer, tolong dicek', { attachment: 'image' })]
+  for (const message of bob) await deliver(message)
+  assert.equal(brain.calls.length, 2, 'no Claude call')
+  assert.deepEqual([transport.toCustomer().length, transport.toSelf().length, transport.read.length, store.pendingDrafts().length], [2, before.self, before.read, 0])
+  assert.equal(store.existingChat(BOB), undefined, 'no chat record')
+  assert.deepEqual(store.inboxMessages(), [])
+  assert.ok(!stateMentions(store, '6283333333333') && !bob.some(message => stateMentions(store, `"${message.id}"`)), 'state.json keeps nothing of that chat, not even its message ids')
+  assert.deepEqual(notAllowedSkips(audit), [{ event: 'skip_not_allowed', chatId: BOB }, { event: 'skip_not_allowed', chatId: BOB }])
+  assert.ok(!readFileSync(store.auditFile, 'utf8').includes('transfer'), 'never the text')
+})
+
+test('allowChats: the owner\'s own reply in another chat starts no takeover and writes nothing, nor does a photo there', async t => {
+  const { transport, deliver, assistant, store, config, audit, now } = setup(t)
+  const CAROL = '6284444444444@s.whatsapp.net'
+  await deliver(incoming(BOB, 'bisa kue custom?')) // a draft and a chat record from before the list was set
+  config.allowChats = ['081293850000']
+  const record = structuredClone(store.existingChat(BOB))
+  const notices = transport.toSelf().length
+  const mine = (id, chatId) => ({ id, chatId, fromMe: true, isSelfChat: false, text: 'bisa kak, sebentar ya', timestamp: Math.floor(now() / 1000), kind: 'notify' })
+  await deliver(mine('OWN1', BOB))
+  await deliver(mine('OWN2', CAROL))
+  assistant.noteUntriaged({ id: 'IMG1', chatId: BOB, timestamp: Math.floor(now() / 1000), attachment: 'image' }) // as the transport reports it
+  await assistant.idle()
+  assert.equal(store.getDraft(1).status, 'pending', 'no takeover cancelled the draft')
+  assert.deepEqual(store.existingChat(BOB), record, 'no ownerRepliedAt, takeoverUntil or lastUntriagedAt')
+  assert.equal(store.existingChat(CAROL), undefined)
+  assert.equal(transport.toSelf().length, notices, 'no notice')
+  assert.ok(!audit().some(entry => entry.event === 'human_takeover'))
+  assert.deepEqual(notAllowedSkips(audit).map(entry => entry.chatId), [BOB, CAROL, BOB])
+})
+
+test('allowChats: "Message yourself" still takes every command, and /status shows the list', async t => {
+  const { transport, owner, store } = setup(t, onlyLuki())
+  await owner('/status')
+  assert.match(transport.toSelf().at(-1), /\nOnly these chats \(allowChats\): 081293850000\n/)
+  await owner('/pause')
+  assert.equal(store.paused, true)
+  const unlisted = setup(t)
+  await unlisted.owner('/status')
+  assert.doesNotMatch(unlisted.transport.toSelf().at(-1), /allowChats/, 'without the list, /status is as before')
+})
+
+test('allowChats: a LID chat matches through its alt or its linked PN record; one with no known number is ignored and the audit names the LID', async t => {
+  const { transport, deliver, brain, store, config, audit, now } = setup(t, { config: { allowChats: ['+62 812-3456-7890'] } })
+  const LID = '123456789012345@lid'
+  const PN = '6281234567890@s.whatsapp.net'
+  const live = () => ({ timestamp: Math.floor(now() / 1000) })
+  await deliver(incoming(LID, 'jam buka?', { chatIdAlt: PN, ...live() })) // the alt the message carried
+  await deliver(incoming(LID, 'buka hari minggu?', live())) // no alt: the one the chat record kept
+  assert.equal(brain.calls.length, 2)
+  assert.deepEqual(transport.toCustomer().map(item => item.chatId), [LID, LID])
+  await deliver({ id: 'OWN1', chatId: PN, fromMe: true, isSelfChat: false, text: 'bentar ya kak', ...live(), kind: 'notify' })
+  assert.ok(store.chat(LID).takeoverUntil > now(), 'the owner\'s reply on the PN form is a takeover of the LID chat')
+
+  const UNKNOWN = '999999999999999@lid'
+  await deliver(incoming(UNKNOWN, 'jam buka?', live()))
+  assert.equal(brain.calls.length, 2, 'fail closed: no number, so it cannot be the listed one')
+  assert.equal(store.existingChat(UNKNOWN), undefined)
+  assert.deepEqual(notAllowedSkips(audit), [{ event: 'skip_not_allowed', chatId: UNKNOWN }])
+  config.allowChats.push(UNKNOWN) // what the owner does after reading that line
+  await deliver(incoming(UNKNOWN, 'jam buka?', live()))
+  assert.equal(brain.calls.length, 3)
+})
+
+test('allowChats: the send gate refuses another chat, so /ok or /edit of a draft from before the list leaves it pending', async t => {
+  for (const mode of ['live', 'shadow']) {
+    const { transport, deliver, owner, assistant, store, config, audit } = setup(t, { config: { mode } })
+    await deliver(incoming(BOB, 'bisa kue custom?'))
+    config.allowChats = ['081293850000'] // set before a restart
+    const record = structuredClone(store.existingChat(BOB))
+    await owner('/ok 1')
+    assert.match(transport.toSelf().at(-1), /Sending draft #1 failed \(chat is not in allowChats\)\. It is still pending\./, mode)
+    await owner('/edit 1 bisa kak')
+    assert.deepEqual(transport.toCustomer(), [], mode)
+    assert.equal(store.getDraft(1).status, 'pending', mode)
+    assert.deepEqual(store.existingChat(BOB), record, `${mode}: not even lastSentAt`)
+    assert.deepEqual(await assistant.gate.sendToCustomer(BOB, 'halo'), { sent: false, error: 'chat is not in allowChats' }, mode)
+    assert.deepEqual(audit().filter(entry => entry.event === 'send_refused_not_allowed').map(entry => entry.source), ['approved', 'edited', undefined], mode)
+  }
+})
+
+test('allowChats: messages of another chat left in the inbox before a restart are dropped, never triaged or listed', async t => {
+  const { assistant, store, brain, transport, audit, now } = setup(t, onlyLuki())
+  const nowSeconds = Math.floor(now() / 1000)
+  const bob = incoming(BOB, 'bisa kue custom?', { timestamp: nowSeconds - 60 })
+  const oldBob = incoming(BOB, 'halo kak, masih buka?', { timestamp: nowSeconds - 3 * 3600 })
+  const luki = incoming(LUKI, 'bisa kue custom?', { timestamp: nowSeconds - 60 })
+  for (const message of [bob, oldBob, luki]) store.addToInbox(message)
+  assistant.recoverInbox()
+  await assistant.idle()
+  assert.deepEqual(brain.calls.map(call => call.messages.map(message => message.id)), [[luki.id]])
+  assert.ok(!transport.toSelf().some(text => text.includes('6283333333333') || text.includes('masih buka')), 'not listed as a message to answer yourself')
+  assert.deepEqual(store.inboxMessages(), [])
+  assert.deepEqual(audit().find(entry => entry.event === 'inbox_recovered').notAllowed, [oldBob.id, bob.id])
+})

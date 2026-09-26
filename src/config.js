@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isChatEntry } from './chat-lists.js'
 
 export const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -39,6 +40,11 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
   const config = deepMerge(deepMerge(base, local), overrides)
 
   if (!['shadow', 'live'].includes(config.mode)) throw new Error(`config.mode must be "shadow" or "live", got ${JSON.stringify(config.mode)}`)
+  // A malformed list must not quietly widen or empty what the assistant handles.
+  if (config.allowChats === undefined) config.allowChats = []
+  if (!Array.isArray(config.allowChats) || !config.allowChats.every(isChatEntry)) {
+    throw new Error(`config.allowChats must be a list of JIDs or phone numbers (e.g. ["081234567890"]), got ${JSON.stringify(config.allowChats)}`)
+  }
   for (const [key, why] of REMOVED_KEYS) {
     if (key.split('.').reduce((node, part) => node?.[part], config) !== undefined) throw new Error(`config ${key} is no longer supported (${why}); remove it from config.local.json`)
   }

@@ -6,6 +6,7 @@ import makeWASocket, {
 } from 'baileys'
 import pino from 'pino'
 import qrcode from 'qrcode-terminal'
+import { isAllowedChat } from '../chat-lists.js'
 import { parseCommand } from '../owner.js'
 import { attachmentKind, backoffMs, classifyDisconnect, extractText, getMeIds, isCiphertextStub, isSelfChatJid, normalizeUpsert, toEpochSeconds } from './wa-normalize.js'
 
@@ -91,9 +92,9 @@ export function createWhatsAppTransport ({ config, store, onMessage, onUntriaged
   }
   const findRaw = key => history.get(key.remoteJid)?.find(item => item.id === key.id)?.raw
 
-  // Contacts with a username arrive as LID without a PN alt (#2742), yet the blocklist matches phone numbers; Baileys'
-  // mapping store may still know the number. getPNForLID is a local lookup (getLIDForPN can query WhatsApp: unused).
-  // A mapping to an own JID is Baileys mislearning from the owner's replies, never the contact's number.
+  // Contacts with a username arrive as LID without a PN alt (#2742), yet blocklist and allowChats match phone numbers;
+  // Baileys' mapping store may still know the number. getPNForLID is a local lookup (getLIDForPN can query WhatsApp:
+  // unused). A mapping to an own JID is Baileys mislearning from the owner's replies, never the contact's number.
   async function resolvePhoneJid (chatId) {
     if (!isLidUser(chatId)) return undefined
     try {
@@ -106,11 +107,13 @@ export function createWhatsAppTransport ({ config, store, onMessage, onUntriaged
     }
   }
 
+  // With allowChats set, nothing is saved for any other chat, not even a mapping on a record from before the list.
   const learnMapping = ({ lid, pn } = {}) => {
     const pair = [lid, pn].filter(Boolean).map(jidNormalizedUser)
     const lidJid = pair.find(isLidUser)
     const pnJid = pair.find(isPnUser)
     if (!lidJid || !pnJid || pair.some(jid => isSelfChatJid(jid, meIds))) return
+    if (!isAllowedChat(config, store, lidJid, pnJid)) return
     store.linkAlt(lidJid, pnJid)
     store.linkAlt(pnJid, lidJid)
   }
@@ -197,9 +200,12 @@ export function createWhatsAppTransport ({ config, store, onMessage, onUntriaged
         try { onUntriaged?.(normalized.untriaged) } catch (error) { logger.error(`[whatsapp] untriaged handler failed: ${error.stack ?? error.message}`) }
       }
       if (normalized.skip === 'ciphertext') {
-        // Past maxAge the assistant would skip the message anyway; don't ask the phone for it.
+        // Past maxAge, or in a chat allowChats leaves out, the assistant would skip the message anyway; don't ask the
+        // phone for it. "Message yourself" is always asked for: it carries the owner's commands.
         const ageMs = Date.now() - toEpochSeconds(raw.messageTimestamp) * 1000
-        if (ageMs <= config.backlog.maxAgeMinutes * 60_000) {
+        const chatId = raw.key.remoteJid
+        const wanted = isSelfChatJid(chatId, meIds) || isAllowedChat(config, store, chatId, normalized.untriaged?.chatIdAlt)
+        if (ageMs <= config.backlog.maxAgeMinutes * 60_000 && wanted) {
           sock.requestPlaceholderResend(raw.key).catch(error => logger.warn(`[whatsapp] placeholder resend failed: ${error.message}`))
         }
         continue

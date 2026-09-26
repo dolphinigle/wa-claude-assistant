@@ -56,8 +56,8 @@ flowchart LR
 ```
 
 - **One send gate.** Every customer-bound message goes through `sendToCustomer()` in `src/assistant.js`, which
-  refuses blocklisted chats and, in shadow mode, records the send instead of making it. The bot's own notices go
-  through `sendToOwner()` and always start with 🤖.
+  refuses blocklisted chats and, when `allowChats` is set, every chat it does not list, and, in shadow mode, records
+  the send instead of making it. The bot's own notices go through `sendToOwner()` and always start with 🤖.
 - **Claude isolation.** `src/brain/claude.js` runs the exact locked command from the implementation notes: no shell,
   an explicit minimal env (an `ANTHROPIC_API_KEY` in your shell is never passed on), an empty sandbox cwd, no tools
   but `StructuredOutput`, no MCP, no settings, no session files. The contact's text reaches Claude only on stdin,
@@ -116,6 +116,35 @@ npm start                 # run on WhatsApp in shadow mode
 `npm run dev` is a REPL: `alice: jam berapa buka?` is a message from contact alice, `me@alice: bentar ya kak` is
 you typing in alice's chat (human takeover), `me: /ok 1` is you in "Message yourself". Without `--fake-brain` it
 uses real Claude calls. It keeps its own state in `data/console/`.
+
+### Testing with one contact
+
+To try live mode on your personal WhatsApp with one friend who knows it is a bot test, list only that chat in
+`config.local.json`:
+
+```json
+{ "mode": "live", "allowChats": ["081293850000"] }
+```
+
+Entries are phone numbers (`0812…`, `62812…`, `+62 812-…`) or JIDs, matched like `blocklist` entries on both of the
+contact's addressing forms (PN and LID). Restart: the startup line and the "Assistant online" notice say `only 1
+listed chat is handled`, and `/status` shows the list. What you will see:
+
+- Drafts, auto-replies and their notices, and human takeovers for that chat only. "Message yourself" works as
+  always.
+- Every other chat is ignored before anything happens to it: no Claude call, no draft or notice, no blue ticks, no
+  takeover when you reply there yourself, nothing written to `data/state.json`. `data/audit.jsonl` gets one
+  `skip_not_allowed` line per message with the chat's JID only, never the text. Those messages are not picked up
+  later either, when you remove the list.
+- If your friend's chat arrives as a LID (`…@lid`) whose phone number neither the message nor WhatsApp's LID mapping
+  gives, it cannot match a phone number, so it is ignored too, your own replies there included: find its
+  `skip_not_allowed` line and add that `…@lid` JID to the list.
+- A draft of another chat still pending from before cannot be sent: `/ok` and `/edit` answer `chat is not in
+  allowChats` and the draft stays pending (`/no` discards it). Messages of other chats that were waiting in the
+  inbox before a restart are dropped, not triaged.
+
+Remove the key (or set `"allowChats": []`) and restart to handle every chat again. `npm run dev` reads
+`config.local.json` too; its contacts are `alice@console` and so on, so list those there or remove the key.
 
 ### Pairing fallback (PR #2765)
 
@@ -270,6 +299,7 @@ answer/escalate switch; delete the key).
 | `backlog.maxAgeMinutes` / `liveWindowMinutes` / `autoSend` | `60` / `2` / `false` | skip messages older than `maxAgeMinutes`; older than `liveWindowMinutes` (or offline) counts as backlog: never auto-replied |
 | `contextMessages` | `8` | earlier messages sent to Claude as `<history>` |
 | `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`); never sent to Claude, never replied to. A LID chat matches a phone number through the number its messages carried or WhatsApp's LID mapping; while its number is unknown and the list has phone numbers, that chat gets drafts only (its messages still reach Claude) and every draft of it, a thanks or an escalation too, shows the LID to add here |
+| `allowChats` | `[]` | empty = every chat. Otherwise only the chats it lists (JIDs or phone numbers, matched like `blocklist`) are handled; every other chat is ignored before anything happens to it (no Claude call, no draft, notice, blue ticks or takeover, nothing in `data/state.json`, one `skip_not_allowed` audit line without the text), and the send gate refuses it. A LID chat whose number is unknown is ignored until you list its LID. "Message yourself" always works. Anything but a list of JIDs or phone numbers stops the start. See "Testing with one contact" |
 | `disclosure.enabled` / `text` / `sessionGapHours` | `true` / … / `12` | AI disclosure on the first auto-reply per session |
 | `notifyOwnerOnAutoSend` | `true` | post each auto-reply to "Message yourself" |
 | `draftTtlHours` | `24` | pending drafts expire |
@@ -338,6 +368,7 @@ src/knowledge.js            knowledge.md parser       src/brain/claude.js    the
 src/brain/prompt.js         escaped stdin user turn   src/brain/fake.js      keyword brain for demos
 src/transport/whatsapp.js   Baileys adapter           src/transport/wa-normalize.js  pure message helpers
 src/transport/console.js    REPL transport            prompts/               system prompt + schema
+src/chat-lists.js           blocklist, allowChats
 scripts/selftest.js, scripts/eval.js, eval/fixtures.json, test/ (node:test, no network)
 ```
 

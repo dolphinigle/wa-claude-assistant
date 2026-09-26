@@ -22,3 +22,11 @@ test('a removed safety setting stops the start instead of being ignored', t => {
   assert.throws(() => loadConfig({ rootDir: rootWith(t, { mode: 'live', autoSend: { minConfidence: 0.95 } }) }), /autoSend\.minConfidence is no longer supported/)
   assert.throws(() => loadConfig({ rootDir: rootWith(t), overrides: { mode: 'sideways' } }), /config\.mode/)
 })
+
+test('allowChats defaults to every chat and must list JIDs or phone numbers', t => {
+  assert.deepEqual(loadConfig({ rootDir: rootWith(t) }).allowChats, [])
+  assert.deepEqual(loadConfig({ rootDir: rootWith(t, { allowChats: ['081293850000', '123456789012345@lid'] }) }).allowChats, ['081293850000', '123456789012345@lid'])
+  for (const allowChats of ['081293850000', null, [6281293850000], ['Luki'], ['']]) {
+    assert.throws(() => loadConfig({ rootDir: rootWith(t, { allowChats }) }), /config\.allowChats must be a list of JIDs or phone numbers/, JSON.stringify(allowChats))
+  }
+})
