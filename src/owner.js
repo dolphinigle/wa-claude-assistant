@@ -65,7 +65,7 @@ export function formatDraftNotice (draft) {
   return lines.join('\n')
 }
 
-const formatClock = (epochMs, timeZone) => new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(epochMs))
+export const formatClock = (epochMs, timeZone) => new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(epochMs))
 const percent = value => (typeof value === 'number' ? `${Math.round(value * 100)}%` : '?')
 
 /**

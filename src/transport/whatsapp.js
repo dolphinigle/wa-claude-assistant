@@ -46,10 +46,11 @@ export async function createBaileysSocket ({ authDir, logger, getMessage }) {
  * @param {object} options
  * @param {(message: object) => Promise<void>} options.onMessage  normalized customer/self-chat messages
  * @param {() => void} [options.onReady]  first successful connection of this process
+ * @param {() => void} [options.onConnected]  every successful (re)connection, e.g. to re-send failed notices
  * @param {(verdict: object) => void} [options.onFatal]  the transport stopped and will not reconnect
  * @param {Function} [options.createSocket]  injectable for tests; defaults to the real Baileys socket
  */
-export function createWhatsAppTransport ({ config, store, onMessage, onReady, onFatal, logger = console, createSocket = createBaileysSocket }) {
+export function createWhatsAppTransport ({ config, store, onMessage, onReady, onConnected, onFatal, logger = console, createSocket = createBaileysSocket }) {
   const baileysLogger = createBaileysLogger()
   const history = new Map() // chatId → [{id, fromMe, text, timestamp, raw}]
   const metaAiIds = new Set() // ids of the owner's own Meta AI prompts (see connect())
@@ -121,6 +122,7 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       logger.log(`[whatsapp] connected as ${meIds.join(' / ')}; self-chat target ${selfChatJid}`)
       if (!session.caughtUp) armWatchdog(socket)
       if (!announced) { announced = true; onReady?.() }
+      onConnected?.()
     }
     // Only a connection that stayed up resets the counter, so open-then-close loops still reach the cap.
     if (connected && session.caughtUp && !session.stableTimer) {

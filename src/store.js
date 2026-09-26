@@ -5,6 +5,7 @@ import path from 'node:path'
 const MAX_SENT_BY_BOT = 2000
 const MAX_PROCESSED = 5000
 const MAX_AUTO_SEND_LOG = 500
+const MAX_OWNER_OUTBOX = 50
 const DAY_MS = 24 * 60 * 60 * 1000
 
 const emptyState = () => ({
@@ -18,6 +19,8 @@ const emptyState = () => ({
   autoSendLog: [],
   historyFloorTs: 0,
   pauseChangedAt: 0,
+  ownerOutbox: [],
+  ownerNoticeCounter: 0,
   lastRateLimit: null
 })
 
@@ -145,6 +148,23 @@ export class Store {
   countAutoSends (windowMs) {
     const at = this.now()
     return this.state.autoSendLog.filter(ts => at - ts < windowMs).length
+  }
+
+  // --- owner notices that could not be delivered ---------------------------
+
+  get ownerOutbox () { return this.state.ownerOutbox }
+
+  /** Keeps a notice that failed to send (socket reconnecting) until it can be re-sent; returns a dropped one. */
+  queueOwnerNotice (text) {
+    this.state.ownerOutbox.push({ id: ++this.state.ownerNoticeCounter, text, queuedAt: this.now() })
+    const dropped = this.state.ownerOutbox.length > MAX_OWNER_OUTBOX ? this.state.ownerOutbox.shift() : undefined
+    this.save()
+    return dropped
+  }
+
+  removeOwnerNotice (id) {
+    this.state.ownerOutbox = this.state.ownerOutbox.filter(notice => notice.id !== id)
+    this.save()
   }
 
   // --- drafts --------------------------------------------------------------

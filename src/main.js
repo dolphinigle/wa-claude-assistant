@@ -36,6 +36,7 @@ if (useConsole) {
     store,
     onMessage,
     onReady: () => { announce().catch(() => {}) },
+    onConnected: () => { assistant.flushOwnerOutbox().catch(() => {}) },
     onFatal: verdict => {
       console.error(`\n[whatsapp] STOPPED: ${verdict.reason}. ${verdict.advice ?? ''}`)
       shutdown(1)

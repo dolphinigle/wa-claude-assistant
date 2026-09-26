@@ -144,6 +144,8 @@ keeps the bot out of that chat for `humanTakeoverMinutes`: it does not even call
   moves. Anything older than 60 min is skipped, and anything older than 2 min is triaged but only drafted,
   whether it arrives as offline backlog or as a late resend or retry (those come back as `notify` with their
   original timestamp).
+- **Notices are never dropped:** a draft, URGENT or other notice that fails because WhatsApp is reconnecting is
+  kept in `data/state.json` and re-sent, marked "Delayed", on the next connection.
 - **Blue ticks only after an auto-reply** (`markRead`), never for drafted or escalated chats.
 - **Burst handling:** messages in the same chat within 15 s are triaged together; a message that arrives while a
   triage is running discards that result and re-triages the whole burst.

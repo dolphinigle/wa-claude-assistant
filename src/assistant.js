@@ -1,6 +1,6 @@
 // Orchestrator: dedupe, loop guard, takeover, debounce, triage, policy, and the ONE send gate.
 import { guardTriage } from './guards.js'
-import { BOT_PREFIX, createOwnerCommands, excerpt, formatDraftNotice } from './owner.js'
+import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatDraftNotice } from './owner.js'
 import { decide } from './policy.js'
 
 const MINUTE_MS = 60 * 1000
@@ -18,6 +18,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   const chats = new Map() // chatId → {pending: message[], timer, generation}
   const work = new Set()
   let stopped = false
+  let flushingOutbox = false
 
   const track = promise => {
     work.add(promise)
@@ -44,18 +45,40 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
 
   // --- the send gate: every outgoing message passes through one of these two functions ------------------------
 
-  async function sendToOwner (text) {
+  /** A notice that fails (socket reconnecting) is kept in the store's outbox and re-sent later, never dropped. */
+  async function sendToOwner (text, { queueOnFailure = true } = {}) {
     const body = text.startsWith(BOT_PREFIX) ? text : `${BOT_PREFIX} ${text}`
     const messageId = transport.generateId?.()
     if (messageId) store.markSentByBot(messageId)
     try {
       const sent = await transport.sendToSelf(body, { messageId })
       store.markSentByBot(sent?.id)
+      if (queueOnFailure && store.ownerOutbox.length > 0) track(flushOwnerOutbox()) // sending works again
       return { sent: true, id: sent?.id }
     } catch (error) {
       logger.error(`[assistant] self-chat notice failed: ${error.message}`)
-      store.audit('owner_notice_failed', { error: error.message })
-      return { sent: false, error: error.message }
+      store.audit('owner_notice_failed', { error: error.message, queued: queueOnFailure })
+      if (queueOnFailure) {
+        const dropped = store.queueOwnerNotice(body)
+        if (dropped) store.audit('owner_notice_dropped', { text: excerpt(dropped.text, 300) })
+      }
+      return { sent: false, queued: queueOnFailure, error: error.message }
+    }
+  }
+
+  /** Re-sends queued notices oldest first, marked as delayed; stops at the first failure (still offline). */
+  async function flushOwnerOutbox () {
+    if (flushingOutbox || stopped) return
+    flushingOutbox = true
+    try {
+      for (const notice of [...store.ownerOutbox]) {
+        const original = notice.text.startsWith(BOT_PREFIX) ? notice.text.slice(BOT_PREFIX.length).trimStart() : notice.text
+        const outcome = await sendToOwner(`${BOT_PREFIX} ⏳ Delayed notice from ${formatClock(notice.queuedAt, config.timezone)}:\n${original}`, { queueOnFailure: false })
+        if (!outcome.sent) return
+        store.removeOwnerNotice(notice.id)
+      }
+    } finally {
+      flushingOutbox = false
     }
   }
 
@@ -267,18 +290,22 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       messageIds: batch.map(message => message.id)
     })
     const notice = await sendToOwner(formatDraftNotice(draft))
-    if (!notice.sent) logger.error(`[assistant] draft #${draft.id} could not be posted to self-chat`)
+    if (!notice.sent) logger.error(`[assistant] draft #${draft.id} could not be posted to self-chat yet; queued for when WhatsApp is back`)
   }
 
   function sweepExpiredDrafts () {
     const expired = store.expireDrafts((config.draftTtlHours ?? 24) * HOUR_MS)
     if (expired.length > 0) store.audit('drafts_expired', { ids: expired.map(draft => draft.id) })
   }
-  const sweeper = setInterval(sweepExpiredDrafts, EXPIRY_SWEEP_MS)
+  const sweeper = setInterval(() => {
+    sweepExpiredDrafts()
+    if (store.ownerOutbox.length > 0) track(flushOwnerOutbox())
+  }, EXPIRY_SWEEP_MS)
   sweeper.unref?.()
 
   return {
     handleMessage,
+    flushOwnerOutbox,
     gate,
     owner,
     /** Resolves when no debounce timer is pending and no triage/send is running (for tests and shutdown). */

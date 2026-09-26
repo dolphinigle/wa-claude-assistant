@@ -178,6 +178,34 @@ test('an owner voice note (no text) cancels the in-flight triage and the chat dr
   assert.ok(store.chat(ALICE).takeoverUntil > now())
 })
 
+test('notices that fail while WhatsApp reconnects are queued and re-sent, never dropped', async t => {
+  const { transport, deliver, store, assistant } = setup(t)
+  transport.down = true
+  await deliver(incoming(BOB, 'saya sudah transfer, pesanan saya mana?'))
+  await deliver(incoming(ALICE, 'jam buka?'))
+  assert.equal(transport.sent.length, 0)
+  assert.equal(store.ownerOutbox.length, 2, 'the URGENT notice and the failed auto-reply\'s draft')
+  assert.ok(store.getDraft(2).policyReasons.some(reason => reason.startsWith('send_failed')))
+
+  transport.down = false
+  await assistant.flushOwnerOutbox()
+  const self = transport.toSelf()
+  assert.equal(self.length, 2)
+  assert.match(self[0], /^🤖 ⏳ Delayed notice from \d\d:\d\d:\n🚨 URGENT #1/)
+  assert.match(self[1], /Delayed notice.*\n📝 DRAFT #2|Delayed notice.*\n🚨 URGENT #2/s)
+  assert.equal(store.ownerOutbox.length, 0)
+})
+
+test('a notice that goes through again also flushes the queued ones', async t => {
+  const { transport, deliver, owner, store } = setup(t)
+  transport.down = true
+  await deliver(incoming(BOB, 'saya sudah transfer'))
+  transport.down = false
+  await owner('/status')
+  assert.equal(store.ownerOutbox.length, 0)
+  assert.ok(transport.toSelf().some(text => text.includes('Delayed notice') && text.includes('URGENT #1')))
+})
+
 test('per-chat and per-day rate limits downgrade to drafts', async t => {
   const { transport, deliver, store } = setup(t, { config: { autoSend: { maxPerChatPerHour: 2, maxPerDay: 3 } } })
   for (let index = 0; index < 3; index++) await deliver(incoming(ALICE, `jam buka? ${index}`))

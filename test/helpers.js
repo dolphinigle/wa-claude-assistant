@@ -64,9 +64,13 @@ export function createFakeTransport () {
     sent,
     read,
     history,
+    down: false, // true: every send fails like a socket that is reconnecting
+    sendDelayMs: 0,
     toCustomer: () => sent.filter(item => item.chatId !== 'self'),
     toSelf: () => sent.filter(item => item.chatId === 'self').map(item => item.text),
     async send (chatId, text, options = {}) {
+      if (this.sendDelayMs) await new Promise(resolve => setTimeout(resolve, this.sendDelayMs))
+      if (this.down) throw new Error('whatsapp not connected')
       const id = options.messageId ?? `SENT${++counter}`
       sent.push({ chatId, text, id, quotedRaw: options.quotedRaw })
       return { id }

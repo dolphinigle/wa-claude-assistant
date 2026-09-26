@@ -50,15 +50,17 @@ function setup (t, whatsapp = {}) {
   const received = []
   const fatal = []
   let ready = 0
+  let connections = 0
   const transport = createWhatsAppTransport({
     config, store, logger: silent, createSocket,
     onMessage: async message => { received.push(message) },
     onReady: () => { ready++ },
+    onConnected: () => { connections++ },
     onFatal: verdict => { fatal.push(verdict) }
   })
   t.after(() => transport.stop())
   const emit = (event, payload) => sockets.at(-1).ev.emit(event, payload)
-  return { store, transport, sockets, received, fatal, emit, ready: () => ready }
+  return { store, transport, sockets, received, fatal, emit, ready: () => ready, connections: () => connections }
 }
 
 const open = emit => emit('connection.update', { connection: 'open' })
@@ -66,7 +68,7 @@ const closeWith = (emit, statusCode, message = 'closed') => emit('connection.upd
 const raw = (remoteJid, message, extra = {}) => ({ key: { remoteJid, id: `ID${Math.random()}`, fromMe: false }, message, messageTimestamp: nowSeconds(), pushName: 'Sari', ...extra })
 
 test('first open seeds the history floor and announces once; 515 recreates immediately', async t => {
-  const { store, transport, sockets, emit, ready } = setup(t)
+  const { store, transport, sockets, emit, ready, connections } = setup(t)
   await transport.start()
   open(emit)
   assert.ok(Math.abs(store.historyFloorTs - nowSeconds()) <= 1)
@@ -75,6 +77,7 @@ test('first open seeds the history floor and announces once; 515 recreates immed
   assert.equal(sockets.length, 2)
   open(emit)
   assert.equal(ready(), 1)
+  assert.equal(connections(), 2, 'every reconnect is reported, so queued notices can be re-sent')
 })
 
 test('upserts: customer text and self-chat commands pass, groups are dropped, ciphertext asks for a resend', async t => {
