@@ -67,13 +67,21 @@ confirmation here: just do it and report.
 ## Known weak spot
 
 The social "thanks" path was the weak spot: every review round found bugs there, including an exponential-time matcher.
-The owner-approved simplification is done (a thanks never auto-sends) and is **under review**, together with the
-never-reviewed `6503270`. What is left of the path:
-- `isThanks` in `src/guards.js` only chooses skip vs draft. Its vocabulary is deliberately narrow: a missed thanks
-  costs a draft, a false match silently drops a real message after a closing. When in doubt, leave a phrase out.
+The owner-approved simplification is done (a thanks never auto-sends); the review fixes after `2a0c9b7` are **under
+review**. What is left of the path, all of it load-bearing:
+- `isThanks` in `src/guards.js` chooses skip vs draft, and whether an `/ok` or `/edit` text counts as the closing
+  reply; `thanksAgrees` says whether a thanks carries an `ok`/`iya`/👍 (then it may be a yes). Deliberately narrow: a
+  missed thanks costs a draft, a false match silently drops a real message after a closing. When in doubt, leave a
+  phrase out.
+- `isSocialMessage`, its fail-closed twin `socialWithoutQuestion` (a thanks, goodbye or yes anywhere in a message that
+  asks nothing) and the `thanks_back` reply check in `checkReply` hold any auto-answer to a thanks, a goodbye or a yes,
+  whatever it cites. Deliberately broad: a miss auto-sends a promise. When in doubt, add a phrase. Don't delete them as
+  leftovers of the old path.
 - `closedThisSession` in `src/policy.js` skips a thanks only after a closing this session (`lastClosingAt`, dated by
-  the thanks) with nothing new since. The reply sent by `/ok` or `/edit` is recognised by its message id
-  (`store.closingReplies`).
+  the thanks) with nothing new since. It reads the history, the closing reply's message id (`store.closingReplies`),
+  our last word on either addressing form (`lastOursAt`: `lastSentAt`, `ownerRepliedAt`) and the customer's untriaged
+  content on either form (`lastUntriagedAt`, from the transport's `onUntriaged`). After a `/no`, a shadow `/ok` or a
+  restart it skips only a thanks that does not agree; a quote skips only when it is of the closing reply (by id).
 
 ## Working style
 
