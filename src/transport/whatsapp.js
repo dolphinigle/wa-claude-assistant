@@ -18,8 +18,14 @@ const HISTORY_PER_CHAT = 50
 const MAX_META_AI_IDS = 500
 const OFFLINE_LOG_EVERY = 10
 
-export function createBaileysLogger () {
-  return pino({ level: process.env.BAILEYS_LOG_LEVEL ?? 'warn' }, pino.destination(2))
+// At info, Baileys logs every history-sync notice whole: its media key and path let anyone holding the log download
+// and decrypt the owner's recent chats. Only the fields that say how far the sync got are kept.
+const BAILEYS_SERIALIZERS = {
+  histNotification: notice => ({ syncType: notice?.syncType, chunkOrder: notice?.chunkOrder, progress: notice?.progress })
+}
+
+export function createBaileysLogger ({ level = process.env.BAILEYS_LOG_LEVEL ?? 'warn', destination = pino.destination(2) } = {}) {
+  return pino({ level, serializers: BAILEYS_SERIALIZERS }, destination)
 }
 
 const isKnownCommand = text => {

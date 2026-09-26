@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { redactSignalSessions } from '../src/transport/redact-signal-logs.js'
-import '../src/transport/whatsapp.js'
+import { createBaileysLogger } from '../src/transport/whatsapp.js'
 
 const fakeConsole = () => {
   const lines = []
@@ -30,6 +30,27 @@ test('a session record passed to any console method is replaced, the message tex
     ['info', 'Removing old closed session:', '[signal session redacted]']
   ])
   assert.ok(!JSON.stringify(lines).includes('private-key'))
+})
+
+test('a record nested in an object or array, or a bare private key, is replaced too', () => {
+  const { target, lines } = fakeConsole()
+  redactSignalSessions(target)
+  target.info('record:', { sessions: { abc: session() } })
+  target.info('list:', [session()])
+  target.warn('pair:', { keyPair: { privKey: Buffer.from('private-key') } })
+  assert.ok(!JSON.stringify(lines).includes('private-key'))
+  assert.equal(lines.filter(line => line[2] === '[signal session redacted]').length, 3)
+})
+
+test('the Baileys logger keeps a history-sync notice to its progress fields at any level', async () => {
+  const chunks = []
+  const destination = { write: chunk => { chunks.push(String(chunk)) } }
+  const logger = createBaileysLogger({ level: 'info', destination })
+  const histNotification = { mediaKey: Buffer.from('history-media-key'), directPath: '/v/t62/secret', fileSha256: Buffer.from('h'), syncType: 2, chunkOrder: 1, progress: 40, initialHistBootstrapInlinePayload: Buffer.from('chats') }
+  logger.info({ histNotification, process: true, id: 'x' }, 'got history notification')
+  const out = chunks.join('')
+  assert.ok(out.includes('"syncType":2') && out.includes('"progress":40'))
+  assert.ok(!/mediaKey|directPath|secret|InlinePayload/.test(out), out)
 })
 
 test('other arguments pass through unchanged, and installing twice wraps once', () => {
