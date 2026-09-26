@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawn as nodeSpawn } from 'node:child_process'
 import { chmodSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -11,9 +12,9 @@ const FAKE_CLAUDE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fix
 chmodSync(FAKE_CLAUDE, 0o755)
 const NOW = Date.UTC(2026, 8, 26, 3, 0)
 
-function brainFor (t, claudeOverrides = {}, { dataDir = tempDir(t), knowledge: brainKnowledge = knowledge, killGraceMs } = {}) {
+function brainFor (t, claudeOverrides = {}, { dataDir = tempDir(t), knowledge: brainKnowledge = knowledge, killGraceMs, spawn } = {}) {
   const config = makeConfig({ claude: { bin: FAKE_CLAUDE, timeoutMs: 5000, ...claudeOverrides } }, dataDir)
-  return createClaudeBrain({ config, knowledge: brainKnowledge, now: () => Date.now(), logger: { warn () {} }, killGraceMs })
+  return createClaudeBrain({ config, knowledge: brainKnowledge, now: () => Date.now(), logger: { warn () {} }, killGraceMs, spawn })
 }
 const ask = (brain, text, name = 'Sari') => brain.triage({ chat: { name }, history: [], messages: [{ text, timestamp: NOW / 1000 }] })
 
@@ -173,6 +174,21 @@ test('a file written into the sandbox blocks every later call', async t => {
   const next = await ask(brain, 'SCENARIO:success')
   assert.equal(next.ok, false)
   assert.match(next.error, /^sandbox_not_empty: leaked.txt/)
+})
+
+test('close() stops the queue: queued calls never spawn, the running one is killed, all resolve', async t => {
+  const spawned = []
+  const spawn = (...args) => { const child = nodeSpawn(...args); spawned.push(child); return child }
+  const brain = brainFor(t, { concurrency: 1 }, { spawn })
+  const calls = Array.from({ length: 4 }, () => ask(brain, 'SCENARIO:slow'))
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(spawned.length, 1)
+  brain.close()
+  const results = await Promise.all(calls)
+  assert.equal(spawned.length, 1, 'nothing spawned after close()')
+  assert.deepEqual(results.map(result => result.error), ['shutting_down', 'shutting_down', 'shutting_down', 'shutting_down'])
+  assert.equal((await ask(brain, 'SCENARIO:success')).error, 'shutting_down')
+  assert.equal(spawned.length, 1)
 })
 
 test('concurrency limit is respected', async t => {

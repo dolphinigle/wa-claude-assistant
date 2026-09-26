@@ -85,7 +85,10 @@ function createLimiter (concurrency) {
     const { task, resolve, reject } = waiting.shift()
     task().then(resolve, reject).finally(() => { active--; next() })
   }
-  return task => new Promise((resolve, reject) => { waiting.push({ task, resolve, reject }); next() })
+  const limit = task => new Promise((resolve, reject) => { waiting.push({ task, resolve, reject }); next() })
+  /** Settles every queued task with `settle()` instead of running it. */
+  limit.drain = settle => { for (const { resolve } of waiting.splice(0)) resolve(settle()) }
+  return limit
 }
 
 /**
@@ -115,10 +118,17 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
   const schemaJson = JSON.stringify(JSON.parse(readFileSync(path.join(config.paths.prompts, 'triage-schema.json'), 'utf8')))
   const args = buildArgs({ model: claude.model, systemPromptFile, schemaJson })
   const limit = createLimiter(Math.max(1, claude.concurrency ?? 1))
-  const children = new Set()
+  const running = new Set() // kill functions of the calls whose child is alive
+  let closed = false
+  // A result nobody will act on; the message stays in the assistant's inbox and is triaged after the restart.
+  const shuttingDown = () => ({ ok: false, error: 'shutting_down', meta: { durationMs: 0 } })
 
   function run (stdinText) {
     return new Promise(resolve => {
+      if (closed) {
+        resolve(shuttingDown())
+        return
+      }
       const startedAt = now()
       const meta = { startedAt }
       let init
@@ -145,13 +155,13 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
         return
       }
 
-      children.add(child)
       const kill = reason => {
         failure ??= reason
         if (child.exitCode !== null || child.signalCode !== null) return
         child.kill('SIGTERM')
         killTimer ??= setTimeout(() => child.kill('SIGKILL'), killGraceMs)
       }
+      running.add(kill)
       const timeout = setTimeout(() => kill('timeout'), claude.timeoutMs)
 
       const handleLine = line => {
@@ -224,7 +234,7 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
       const finish = (exitCode, signal) => {
         if (settled) return
         settled = true
-        children.delete(child)
+        running.delete(kill)
         clearTimeout(timeout)
         clearTimeout(killTimer)
         try {
@@ -253,11 +263,14 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
         timeZone: config.timezone,
         contextMessages: config.contextMessages
       })
+      if (closed) return shuttingDown()
       return limit(() => run(stdinText))
     },
-    /** Terminates running claude processes (shutdown); their triage() calls resolve with an error. */
+    /** Shutdown: queued calls never spawn, running ones are killed; every triage() resolves with an error. */
     close () {
-      for (const child of children) child.kill('SIGTERM')
+      closed = true
+      limit.drain(shuttingDown)
+      for (const kill of running) kill('shutting_down')
     }
   }
 }

@@ -68,8 +68,14 @@ async function shutdown (code = 0) {
   store.save()
   process.exit(code)
 }
-process.on('SIGINT', () => shutdown(0))
-process.on('SIGTERM', () => shutdown(0))
+// A second Ctrl-C while the drain is still waiting (e.g. on a send) exits at once; state.json is always complete.
+const onSignal = () => {
+  if (!shuttingDown) return shutdown(0)
+  console.log('forced exit')
+  process.exit(130)
+}
+process.on('SIGINT', onSignal)
+process.on('SIGTERM', onSignal)
 
 await transport.start()
 if (useConsole) await announce()
