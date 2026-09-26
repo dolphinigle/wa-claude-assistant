@@ -61,11 +61,14 @@ flowchart LR
   `@builtin` plugins, a reported CLI version, `apiKeySource: "none"`) and fails closed otherwise, also when the CLI
   stops reporting a field. A failed triage is escalated to you, never auto-sent; a CLI version change is reported
   to you once, so you can re-run `npm run selftest`.
-- **Guards before auto-send** (`src/guards.js`): every number, price, time, phone, URL and email in the reply must
-  appear in the `## Facts` section (`Rp 85.000`, `85rb` and `85.000` are the same amount; `08.00`, `8 AM` and
-  `jam 8` the same hour); `facts_used` must name existing facts; no placeholders, no fact ids, a length cap, no
-  sensitive terms (discount, refund, bank account …) unless the facts contain them, and the reply must be in the
-  sender's language. Any failure turns the reply into a draft with the reason.
+- **Guards before auto-send** (`src/guards.js`): every number, price, time, duration, percentage, phone, URL and
+  email in the reply must appear in the facts the reply cites in `facts_used`, as the same kind of detail
+  (`Rp 85.000`, `85rb` and `85.000` are the same amount; `08.00`, `8 AM` and `jam 8 pagi` the same hour; `3 hari`
+  is a duration, `20%` a percentage). Numbers written as words, digits of other scripts and any bare domain fail
+  unless the cited facts have them. `facts_used` must name existing facts; no placeholders, no fact ids, a length
+  cap, no sensitive terms (discount, refund, bank account …, including affixed forms like `diskonnya`, `direfund`)
+  unless the cited facts contain them, and the reply must be in the sender's language. Any failure turns the reply
+  into a draft with the reason.
 
 ## Setup
 
@@ -196,13 +199,12 @@ complaint, unconfirmed transfer, family emergency, friend chat, spam, "ok makasi
 tag breakout, discount, holiday hours, a half-answerable question) through the real brain, the guards and the
 live-mode policy. One fixture = one `claude -p` call. The key number is FORBIDDEN cases that would have auto-sent.
 
-- [eval/last-run.md](eval/last-run.md), full run with prompt v1: **0 forbidden auto-sends**, category 13/16, 2/3
-  allowed cases auto-sent. Misses: a family emergency and a friend chat were `ignore`d as "wrong number"; a tag
-  breakout was `simple` (the reply ignored the injected bank account and the `no_facts_used` guard drafted it).
-- [eval/last-run-partial.md](eval/last-run-partial.md), prompt v2 on the 4 misses plus 6 sentinels: **0
-  forbidden**, category 10/10, 3/3 allowed auto-sent. One of those, an Indonesian answer to an English question, led
-  to the language guard added afterwards (it now drafts that exact reply).
-- Prompt v2 has not had a full 16-fixture run (call budget). Run `npm run eval` before trusting it.
+- [eval/last-run.md](eval/last-run.md), full run with prompt v3 (numbers in digits, `facts_used` names every
+  fact a detail comes from) and the per-fact guards: **0 forbidden auto-sends**, category 16/16, 3/3 allowed cases
+  auto-sent. Raw results are in `eval/last-run.json` for `--rescore`.
+- Earlier: prompt v1 (full run) had category 13/16 with a family emergency and a friend chat `ignore`d as "wrong
+  number"; prompt v2 fixed those on a 10-fixture subset ([eval/last-run-partial.md](eval/last-run-partial.md)).
+- 16 fixtures are a smoke test, not a guarantee; re-run `npm run eval` after editing the prompt or knowledge.
 
 `npm run eval -- --only=id1,id2` re-runs a subset (written to `last-run-partial.*`), and
 `npm run eval -- --rescore=eval/last-run.json` re-applies the current guards and policy to saved results with no
@@ -255,7 +257,9 @@ Prototype limits of this code:
 - Drafts can still over-promise or invent details (e.g. "we don't have sugar-free options"): that is why complex
   and important replies always wait for you.
 - The guards check concrete details, not meaning: a wrong statement without numbers ("we deliver to Jakarta") can
-  pass. The category rules, the confidence threshold and shadow mode are the defense there.
+  pass, and so can a detail moved to the wrong item inside one cited fact ("brownies keep 1 month" citing F12,
+  where 1 month is the cookies'). The category rules, the confidence threshold and shadow mode are the defense
+  there.
 - The in-memory history per chat starts empty after a restart (plus whatever history sync delivers), and state is a
   single JSON file: fine for one owner, not for volume.
 - Only one process may run per `auth/`: a second copy replaces the first, which gets status 440 and stops rather

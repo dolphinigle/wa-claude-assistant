@@ -24,7 +24,7 @@
   "draftTtlHours": 24,
   "guards": {
     "maxReplyChars": 600,
-    "sensitiveTerms": ["diskon", "discount", "potongan", "promo", "refund", "uang kembali", "ganti rugi", "gratis", "free", "rekening", "account number", "no. rek", "norek", "garansi", "guarantee", "janji", "promise"]
+    "sensitiveTerms": ["diskon", "discount", "disc", "potongan", "promo", "sale", "cashback", "bonus", "refund", "uang kembali", "kembalikan", "pengembalian", "ganti rugi", "gratis", "free", "rekening", "account number", "no. rek", "norek", "garansi", "guarantee", "jamin", "janji", "promise"]
   },
   "quota": {
     "maxFiveHourUtilization": 0.8,

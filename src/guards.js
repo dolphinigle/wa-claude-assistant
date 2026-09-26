@@ -1,19 +1,43 @@
 // Deterministic checks on a reply before it may be auto-sent. They do not judge meaning; they make sure every
-// concrete detail (number, price, time, phone, URL, email) is copied from `## Facts`, so a model slip becomes a
-// draft instead of a wrong promise. When unsure they fail, which only means the owner sees a draft.
+// concrete detail (number, price, time, duration, percentage, phone, URL, email) is copied from the facts the reply
+// cites in `facts_used`, so a model slip becomes a draft instead of a wrong promise. When unsure they fail, which
+// only means the owner sees a draft.
 
 const THOUSANDS = /^\d{1,3}(?:[.,]\d{3})+$/
 const MULTIPLIERS = { rb: 1e3, ribu: 1e3, k: 1e3, jt: 1e6, juta: 1e6 }
+const DURATION_UNITS = {
+  menit: 'min', minute: 'min', minutes: 'min', min: 'min', mins: 'min',
+  jam: 'h', hour: 'h', hours: 'h', hr: 'h', hrs: 'h',
+  hari: 'd', day: 'd', days: 'd',
+  minggu: 'w', week: 'w', weeks: 'w',
+  bulan: 'mo', month: 'mo', months: 'mo',
+  tahun: 'y', year: 'y', years: 'y'
+}
+const DAY_PARTS = { pagi: 'am', siang: 'noon', sore: 'pm', malam: 'night' }
 
 const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g
-const URL = /\b(?:https?:\/\/|www\.)[^\s<>()]+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|id|net|org|ly|me|io|co|link|shop|store|site|xyz|app|gl|to)\b(?:\/[^\s<>()]*)?/gi
+// Any label.label token with an alphabetic TLD: failing closed beats keeping a list of TLDs up to date.
+const URL = /\b(?:https?:\/\/|www\.)[^\s<>()]+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b(?:\/[^\s<>()]*)?/gi
 const PHONE = /(?<![\w])(?:\+|0)\d[\d -]{7,}\d(?![\w])/g
 const CLOCK = /(?<![\d.,:])([01]?\d|2[0-3])[:.]([0-5]\d)(?![\d])(?:\s?([ap])\.?m\b\.?)?/gi
 const HOUR_AMPM = /(?<![\d.,:])(1[0-2]|0?[1-9])\s?([ap])\.?m\b\.?/gi
+const HOUR_DAY_PART = /(?<![\d.,:])(?:\b(?:jam|pukul)\s*)?(\d{1,2})\s*(pagi|siang|sore|malam)\b/gi // jam 1 siang, 5 sore
+const HOUR_BARE = /\b(?:jam|pukul)\s*(\d{1,2})(?!\d|[.,:]\d)/gi // jam 8: 08.00 or 20.00
+const DURATION = new RegExp(`(?<![\\d.,])(\\d+(?:[.,]\\d+)?)\\s*(${Object.keys(DURATION_UNITS).join('|')})\\b`, 'gi')
+const PERCENT = /(?<![\d.,])(\d+(?:[.,]\d+)?)\s*(?:%|persen\b|percent\b)/gi
 const MONEY_PREFIX = /(?:\brp\.?|\bidr)\s*(\d[\d.,]*\d|\d)(?:\s*(rb|ribu|k|jt|juta)\b)?/gi
 const MONEY_SUFFIX = /(?<![\d.,])(\d[\d.,]*\d|\d)\s*(rb|ribu|k|jt|juta)\b/gi
 const THOUSANDS_NUMBER = /(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?![\d])/g
 const NUMBER = /\d+(?:[.,]\d+)?/g
+
+// Numbers written as words carry no digits for the checks above ("seratus ribu", "seminggu", "one hundred"), so any
+// such word must also appear in the cited facts. Common words like "satu" (salah satu) or "one" just mean a draft.
+const NUMBER_WORDS = new Set(('nol satu dua tiga empat lima enam tujuh delapan sembilan sepuluh sebelas seratus seribu sejuta ' +
+  'setengah seperempat lusin selusin sejam sehari seminggu sebulan setahun zero one two three four five six seven eight nine ' +
+  'ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy ' +
+  'eighty ninety hundred thousand million dozen half').split(' '))
+const NUMBER_WORD_ENDINGS = /(?:belas|puluh|ratus|ribu|juta|miliar)(?:an)?$/ // duabelas, limapuluh, ratusan
+const isNumberWord = word => NUMBER_WORDS.has(word) || NUMBER_WORD_ENDINGS.test(word)
 
 function parseDecimal (text) {
   if (THOUSANDS.test(text)) return Number(text.replace(/[.,]/g, ''))
@@ -30,13 +54,29 @@ function toMinutes (hour, minute, meridiem) {
   return h * 60 + Number(minute)
 }
 
+function dayPartToMinutes (hour, dayPart) {
+  let h = Number(hour)
+  const part = DAY_PARTS[dayPart.toLowerCase()]
+  if (part === 'am' && h === 12) h = 0
+  if (part === 'noon' && h < 11) h += 12 // jam 1 siang = 13.00, jam 11/12 siang as is
+  if ((part === 'pm' || part === 'night') && h < 12) h += 12
+  if (part === 'night' && h === 12) h = 0
+  return h * 60
+}
+
+/** The two readings of an hour without a day part ("jam 5": 05.00 or 17.00). */
+const hourReadings = hour => [(hour % 24) * 60, ((hour % 12) + 12) * 60]
+
 const normalizeUrl = url => url.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[.,!?;:)\]/]+$/, '')
 const normalizePhone = phone => phone.replace(/\D/g, '').replace(/^0/, '62')
 
+/** NFKC turns fullwidth and other compatibility digits into ASCII; zero-width characters could split terms. */
+export const normalizeText = input => String(input ?? '').normalize('NFKC').replace(/\p{Cf}/gu, '')
+
 /** Extracts concrete details from text. Matched spans are blanked so later passes don't double count. */
 export function extractDetails (input) {
-  let text = String(input ?? '')
-  const details = { urls: [], emails: [], phones: [], times: [], amounts: [], numbers: [] }
+  let text = normalizeText(input)
+  const details = { urls: [], emails: [], phones: [], times: [], hours: [], durations: [], percents: [], amounts: [], numbers: [], numberWords: [], otherDigits: false }
   const take = (pattern, handle) => {
     text = text.replace(pattern, (...match) => {
       const keep = handle(...match)
@@ -51,36 +91,56 @@ export function extractDetails (input) {
   })
   take(CLOCK, (_, hour, minute, meridiem) => { details.times.push(toMinutes(hour, minute, meridiem)) })
   take(HOUR_AMPM, (_, hour, meridiem) => { details.times.push(toMinutes(hour, 0, meridiem)) })
+  take(HOUR_DAY_PART, (_, hour, dayPart) => { details.times.push(dayPartToMinutes(hour, dayPart)) })
+  take(HOUR_BARE, (_, hour) => { details.hours.push(Number(hour)) })
+  take(DURATION, (_, amount, unit) => { details.durations.push(`${parseDecimal(amount)} ${DURATION_UNITS[unit.toLowerCase()]}`) })
+  take(PERCENT, (_, amount) => { details.percents.push(parseDecimal(amount)) })
   take(MONEY_PREFIX, (_, amount, unit) => { details.amounts.push(Math.round(parseDecimal(amount) * (MULTIPLIERS[unit?.toLowerCase()] ?? 1))) })
   take(MONEY_SUFFIX, (_, amount, unit) => { details.amounts.push(Math.round(parseDecimal(amount) * MULTIPLIERS[unit.toLowerCase()])) })
   take(THOUSANDS_NUMBER, amount => { details.amounts.push(parseDecimal(amount)) })
   take(NUMBER, number => { details.numbers.push(parseDecimal(number)) })
+  details.numberWords = (text.toLowerCase().match(/\p{L}+/gu) ?? []).filter(isNumberWord)
+  details.otherDigits = /\p{Nd}/u.test(text) // digits of other scripts (٣, ३, …): nothing above can check them
   return details
 }
 
 const allowListCache = new WeakMap()
+const factId = id => String(id).replace(/[[\]\s]/g, '').toUpperCase()
 
-/** What an auto-reply may mention: details found in the `## Facts` section, plus harmless equivalents. */
-export function buildAllowList (knowledge) {
-  if (allowListCache.has(knowledge)) return allowListCache.get(knowledge)
+/**
+ * What an auto-reply may mention: details found in the facts it cites (all of `## Facts` when `factIds` is not
+ * given), plus harmless equivalents. A number from one fact does not license the same number anywhere else.
+ */
+export function buildAllowList (knowledge, factIds) {
+  const ids = factIds === undefined ? undefined : [...new Set(factIds.map(factId))].filter(id => knowledge.facts.has(id)).sort()
+  const key = ids ? ids.join(',') : '*'
+  if (!allowListCache.has(knowledge)) allowListCache.set(knowledge, new Map())
+  const cache = allowListCache.get(knowledge)
+  if (cache.has(key)) return cache.get(key)
+
   // Fact ids ([F1], [F2], ...) are labels, not facts: their digits must not whitelist numbers.
-  const details = extractDetails(knowledge.factsText.replace(/\[F\d+\]/gi, ' '))
-  const numbers = new Set(details.numbers)
-  for (const minutes of details.times) {
+  const factsText = ids ? ids.map(id => knowledge.facts.get(id)).join('\n') : knowledge.factsText.replace(/\[F\d+\]/gi, ' ')
+  const details = extractDetails(factsText)
+  const times = new Set([...details.times, ...details.hours.flatMap(hourReadings)])
+  const numbers = new Set([...details.numbers, ...details.percents, ...details.durations.map(duration => Number(duration.split(' ')[0]))])
+  for (const minutes of times) {
     const hour = Math.floor(minutes / 60)
-    numbers.add(hour) // "jam 8" for 08.00
-    if (hour > 12) numbers.add(hour - 12) // "5 sore" for 17.00
+    numbers.add(hour) // "buka 8" for 08.00
+    if (hour > 12) numbers.add(hour - 12) // "sampai 5" for 17.00
   }
   const allow = {
     urls: new Set(details.urls),
     emails: new Set(details.emails),
     phones: new Set(details.phones),
-    times: new Set(details.times),
+    times,
+    durations: new Set(details.durations),
+    percents: new Set(details.percents),
     amounts: new Set(details.amounts),
     numbers,
-    factsLower: knowledge.factsText.toLowerCase()
+    numberWords: new Set(details.numberWords),
+    factsLower: normalizeText(factsText).toLowerCase()
   }
-  allowListCache.set(knowledge, allow)
+  cache.set(key, allow)
   return allow
 }
 
@@ -112,39 +172,53 @@ export function detectLanguage (text) {
 }
 
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-const containsTerm = (haystack, term) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(term)}(?![\\p{L}\\p{N}])`, 'iu').test(haystack)
+// Indonesian attaches affixes to the very words the list is about (diskonnya, direfund, digratiskan, jaminan), and
+// chat spelling doubles letters (gratiss); a term matches with those, still not inside unrelated words (freezer).
+const TERM_PREFIX = '(?:di|ter|ber|be|ke|se|per|me(?:ng|ny|m|n)?|pe(?:ng|ny|m|n)?)?'
+const TERM_SUFFIX = '(?:nya|kan|an|i|lah|kah|pun|s|es|ed|ing){0,2}'
+const termPattern = term => term.trim().split(/\s+/)
+  .map(word => [...word].map(char => (/\p{L}/u.test(char) ? `${escapeRegExp(char)}+` : escapeRegExp(char))).join(''))
+  .join('\\s+')
+export const containsTerm = (haystack, term) =>
+  new RegExp(`(?<![\\p{L}\\p{N}])${TERM_PREFIX}${termPattern(term)}${TERM_SUFFIX}(?![\\p{L}\\p{N}])`, 'iu').test(haystack)
 
 /**
  * @returns {{ok: boolean, reasons: string[]}}
  */
 export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, maxReplyChars = 600, sensitiveTerms = [] }) {
   const reasons = []
-  const text = String(reply ?? '').trim()
+  const text = normalizeText(reply).trim()
   if (!text) return { ok: false, reasons: ['empty_reply'] }
   if (text.length > maxReplyChars) reasons.push(`too_long:${text.length}>${maxReplyChars}`)
   if (/\[F\d+\]/i.test(text)) reasons.push('fact_id_in_reply')
   else if (PLACEHOLDERS.some(pattern => pattern.test(text))) reasons.push('placeholder')
 
-  if (!Array.isArray(factsUsed) || factsUsed.length === 0) {
+  const cited = Array.isArray(factsUsed) ? factsUsed : []
+  if (cited.length === 0) {
     reasons.push('no_facts_used')
   } else {
-    const unknown = factsUsed.filter(id => !knowledge.facts.has(String(id).replace(/[[\]\s]/g, '').toUpperCase()))
+    const unknown = cited.filter(id => !knowledge.facts.has(factId(id)))
     if (unknown.length > 0) reasons.push(`unknown_fact:${unknown.join(',')}`)
   }
 
-  const allow = buildAllowList(knowledge)
+  const allow = buildAllowList(knowledge, cited)
   const details = extractDetails(text)
   const check = (kind, values, allowed) => {
     const missing = [...new Set(values.filter(value => !allowed.has(value)))]
     if (missing.length > 0) reasons.push(`unsupported_${kind}:${missing.join(',')}`)
   }
+  const clock = minutes => `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}`
   check('url', details.urls, allow.urls)
   check('email', details.emails, allow.emails)
   check('phone', details.phones, allow.phones)
-  check('time', details.times.map(minutes => `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}`),
-    new Set([...allow.times].map(minutes => `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}`)))
+  check('time', [...details.times.map(clock), ...details.hours.filter(hour => !hourReadings(hour).some(minutes => allow.times.has(minutes))).map(hour => `jam ${hour}`)],
+    new Set([...allow.times].map(clock)))
+  check('duration', details.durations, allow.durations)
+  check('percent', details.percents, allow.percents)
   check('amount', details.amounts, allow.amounts)
   check('number', details.numbers, allow.numbers)
+  check('number_word', details.numberWords, allow.numberWords)
+  if (details.otherDigits) reasons.push('non_ascii_digits')
 
   for (const term of sensitiveTerms) {
     if (containsTerm(text, term) && !containsTerm(allow.factsLower, term)) reasons.push(`sensitive_term:${term}`)
