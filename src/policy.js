@@ -13,16 +13,21 @@ const HOUR_MS = 60 * 60 * 1000
  * dealt with (its draft sent, edited or discarded, shadow included); `lastClosingAt` is when that thanks arrived.
  * - anything but a thanks from the customer (a question, an "iya", a file) is new: not closed
  * - the customer's own thanks since are passed over
- * - our message sent as that closing (`closing`: the owner's /ok or /edit of the thanks draft) is the last word: closed
+ * - our message sent as that closing (`closing`: the owner's /ok or /edit of the thanks draft, when it is itself only a
+ *   thanks-back) is the last word: closed
  * - any other message of ours (the owner's or the bot's) is closed only if it came before the thanks the owner dealt
  *   with (a /no, a shadow /ok); one sent after it, or of unknown age, is new
+ * - so is `lastOursAt` after that thanks: the history holds one addressing form since the last start, but our side
+ *   may have written on the other one, or before a restart
  * - a history that ends before any message of ours (a restart empties it) leaves the recorded closing standing
  * @param {{fromMe: boolean, text?: string, attachment?: string, timestamp?: number, closing?: boolean}[]} history
  *   oldest first; timestamps in epoch seconds
- * @param {{lastClosingAt?: number, sessionStart?: number}} [options]  epoch ms
+ * @param {{lastClosingAt?: number, sessionStart?: number, lastOursAt?: number}} [options]  epoch ms; `lastOursAt`:
+ *   when our side last wrote to this contact on either form, closings left out (assistant.js)
  */
-export function closedThisSession (history = [], { lastClosingAt = 0, sessionStart = 0 } = {}) {
+export function closedThisSession (history = [], { lastClosingAt = 0, sessionStart = 0, lastOursAt = 0 } = {}) {
   if (!(lastClosingAt > sessionStart)) return false
+  if (lastOursAt >= lastClosingAt) return false
   for (let index = history.length - 1; index >= 0; index--) {
     const item = history[index]
     if (!item.fromMe) {
@@ -47,8 +52,8 @@ const flatText = text => normalizeText(text).replace(/\s+/g, ' ').trim()
  * @param {string[]} [ctx.quoted]  texts of the earlier messages the new ones reply to (WhatsApp quotes)
  * @param {object[]} [ctx.history]  earlier messages of the chat, oldest first (see closedThisSession)
  * @param {boolean} ctx.paused
- * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, lastClosingAt?: number}} ctx.chat
- *   `lastClosingAt`: when the last thanks the owner dealt with arrived
+ * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, lastClosingAt?: number, lastOursAt?: number}} ctx.chat
+ *   `lastClosingAt`: when the last thanks the owner dealt with arrived; `lastOursAt`: see closedThisSession
  * @param {number} ctx.now  epoch ms
  * @param {number} ctx.chatAutoSendsLastHour
  * @param {number} ctx.autoSendsLastDay
@@ -70,7 +75,7 @@ export function decide (result, ctx) {
   const { decision } = result.triage
   // A thanks after a closing needs nothing from anyone, whatever Claude made of it.
   if (thanks && attachments.length === 0 && !quotesEarlier &&
-    closedThisSession(history, { lastClosingAt: chat.lastClosingAt, sessionStart: ctx.now - sessionMs })) {
+    closedThisSession(history, { lastClosingAt: chat.lastClosingAt, sessionStart: ctx.now - sessionMs, lastOursAt: chat.lastOursAt })) {
     return { action: 'skip', reasons: [`decision:${decision}`, 'closing_already_sent'] }
   }
   if (decision !== 'answer') return { action: 'escalate', reasons: [`decision:${decision}`] }

@@ -616,7 +616,7 @@ test('a thanks is never auto-sent, even citing a fact with every gate open; the 
   assert.deepEqual(transport.toCustomer(), [])
   assert.deepEqual([1, 2].map(id => [store.getDraft(id).policyReasons, store.getDraft(id).closing]), [
     [['decision:answer', 'thanks_not_auto_sent'], true],
-    [['decision:answer', 'guard:no_facts_used'], false]
+    [['decision:answer', 'guard:no_facts_used', 'guard:thanks_back'], false]
   ])
   assert.match(transport.toSelf()[0], /📝 DRAFT #1 .*\nDraft:\nSama-sama, Kak 🙏\n.*\nNot auto-sent: thanks_not_auto_sent\nReply: \/ok 1/s)
   assert.deepEqual(transport.read, [], 'no blue ticks either')
@@ -694,7 +694,7 @@ test('live: /ok of a thanks draft sends it and marks its id; the next thanks is 
   assert.deepEqual(skipped(), [[ALICE, '🙏', 'closing_already_sent'], [ALICE, 'makasih ya kak', 'closing_already_sent']])
   assert.deepEqual(store.pendingDrafts(), [], 'no draft for them')
   await say(ALICE, 'iya kak')
-  assert.deepEqual(reasons(2), ['decision:answer', 'guard:no_facts_used'], 'an "iya" may answer something: drafted')
+  assert.deepEqual(reasons(2), ['decision:answer', 'guard:no_facts_used', 'guard:thanks_back'], 'an "iya" may answer something: drafted')
   assert.equal(transport.toCustomer().length, 2, 'the hours answer and the approved closing')
 })
 
@@ -735,8 +735,8 @@ test('an acknowledgement or 👍 alone after a closing is a draft', async t => {
 test('/edit and /no of a thanks draft close the chat as well', async t => {
   const { transport, store, say, command, skipped } = chatSetup(t)
   await say(ALICE, 'makasih kak')
-  await command('/edit 1 Sama-sama kak, sampai ketemu Sabtu ya')
-  assert.ok(store.isClosingReply(transport.toCustomer().at(-1).id), 'the edited text is the closing, whatever it says')
+  await command('/edit 1 Sama-sama kak, sehat selalu ya')
+  assert.ok(store.isClosingReply(transport.toCustomer().at(-1).id), 'the edited text is the closing when it only thanks back')
   await say(ALICE, '🙏')
 
   await say(BOB, 'jam buka kak?')
@@ -745,6 +745,70 @@ test('/edit and /no of a thanks draft close the chat as well', async t => {
   await say(BOB, 'makasih ya kak 🙏')
   assert.deepEqual(skipped(), [[ALICE, '🙏', 'closing_already_sent'], [BOB, 'makasih ya kak 🙏', 'closing_already_sent']])
   assert.deepEqual(store.pendingDrafts(), [])
+})
+
+test('a thanks draft sent with a question or an offer closes nothing: a yes with a thanks after it is drafted', async t => {
+  // Claude's own thanks-back may offer something too; /ok sends it as written.
+  const offer = 'Sama-sama Kak 🙏 Mau sekalian dipesankan untuk Sabtu'
+  const respond = input => (input.messages.some(message => message.text === 'ok makasih kak') ? triageResult({ decision: 'answer', reply: offer }) : thanksBack(input))
+  for (const [approve, answer] of [
+    ['/edit 1 Sama-sama kak! Mau sekalian kami siapkan 2 loyang untuk Sabtu?', 'iya kak, makasih 🙏'],
+    ['/edit 1 Sama-sama Kak! Tulisan di tartnya "Happy Birthday Rina", sudah benar', 'ok siap makasih'],
+    ['/ok 1', '👍 makasih']
+  ]) {
+    const { transport, store, say, command, skipped } = chatSetup(t, { respond })
+    await say(ALICE, 'jam berapa buka kak?')
+    await say(ALICE, 'ok makasih kak')
+    await command(approve)
+    const sent = transport.toCustomer().at(-1)
+    assert.equal(store.isClosingReply(sent.id), false, `${approve}: not a closing, it asks for more`)
+    await say(ALICE, answer)
+    assert.deepEqual([skipped(), store.pendingDrafts().map(draft => draft.excerpt)], [[], [answer]], approve)
+    assert.equal(transport.toCustomer().length, 2, 'the hours answer and the approved reply')
+  }
+})
+
+test('our side writing on the other addressing form, or before a restart, reopens a closed chat', async t => {
+  const LID = '123456789012345@lid'
+  for (const reopen of ['owner on the other form', 'bot on the other form', 'restart']) {
+    const { transport, store, deliver, advance, stamp, say, command, skipped } = chatSetup(t)
+    await say(LID, 'jam berapa buka kak?', { chatIdAlt: ALICE }) // links the two records
+    await say(ALICE, 'ok makasih kak')
+    await command('/no 1')
+    if (reopen === 'owner on the other form') {
+      await deliver({ id: 'OWNER1', chatId: LID, fromMe: true, isSelfChat: false, text: 'Kak, alamat kirimnya masih yang kemarin?', ...stamp(), kind: 'notify' })
+      advance(31 * 60_000)
+    } else {
+      await say(reopen === 'restart' ? ALICE : LID, 'kak brownies bisa dikirim?', { chatIdAlt: reopen === 'restart' ? undefined : ALICE })
+      await command('/edit 2 Bisa kak, mau dikirim besok pagi?')
+      if (reopen === 'restart') transport.history.clear()
+    }
+    await say(ALICE, 'iya kak makasih')
+    assert.deepEqual([skipped(), store.pendingDrafts().map(draft => draft.excerpt)], [[], ['iya kak makasih']], reopen)
+  }
+})
+
+test('an answer to a thanks the narrow matcher misses, or to a yes alone, is never auto-sent, whatever fact it cites', async t => {
+  const respond = input => {
+    const text = input.messages.map(message => message.text).join(' ')
+    if (/Coblong/.test(text)) return triageResult({ decision: 'escalate', reply: 'Bisa Kak. Mau saya kirim besok pagi pakai GoSend?' })
+    if (/makasih/.test(text)) return triageResult({ decision: 'answer', reply: 'Sama-sama Kak, sampai jumpa 🙏', facts_used: ['F13'] })
+    return triageResult({ decision: 'answer', reply: 'Baik Kak, dikirim pakai GoSend ya, ongkir dibayar pembeli.', facts_used: ['F3'] })
+  }
+  const { transport, store, say, command, reasons } = chatSetup(t, { respond })
+  await say(ALICE, 'makasih kak, sampai jumpa')
+  await say(BOB, 'makasihh kak')
+  assert.deepEqual([reasons(1), reasons(2)], [
+    ['decision:answer', 'guard:social_message_answered_with_facts', 'guard:thanks_back'],
+    ['decision:answer', 'guard:social_message_answered_with_facts', 'guard:thanks_back']
+  ])
+  // A yes to the owner's approved offer: Claude's answer would promise a delivery nobody confirmed.
+  await say(ALICE, 'Kak brownies bisa dikirim ke Coblong?')
+  await command('/ok 3')
+  for (const text of ['iya kak', 'oke kak 👍', 'siap kak']) await say(ALICE, text)
+  assert.deepEqual([4, 5, 6].map(reasons), Array(3).fill(['decision:answer', 'guard:social_message_answered_with_facts']))
+  assert.deepEqual(transport.toCustomer().map(item => item.text), ['Bisa Kak. Mau saya kirim besok pagi pakai GoSend?'])
+  assert.equal(store.pendingDrafts().length, 5)
 })
 
 test('shadow: a thanks draft approved in shadow closes the chat like a send would', async t => {
@@ -828,7 +892,7 @@ test('a greeting the day after a closing is escalated, not skipped', async t => 
   advance(20 * 3_600_000)
   await say(ALICE, 'Selamat pagi kak')
   assert.equal(transport.toCustomer().length, 2)
-  assert.deepEqual(reasons(2), ['decision:answer', 'guard:no_facts_used'], 'a thanks-back to a greeting cites no fact')
+  assert.deepEqual(reasons(2), ['decision:answer', 'guard:no_facts_used', 'guard:thanks_back'], 'a thanks-back to a greeting is held')
   assert.match(transport.toSelf().at(-1), /📝 DRAFT #2 .*\nThey wrote: "Selamat pagi kak"/s)
   assert.equal(store.getDraft(2).closing, false)
 })

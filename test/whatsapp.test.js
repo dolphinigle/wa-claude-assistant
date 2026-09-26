@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { test } from 'node:test'
+import { closedThisSession } from '../src/policy.js'
 import { Store } from '../src/store.js'
 import { createWhatsAppTransport } from '../src/transport/whatsapp.js'
 import { makeConfig, sleep, tempDir } from './helpers.js'
@@ -261,6 +262,22 @@ test('a decrypted resend replaces its ciphertext stub in the history', async t =
   await sleep(5)
   assert.deepEqual(received.map(message => message.text), ['ada stok beras 5kg?'])
   assert.deepEqual(transport.getHistory(CUSTOMER, 10).map(item => item.text), ['ada stok beras 5kg?'])
+})
+
+test('an undecryptable message stays in the history until its resend comes: a thanks after it is not skipped', async t => {
+  const { transport, emit } = setup(t)
+  await transport.start()
+  open(emit)
+  const thanks = raw(CUSTOMER, { conversation: 'ok makasih kak' }, { messageTimestamp: nowSeconds() - 60 })
+  const stub = { key: { remoteJid: CUSTOMER, id: 'X1', fromMe: false }, message: null, messageStubType: 2, messageTimestamp: nowSeconds() }
+  emit('messages.upsert', { type: 'notify', messages: [thanks, stub] })
+  await sleep(5)
+  const history = transport.getHistory(CUSTOMER, 10)
+  assert.deepEqual(history.map(item => [item.id, item.text, item.attachment]), [[thanks.key.id, 'ok makasih kak', undefined], ['X1', '', 'other']])
+  assert.equal(closedThisSession(history, { lastClosingAt: thanks.messageTimestamp * 1000 }), false, 'something came in after the closed thanks')
+  emit('messages.upsert', { type: 'notify', messages: [raw(CUSTOMER, { conversation: 'kak pesanan saya kurang 1' }, { key: { remoteJid: CUSTOMER, id: 'X1', fromMe: false } })] })
+  await sleep(5)
+  assert.deepEqual(transport.getHistory(CUSTOMER, 10).map(item => [item.text, item.attachment]), [['ok makasih kak', undefined], ['kak pesanan saya kurang 1', undefined]])
 })
 
 test('a placeholder-resend answer is a replay; stubs past maxAge are not re-requested', async t => {

@@ -46,6 +46,9 @@ const NOT_ATTACHMENTS = new Set(['conversation', 'extendedTextMessage', 'protoco
 /** 'image' | 'video' | 'document' | 'audio' | 'location' | 'contact' | 'poll' | 'event' | 'other', or undefined for text. */
 export const attachmentKind = contentType => (!contentType || NOT_ATTACHMENTS.has(contentType) ? undefined : ATTACHMENT_KINDS[contentType] ?? 'other')
 
+/** A message that could not be decrypted (yet): Baileys asks for a retry or a resend, which arrives under the same id. */
+export const isCiphertextStub = raw => !raw?.message && raw?.messageStubType === WAMessageStubType.CIPHERTEXT
+
 export function toEpochSeconds (timestamp) {
   if (timestamp === null || timestamp === undefined) return 0
   if (typeof timestamp === 'number') return timestamp
@@ -77,7 +80,7 @@ export function normalizeUpsert (raw, { type, meIds }) {
   // customer chat the alt can be the owner's own JID. An own JID is never the chat's other form, so it is dropped.
   const isSelfChat = isSelfChatJid(key.remoteJid, meIds)
   const chatIdAlt = key.remoteJidAlt && !isSelfChatJid(key.remoteJidAlt, meIds) ? key.remoteJidAlt : undefined
-  const isCiphertext = !raw.message && raw.messageStubType === WAMessageStubType.CIPHERTEXT
+  const isCiphertext = isCiphertextStub(raw)
   const { text, contentType, quotedText, isForwarded } = extractText(raw.message)
   const message = {
     id: key.id,

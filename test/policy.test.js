@@ -111,7 +111,7 @@ const SKIP = reasons => ({ action: 'skip', reasons })
 test('closedThisSession: the owner dealt with a thanks this session, and nothing but thanks came after it', () => {
   assert.equal(closed(THANKED), true, 'the thanks draft was discarded (/no) or approved in shadow: our answer came before it')
   assert.equal(closed([...THANKED, ours('Sama-sama, Kak 🙏', 20, { closing: true })]), true, '/ok or /edit sent this closing')
-  assert.equal(closed([...THANKED, ours('Sama-sama kak. Mau sekalian pesan untuk besok?', 20, { closing: true })]), true, 'whatever it says')
+  assert.equal(closed([...THANKED, ours('Sama-sama kak, sehat selalu ya', 20, { closing: true })]), true, 'the owner\'s own words of thanks')
   assert.equal(closed([...THANKED, ours('Sama-sama, Kak 🙏', 20, { closing: true }), customer('🙏', 10), customer('thanks kak', 5)]), true, 'thanks after it are passed over')
   assert.equal(closed([]), true, 'a restart empties the history: the recorded closing stands')
   assert.equal(closed([customer('makasih kak', 30), customer('🙏', 20)]), true, 'so does a history of thanks only')
@@ -130,6 +130,15 @@ test('closedThisSession: no closing this session, or something new since', () =>
   assert.equal(closed([...THANKED, customer('', 20, { attachment: 'image' })]), false, 'a photo is new')
   assert.equal(closed([...THANKED, customer('makasih kak 🙏', 20, { attachment: 'location' })]), false, 'even with a thanks for a caption')
   assert.equal(closed([ours('Sama-sama, Kak 🙏', 25, { closing: true }), customer('kak saya sudah transfer', 20)]), false)
+})
+
+test('closedThisSession: our side wrote after the thanks where this history does not show it (the other addressing form, a restart)', () => {
+  const closedWith = (history, lastOursAt) => closedThisSession(history, { lastClosingAt: CLOSED_AT, sessionStart: SESSION_START, lastOursAt })
+  for (const history of [THANKED, [...THANKED, ours('Sama-sama, Kak 🙏', 20, { closing: true })], []]) {
+    assert.equal(closedWith(history, at(10) * 1000), false, 'the owner on the phone, or a send, after the thanks')
+    assert.equal(closedWith(history, CLOSED_AT), false, 'in the same second: unknown order, so new')
+    assert.equal(closedWith(history, at(40) * 1000), true, 'before the thanks: the closing stands')
+  }
 })
 
 test('a thanks after a closing this session is skipped, whatever Claude decided and whatever the gates say', () => {
@@ -154,8 +163,9 @@ test('a thanks is never auto-sent: it is a draft that leads with thanks_not_auto
     assert.deepEqual(decide(triageResult(facts), open(incomingText)), drafted, incomingText)
     assert.deepEqual(decide(triageResult(THANKS), open(incomingText)), drafted, incomingText)
   }
+  // The guards refuse it too, but the notice leads with the policy's one reason.
   const guard = guardTriage(facts, { knowledge, config, incomingText: 'makasih kak' })
-  assert.deepEqual(guard, { ok: true, reasons: [] }, 'the guards would have let it through')
+  assert.deepEqual(guard.reasons, ['social_message_answered_with_facts', 'thanks_back'])
   assert.deepEqual(decide(triageResult(facts), { ...open('makasih kak'), guard }), drafted)
   assert.deepEqual(decide(triageResult(THANKS), { ...open('makasih kak 🙏'), attachments: ['image'] }).reasons, ['decision:answer', 'thanks_not_auto_sent', 'attachment:image'])
   assert.deepEqual(decide(triageResult({ decision: 'escalate' }), open('makasih kak')), { action: 'escalate', reasons: ['decision:escalate'] }, 'Claude\'s escalation stands')

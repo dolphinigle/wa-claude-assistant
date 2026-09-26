@@ -190,14 +190,18 @@ export function detectLanguage (text) {
   return 'unknown'
 }
 
-// A thanks is never auto-answered, and after a closing it is skipped without a notice (policy.js), so the customer's
-// side is matched narrowly: a missed thanks only becomes a draft, while a false match could drop a real message. It is
-// matched as whole phrases from a small vocabulary, so a word that only makes sense inside a phrase never counts alone:
-// "no good" and "oh no" are not a thanks. It needs a thanks or goodbye; an acknowledgement ("ok", "iya", "siap") or a
-// 👍 may only go with one, since alone it can be a yes to something our side asked. Greetings are not in it: "Selamat
-// pagi kak" opens a conversation, and "makasih kak, selamat siang" is a draft too. Neither is anything that can agree
-// to, arrange or ask for something: "no problem", "anytime", "see you", "sampai jumpa", "hati-hati" (a warning too),
-// "lagi" (more), "dong", or a bare "welcome".
+// Two matchers on the customer's message, with opposite safe directions. Both match whole phrases from a vocabulary,
+// so a word that only makes sense inside a phrase never counts alone: "no good" and "oh no" are not a thanks.
+// - isThanks chooses the skip: a thanks right after a closing gets no reply and no notice (policy.js). It is narrow,
+//   since a missed thanks only becomes a draft while a false match could drop a real message.
+// - isSocialMessage holds the answer: whatever it cites, no answer to a thanks, a goodbye or a yes alone is auto-sent
+//   (checkReply). It is broad, since a false match only becomes a draft while a miss could auto-send a promise.
+//
+// isThanks needs a thanks or goodbye; an acknowledgement ("ok", "iya", "siap") or a 👍 may only go with one, since
+// alone it can be a yes to something our side asked. Greetings are not in it: "Selamat pagi kak" opens a
+// conversation, and "makasih kak, selamat siang" is a draft too. Neither is anything that can agree to, arrange or ask
+// for something: "no problem", "anytime", "see you", "sampai jumpa", "hati-hati" (a warning too), "lagi" (more),
+// "dong", or a bare "welcome".
 const HONORIFICS = 'kak ka kakak mas mbak bu ibu pak bapak sis gan dear min'.split(' ')
 const HAVE_A_NICE = ['nice', 'great', 'good', 'lovely'].flatMap(adjective => ['day', 'weekend', 'evening', 'night'].map(time => `have a ${adjective} ${time}`))
 const THANKS_PHRASES = {
@@ -211,31 +215,57 @@ const THANKS_PHRASES = {
   fillers: [...HONORIFICS, 'ya', 'yaa', 'deh', 'nih', 'juga', 'banyak', 'again', 'so much', 'very much', 'a lot', 'for your help',
     'for the help', 'for the info', 'infonya', 'you too', 'oh', 'oo', 'wah', 'and']
 }
-const PHRASE_KIND = new Map(Object.entries(THANKS_PHRASES).flatMap(([kind, list]) => list.map(phrase => [phrase, kind])))
-const LONGEST_PHRASE = Math.max(...[...PHRASE_KIND.keys()].map(phrase => phrase.split(' ').length))
-
-// How the words from some position on split into phrases: not at all, only into acknowledgements and fillers, or with
-// at least one closing among them.
-const NO_SPLIT = 0
-const SPLITS = 1
-const SPLITS_WITH_CLOSING = 2
+// isSocialMessage takes all of that, plus what agrees to, arranges or asks for something ("no problem", "see you", a
+// yes alone: "iya kak", "boleh", "👍"; "makasih, ditunggu ya"), greetings next to any of it, other spellings of a thanks,
+// and repeated letters folded ("makasihh kakk"). A greeting alone is not social: "Selamat pagi kak" is answered like
+// any other message.
+const SOCIAL_PHRASES = {
+  closings: [...THANKS_PHRASES.closings, 'thank', 'thank u', 'thanks u', 'tks', 'mks', 'mksih', 'maksih', 'mkasih', 'makaseh', 'trimakasih',
+    'trima kasih', 'tysm', 'hatur nuhun', 'nuhun', 'matur nuwun', 'suwun', 'welcome', 'my pleasure', 'no problem', 'no worries', 'anytime',
+    'glad to help', 'happy to help', 'senang bisa membantu', 'senang membantu', 'see you', 'sampai jumpa', 'sampai ketemu', 'hati hati', 'you too'],
+  acknowledgements: [...THANKS_PHRASES.acknowledgements, 'ya', 'yaa', 'y', 'yoi', 'sure', 'boleh', 'mau', 'bisa', 'setuju', 'deal',
+    'sounds good', 'of course', 'mantul'],
+  greetings: ['selamat pagi', 'selamat siang', 'selamat sore', 'selamat malam', 'pagi', 'siang', 'sore', 'malam', 'good morning',
+    'good afternoon', 'good evening', 'halo', 'hallo', 'hai', 'hi', 'hello', 'hey', 'salam'],
+  fillers: [...THANKS_PHRASES.fillers.filter(phrase => !['ya', 'yaa', 'you too'].includes(phrase)), 'dong', 'lagi', 'soon', 'wow', 'banget',
+    'bgt', 'sekali', 'ditunggu', 'dibantu']
+}
 
 /**
- * True if the words split into phrases of the vocabulary with at least one closing among them. Built from the last
- * word back, one pass with a fixed look-ahead: linear time and no recursion however long the message is (a recursive
- * split was exponential on "good bye" × 40 + "x", which also splits as "good" + "bye").
+ * A vocabulary: each phrase, its words folded by `fold` and joined by one space, maps to the bit of its kind. A phrase
+ * listed (or folded) under two kinds would take the kind listed last, silently: it throws instead.
  */
-function splitsWithClosing (words) {
-  const splits = new Uint8Array(words.length + 1) // splits[i]: how words[i..] split
-  splits[words.length] = SPLITS
-  for (let start = words.length - 1; start >= 0; start--) {
-    for (let length = 1; length <= Math.min(LONGEST_PHRASE, words.length - start); length++) {
-      const rest = splits[start + length]
-      const kind = rest === NO_SPLIT ? undefined : PHRASE_KIND.get(words.slice(start, start + length).join(' '))
-      if (kind) splits[start] = Math.max(splits[start], kind === 'closings' || rest === SPLITS_WITH_CLOSING ? SPLITS_WITH_CLOSING : SPLITS)
+function vocabulary (lists, fold = word => word) {
+  const kinds = Object.fromEntries(Object.keys(lists).map((kind, index) => [kind, 1 << index]))
+  const phrases = new Map()
+  for (const [kind, list] of Object.entries(lists)) {
+    for (const phrase of list.map(entry => entry.split(' ').map(fold).join(' '))) {
+      if (phrases.has(phrase) && phrases.get(phrase) !== kinds[kind]) throw new Error(`guards: "${phrase}" is listed under two kinds`)
+      phrases.set(phrase, kinds[kind])
     }
   }
-  return splits[0] === SPLITS_WITH_CLOSING
+  return { kinds, phrases, fold, longest: Math.max(...[...phrases.keys()].map(phrase => phrase.split(' ').length)) }
+}
+const THANKS_VOCABULARY = vocabulary(THANKS_PHRASES)
+const SOCIAL_VOCABULARY = vocabulary(SOCIAL_PHRASES, word => word.replace(/(\p{L})\1+/gu, '$1')) // makasihh, kakk, okee
+
+/**
+ * The kinds of phrases each way of splitting the words into phrases of the vocabulary uses, as bitmasks; empty if
+ * they do not split. Built from the last word back, one pass with a fixed look-ahead and at most one entry per
+ * combination of kinds at each word: linear time and no recursion however long the message is (a recursive split was
+ * exponential on "good bye" × 40 + "x", which also splits as "good" + "bye").
+ */
+function splitKinds (words, { phrases, longest, fold }) {
+  const folded = words.map(fold)
+  const splits = Array.from({ length: folded.length + 1 }, () => new Set()) // splits[i]: the kinds of words[i..]
+  splits[folded.length].add(0)
+  for (let start = folded.length - 1; start >= 0; start--) {
+    for (let length = 1; length <= Math.min(longest, folded.length - start); length++) {
+      const kind = splits[start + length].size > 0 ? phrases.get(folded.slice(start, start + length).join(' ')) : undefined
+      if (kind) for (const rest of splits[start + length]) splits[start].add(rest | kind)
+    }
+  }
+  return [...splits[0]]
 }
 
 // Emoji that can only be friendly. Any other one (😡, 👎, 💩) or bare punctuation ("!!!") is no thanks; 👍 and 👌
@@ -248,9 +278,11 @@ const EMOJI_PARTS = /[\p{Emoji_Modifier}︎️]/gu // skin tones and presentatio
 const SMILEYS = /[:;=]-?(?:[)\]]|[dp](?!\p{L}))|\^_?\^|<3/gu
 const PUNCTUATION = /[\s.,!~'’‘"“”–—-]/gu
 
-// A thanks is short: a longer message is none, whatever its words, and a spammed one is rejected before any pass over it.
-const MAX_THANKS_CHARS = 300
+// A thanks or a yes is short: a longer message is content, whatever its words, and a spammed one is rejected before any
+// pass over it.
+const MAX_SOCIAL_CHARS = 300
 const MAX_THANKS_TOKENS = 16
+const MAX_SOCIAL_TOKENS = 30
 
 /**
  * The customer only thanks or says goodbye: a thanks or goodbye phrase, with at most acknowledgements, honorifics and
@@ -258,7 +290,7 @@ const MAX_THANKS_TOKENS = 16
  * friendly or agreeing emoji and friendly smileys, at most 16 words and emoji in at most 300 characters.
  */
 export function isThanks (input) {
-  if (String(input ?? '').length > MAX_THANKS_CHARS) return false
+  if (String(input ?? '').length > MAX_SOCIAL_CHARS) return false
   const text = normalizeText(input).toLowerCase().replace(SMILEYS, ' ')
   if (/[?¿]/.test(text) || /\p{N}/u.test(text)) return false
   if (text.replace(/\p{L}+/gu, '').replace(EMOJI, '').replace(EMOJI_PARTS, '').replace(PUNCTUATION, '') !== '') return false
@@ -266,8 +298,33 @@ export function isThanks (input) {
   const emoji = text.match(EMOJI) ?? []
   if (words.length + emoji.length > MAX_THANKS_TOKENS) return false
   if (words.length === 0) return emoji.length > 0 && emoji.every(symbol => FRIENDLY_EMOJI.has(symbol))
-  return emoji.every(symbol => FRIENDLY_EMOJI.has(symbol) || AGREEING_EMOJI.has(symbol)) && splitsWithClosing(words)
+  const { closings } = THANKS_VOCABULARY.kinds
+  return emoji.every(symbol => FRIENDLY_EMOJI.has(symbol) || AGREEING_EMOJI.has(symbol)) &&
+    splitKinds(words, THANKS_VOCABULARY).some(kinds => kinds & closings)
 }
+
+/**
+ * The customer's words are only social: a thanks, a goodbye or a yes, with honorifics, softeners and maybe a greeting
+ * around it, or emoji with no greeting ("👍", "kak 🙏"). Any emoji, symbol or question mark may go with it; a digit
+ * or a word outside the vocabulary is content, and so is anything past 30 words and emoji or 300 characters.
+ */
+export function isSocialMessage (input) {
+  if (String(input ?? '').length > MAX_SOCIAL_CHARS) return false
+  const text = normalizeText(input).toLowerCase()
+  if (/\p{N}/u.test(text)) return false
+  const words = text.match(/\p{L}+/gu) ?? []
+  const emoji = text.match(EMOJI) ?? []
+  if (words.length + emoji.length > MAX_SOCIAL_TOKENS) return false
+  const { closings, acknowledgements, greetings } = SOCIAL_VOCABULARY.kinds
+  return splitKinds(words, SOCIAL_VOCABULARY).some(kinds => (kinds & (closings | acknowledgements)) !== 0 ||
+    (emoji.length > 0 && (kinds & greetings) === 0))
+}
+
+// Words that only answer a thanks: Claude's thanks-back is held by them whatever the customer wrote, however the
+// thanks was spelled. "Terima kasih sudah menghubungi kami" opens ordinary answers, so a plain thanks is not one.
+const THANKS_BACK_PHRASES = ['sama sama', 'sama 2', 'terima kasih kembali', 'terimakasih kembali', 'makasih kembali', 'terima kasih juga',
+  'makasih juga', 'thank you too', 'thanks too', 'you re welcome', 'youre welcome', 'you are welcome', 'my pleasure']
+const THANKS_BACK = new RegExp(`(?<![\\p{L}\\p{N}])(?:${THANKS_BACK_PHRASES.map(phrase => phrase.replace(/ /g, '[^\\p{L}\\p{N}]*')).join('|')})(?![\\p{L}\\p{N}])`, 'iu')
 
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 // Indonesian attaches affixes to the very words the list is about (diskonnya, direfund, digratiskan, jaminan), and
@@ -323,13 +380,18 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
   if (/\[F\d+\]/i.test(text)) reasons.push('fact_id_in_reply')
   else if (PLACEHOLDERS.some(pattern => pattern.test(text))) reasons.push('placeholder')
 
-  // Every auto-reply is backed by facts; a thanks-back, which cites none, only ever goes out as a draft (policy.js).
+  // Every auto-reply is backed by facts, so a thanks-back, which cites none, only ever goes out as a draft. A fact cited
+  // on a purely social message only licenses a claim or a promise nobody asked for ("besok kami kirim ya" to an "iya
+  // kak" that may agree to something our side offered): held too. So is a reply that answers a thanks in its own words,
+  // however the customer spelled the thanks.
   const cited = Array.isArray(factsUsed) ? factsUsed : []
   if (cited.length === 0) reasons.push('no_facts_used')
   else {
+    if (incomingText !== undefined && isSocialMessage(incomingText)) reasons.push('social_message_answered_with_facts')
     const unknown = cited.filter(id => !knowledge.facts.has(factId(id)))
     if (unknown.length > 0) reasons.push(`unknown_fact:${unknown.join(',')}`)
   }
+  if (THANKS_BACK.test(text)) reasons.push('thanks_back')
 
   const allow = buildAllowList(knowledge, cited)
   const details = extractDetails(text)

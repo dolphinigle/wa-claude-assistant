@@ -1,6 +1,6 @@
 # Eval: last full run, rescored
 
-> Rescore of the saved run: 2026-09-26T15:39:22.669Z, the current guards and policy applied to the saved triage results of 2026-09-26T14:15:40.905Z (no new claude calls).
+> Rescore of the saved run: 2026-09-26T16:18:12.807Z, the current guards and policy applied to the saved triage results of 2026-09-26T14:15:40.905Z (no new claude calls).
 
 Run 2026-09-26T14:15:40.905Z · model `claude-sonnet-5` (alias `sonnet`, thinking off) · claude 2.1.283 · 20 saved `claude -p` results from `src/brain/claude.js`, then `guards.js` and `policy.js` evaluated as live mode on a fresh chat (quota limit 0.8).
 
@@ -159,7 +159,7 @@ Message: ok makasih kak 🙏
 
 - decision answer, facts_used []
 - action **escalate**; reasons: decision:answer, thanks_not_auto_sent
-- guards: no_facts_used
+- guards: no_facts_used, thanks_back
 - reply: Sama-sama, Kak 🙏
 - reason: Customer's question was fully answered by the owner and this is just a thank-you closing with nothing left pending.
 - summary: Customer thanked the owner after getting the brownies price.

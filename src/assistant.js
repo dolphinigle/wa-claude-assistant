@@ -39,6 +39,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   const takeoverUntil = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.takeoverUntil ?? 0))
   const ownerRepliedAt = (chatId, chatIdAlt) => Math.max(0, ...linkedChats(chatId, chatIdAlt).map(chat => chat.ownerRepliedAt ?? 0))
   const lastClosingAt = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.lastClosingAt ?? 0))
+  // Our side's last word on either form, kept across restarts: the owner on the phone, or any send but a closing.
+  const lastOursAt = chatId => Math.max(0, ...linkedChats(chatId).flatMap(chat => [chat.ownerRepliedAt ?? 0, chat.lastSentAt ?? 0]))
   const chatAutoSendsLastHour = chatId => store.linkedChatIds(chatId).reduce((sum, id) => sum + store.countChatAutoSends(id, HOUR_MS), 0)
   /** Epoch ms of a burst's newest message: a closing is dated by the thanks it closes, not by when it was handled. */
   const lastMessageAt = batch => Math.max(...batch.map(message => message.timestamp)) * 1000
@@ -105,8 +107,10 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   }
 
   /**
-   * The only path to a customer. Shadow mode stops here. `closingReply`: the owner's /ok or /edit of a thanks draft,
-   * whose message id marks the chat closed for the thanks after it (policy.js).
+   * The only path to a customer. Shadow mode stops here. `closingReply`: the owner's /ok or /edit of a thanks draft.
+   * If its text is itself only a thanks-back, its message id marks the chat closed for the thanks after it (policy.js).
+   * Anything else, and anything more ("Sama-sama kak! Mau sekalian pesan untuk Sabtu?"), is our side's newest word,
+   * recorded as `lastSentAt` (in shadow too, as live would send it): an "iya makasih" after it may answer it.
    */
   async function sendToCustomer (chatId, text, { quotedRaw, source, draftId, closingReply = false } = {}) {
     if (!chatId || !text?.trim()) return { sent: false, error: 'nothing to send' }
@@ -114,6 +118,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       store.audit('send_refused_blocked', { chatId, source })
       return { sent: false, error: 'chat is blocklisted' }
     }
+    const closing = closingReply && isThanks(text)
+    if (!closing) store.updateChat(chatId, { lastSentAt: now() }) // before sending: one that fails only costs a draft
     if (config.mode !== 'live') {
       store.audit('shadow_send_suppressed', { chatId, source, draftId, text })
       return { sent: false, shadow: true }
@@ -123,11 +129,11 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     // the history keeps); the returned id is marked too, for a transport that picks its own.
     const messageId = transport.generateId?.()
     if (messageId) store.markSentByBot(messageId)
-    if (messageId && closingReply) store.markClosingReply(messageId)
+    if (messageId && closing) store.markClosingReply(messageId)
     try {
       const sent = await transport.send(chatId, text, { quotedRaw, messageId })
       store.markSentByBot(sent?.id)
-      if (closingReply) store.markClosingReply(sent?.id)
+      if (closing) store.markClosingReply(sent?.id)
       store.audit('sent_to_customer', { chatId, source, draftId, id: sent?.id, text })
       return { sent: true, id: sent?.id }
     } catch (error) {
@@ -353,7 +359,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
         blocked: isBlocked(chatId),
         blocklistUnchecked: blocklistUnchecked(chatId),
         takeoverUntil: takeoverUntil(chatId),
-        lastClosingAt: lastClosingAt(chatId)
+        lastClosingAt: lastClosingAt(chatId),
+        lastOursAt: lastOursAt(chatId)
       },
       now: now(),
       chatAutoSendsLastHour: chatAutoSendsLastHour(chatId),
