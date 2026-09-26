@@ -17,7 +17,7 @@ draft in the owner's "Message yourself" chat.
   Transport tests use the injected fake socket in `test/whatsapp.test.js`. Only exception: the owner asks in the session
   for a live test, as on 2026-09-27 (live for one friend who knows, via `allowChats`); subagents never connect.
 - **Claude backend = the official `claude` binary**, spawned by `src/brain/claude.js`. Never read or copy OAuth tokens
-  or `~/.claude` credentials, and never call claude.ai endpoints. Switching to an API key is an env change and an owner decision.
+  or `~/.claude` credentials, and never call claude.ai endpoints. Switching to an API key is an owner decision, and more than an env change: the `apiKeySource: "none"` assertion and the quota gate both fail closed under a key.
 - **No ban evasion** (anti-detection, fingerprint spoofing), no bulk or outbound messaging, no messages to new
   contacts, no groups.
 - **Real Claude calls only via `npm run selftest` (1 call) and `npm run eval` (20 calls).** They spend the owner's

@@ -71,8 +71,8 @@ flowchart LR
   (`Rp 85.000`, `85rb` and `85.000` are the same amount; `08.00`, `8 AM` and `jam 8 pagi` the same hour; `3 hari`,
   `3 pekan` and `3 bln` are durations, `20%` a percentage). Kinds stay apart: the 3 of `3 hari` never licenses a
   bare 3, and a number with any other word (`3 loyang`, `25 Desember`) must appear with that same word. Numbers
-  written as words (`seratus ribu`, `sepekan`, `separuh`, `kedua`, `twice`, `a quarter`), digits of other scripts
-  and any bare domain fail unless the cited facts have them. `facts_used` must name existing facts and is never
+  written as words (`seratus ribu`, `sepekan`, `separuh`, `kedua`, `twice`, `a quarter`) and any bare domain fail
+  unless the cited facts have them; digits of other scripts always fail. `facts_used` must name existing facts and is never
   empty: a reply that cites no fact, a thanks-back included, is never auto-sent (`no_facts_used`). Before any guard
   counts, the policy holds an answer to a message that asks nothing, whatever it cites (`no_question`, see Safety
   defaults). No placeholders, no fact ids, a length cap, no sensitive terms (discount, voucher, gift, refund, bank account …, including affixed forms like
