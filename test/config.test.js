@@ -38,3 +38,15 @@ test('blocklist must list JIDs or phone numbers too: a string would drop every m
     assert.throws(() => loadConfig({ rootDir: rootWith(t, { blocklist }) }), /config\.blocklist must be a list of JIDs or phone numbers/, JSON.stringify(blocklist))
   }
 })
+
+test('a JID entry must be in a form a chat has, or it would silently match nothing (skip-safety-r2-2, consistency-r2-1)', t => {
+  const accepted = ['6281234567890@s.whatsapp.net', ' 6281234567890@s.whatsapp.net ', '123456789012345@lid', 'alice@console', '+62 812-3456-7890']
+  const refused = ['081234567890@s.whatsapp.net', '+6281234567890@s.whatsapp.net', '6281234567890@c.us', '6281234567890:12@s.whatsapp.net',
+    '6281234567890@S.WHATSAPP.NET', 'Mama@rumah', '@lid', 'Alice@console']
+  for (const key of ['allowChats', 'blocklist']) {
+    assert.deepEqual(loadConfig({ rootDir: rootWith(t, { [key]: accepted }) })[key], accepted, key)
+    for (const entry of refused) {
+      assert.throws(() => loadConfig({ rootDir: rootWith(t, { [key]: [entry] }) }), new RegExp(`config\\.${key} must be a list of JIDs or phone numbers.*@s\\.whatsapp\\.net`), `${key}: ${entry}`)
+    }
+  }
+})

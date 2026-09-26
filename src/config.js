@@ -45,7 +45,7 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
   for (const key of ['allowChats', 'blocklist']) {
     if (config[key] === undefined) config[key] = []
     if (!Array.isArray(config[key]) || !config[key].every(isChatEntry)) {
-      throw new Error(`config.${key} must be a list of JIDs or phone numbers (e.g. ["081234567890"]), got ${JSON.stringify(config[key])}`)
+      throw new Error(`config.${key} must be a list of JIDs or phone numbers (e.g. ["081234567890"]; a JID as WhatsApp writes it: "6281234567890@s.whatsapp.net" or "123456789012345@lid"), got ${JSON.stringify(config[key])}`)
     }
   }
   for (const [key, why] of REMOVED_KEYS) {

@@ -11,8 +11,13 @@ export const phoneEntry = entry => {
   return !value.includes('@') && digits.length >= 6 ? digits : undefined
 }
 
+// A JID entry is matched as written, so it must be in the form WhatsApp gives a 1:1 chat: "6281…@s.whatsapp.net" (no
+// leading 0 or +, no ":device"), "…@lid", or an `npm run dev` contact ("alice@console"). "0812…@s.whatsapp.net",
+// "…@c.us", "…@S.WHATSAPP.NET" or "Mama@rumah" would never match (skip-safety-r2-2, consistency-r2-1).
+const JID_ENTRY = /^(?:[1-9]\d{5,}@s\.whatsapp\.net|\d+@lid|[a-z0-9_.-]+@console)$/
+
 /** An entry that can name a chat at all; anything else would silently match nothing. */
-export const isChatEntry = entry => typeof entry === 'string' && (entry.trim().includes('@') || phoneEntry(entry) !== undefined)
+export const isChatEntry = entry => typeof entry === 'string' && (JID_ENTRY.test(entry.trim()) || phoneEntry(entry) !== undefined)
 
 /** Whether an entry of `list` names the chat on either of its addressing forms. Never creates a chat record. */
 export function listNamesChat (list, store, chatId, chatIdAlt) {
