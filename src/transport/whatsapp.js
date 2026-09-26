@@ -40,8 +40,9 @@ export async function createBaileysSocket ({ authDir, logger, getMessage }) {
  * @param {(message: object) => Promise<void>} options.onMessage  normalized customer/self-chat messages
  * @param {() => void} [options.onReady]  first successful connection of this process
  * @param {(verdict: object) => void} [options.onFatal]  the transport stopped and will not reconnect
+ * @param {Function} [options.createSocket]  injectable for tests; defaults to the real Baileys socket
  */
-export function createWhatsAppTransport ({ config, store, onMessage, onReady, onFatal, logger = console }) {
+export function createWhatsAppTransport ({ config, store, onMessage, onReady, onFatal, logger = console, createSocket = createBaileysSocket }) {
   const baileysLogger = createBaileysLogger()
   const history = new Map() // chatId → [{id, fromMe, text, timestamp, raw}]
   let sock
@@ -129,7 +130,7 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
   async function connect () {
     if (stopped) return
     try {
-      sock = await createBaileysSocket({ authDir: config.paths.auth, logger: baileysLogger, getMessage: async key => findRaw(key)?.message })
+      sock = await createSocket({ authDir: config.paths.auth, logger: baileysLogger, getMessage: async key => findRaw(key)?.message })
     } catch (error) {
       logger.error(`[whatsapp] socket setup failed: ${error.message}`)
       attempts++
