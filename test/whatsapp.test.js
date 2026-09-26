@@ -132,6 +132,26 @@ test('self-chat target: own PN first, then the JID the owner actually types on',
   assert.equal(sockets[0].sent[1].jid, OWNER_LID)
 })
 
+test('an owner command typed in a customer chat (own PN as alt) is a takeover and never moves the notices there', async t => {
+  const { transport, sockets, received, emit } = setup(t)
+  await transport.start()
+  open(emit)
+  const inCustomerChat = (id, text) => raw('55555@lid', { conversation: text }, { key: { remoteJid: '55555@lid', remoteJidAlt: '6281111111111:3@s.whatsapp.net', id, fromMe: true } })
+  emit('messages.upsert', { type: 'notify', messages: [inCustomerChat('R1', 'bentar ya kak'), inCustomerChat('R2', '/status')] })
+  await sleep(5)
+  assert.deepEqual(received.map(message => [message.id, message.isSelfChat, message.chatIdAlt]), [['R1', false, undefined], ['R2', false, undefined]])
+  await transport.sendToSelf('🤖 notice', { messageId: 'N1' })
+  assert.equal(sockets[0].sent[0].jid, OWNER_PN)
+})
+
+test('sendToSelf refuses a target that is not an own JID', async t => {
+  const { transport, sockets, emit } = setup(t, { selfChatJid: CUSTOMER })
+  await transport.start()
+  open(emit)
+  assert.throws(() => transport.sendToSelf('🤖 notice', { messageId: 'N1' }), /not one of the own JIDs/)
+  assert.deepEqual(sockets[0].sent, [])
+})
+
 test('stop codes: 401 and 440 stop without reconnecting', async t => {
   for (const [code, reason] of [[401, 'logged_out'], [440, 'connection_replaced']]) {
     const { transport, sockets, fatal, emit } = setup(t)

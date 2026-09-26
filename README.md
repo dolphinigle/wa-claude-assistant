@@ -184,7 +184,7 @@ keeps the bot out of that chat for `humanTakeoverMinutes`: it does not even call
 | `guards.maxReplyChars` / `guards.sensitiveTerms` | `600` / list | auto-reply length cap; terms that force a draft unless in the facts |
 | `quota.maxFiveHourUtilization` / `maxSevenDayUtilization` | `0.8` / `0.9` | stop auto-replying above these |
 | `claude.bin` / `model` / `timeoutMs` / `concurrency` / `maxStructuredOutputRetries` | `claude` / `haiku` / `60000` / `2` / `2` | the locked CLI call |
-| `whatsapp.selfChatJid` | `null` | force the "Message yourself" JID if auto-detection picks the wrong form |
+| `whatsapp.selfChatJid` | `null` | force the "Message yourself" JID if auto-detection picks the wrong form; it must be your own PN or LID, anything else is refused |
 | `whatsapp.caughtUpWatchdogMs` / `maxReconnectAttempts` / `stableConnectionMs` | `180000` / `10` / `120000` | #2810 watchdog; give up after this many reconnects in a row; a connection caught up and open this long resets the count |
 | `timezone` | `Asia/Jakarta` | the `now:` line given to Claude |
 | `knowledgeFile`, `paths.auth`, `paths.data` | `knowledge.md`, `auth`, `data` | relative to the repo |
@@ -233,7 +233,8 @@ more work):
   #2765 above). `sock.requestPairingCode` may also be broken (#2832); only QR is implemented.
 - **Self-chat JID form** under LID addressing is unverified (own PN or own LID). The transport sends notices to the
   own PN first and switches to whatever JID your own `/command` in "Message yourself" arrives on;
-  `whatsapp.selfChatJid` overrides. Your own prompts to Meta AI also arrive on your own JID (#2822); the transport
+  `whatsapp.selfChatJid` overrides. Self-chat is decided by the chat JID alone (never by its alt, which on your
+  replies to a customer can be your own number), and notices are refused unless the target is one of your own JIDs. Your own prompts to Meta AI also arrive on your own JID (#2822); the transport
   drops them by the stanza's `@bot` recipient, which is unverified on a live link.
 - **Silent escalations?** Whether a message a linked device posts to "Message yourself" notifies your phone is
   unknown. Check right after pairing.

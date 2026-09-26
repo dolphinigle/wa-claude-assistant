@@ -84,11 +84,21 @@ test('self-chat is detected via PN and via LID (device suffixes ignored)', () =>
   assert.equal(viaPn.fromMe, true)
   const viaLid = normalizeUpsert(wa({ conversation: '/status' }, { remoteJid: '99887766554433@lid', fromMe: true }), { type: 'notify', meIds }).message
   assert.equal(viaLid.isSelfChat, true)
-  const viaAlt = normalizeUpsert(wa({ conversation: '/status' }, { remoteJid: '55555@lid', remoteJidAlt: '6281111111111:3@s.whatsapp.net', fromMe: true }), { type: 'notify', meIds }).message
-  assert.equal(viaAlt.isSelfChat, true)
   assert.equal(isSelfChatJid(CUSTOMER, meIds), false)
   assert.equal(isSelfChatJid('120363000000000000@g.us', meIds), false)
   assert.equal(isSelfChatJid(undefined, meIds), false)
+})
+
+test('an owner reply in a customer chat whose alt is the own JID is not self-chat and drops that alt', () => {
+  // Baileys sets remoteJidAlt from sender_pn first, so the owner's phone reply to a LID chat carries the own PN.
+  for (const [remoteJid, remoteJidAlt] of [['55555@lid', '6281111111111:3@s.whatsapp.net'], [CUSTOMER, '99887766554433:7@lid']]) {
+    const reply = normalizeUpsert(wa({ conversation: 'bentar ya kak' }, { remoteJid, remoteJidAlt, fromMe: true }), { type: 'notify', meIds })
+    assert.deepEqual([reply.message.isSelfChat, reply.message.chatId, reply.message.chatIdAlt], [false, remoteJid, undefined], remoteJid)
+    const voice = normalizeUpsert(wa({ audioMessage: { ptt: true } }, { remoteJid, remoteJidAlt, fromMe: true }), { type: 'notify', meIds })
+    assert.equal(voice.skip, undefined, 'an owner voice note there is still a takeover signal')
+  }
+  const peerAlt = normalizeUpsert(wa({ conversation: 'bentar ya kak' }, { remoteJid: CUSTOMER, remoteJidAlt: '123456789012345@lid', fromMe: true }), { type: 'notify', meIds })
+  assert.equal(peerAlt.message.chatIdAlt, '123456789012345@lid', 'the peer\'s other form is kept')
 })
 
 test('a fromMe message in a customer chat is kept (human takeover signal)', () => {

@@ -178,6 +178,28 @@ test('an owner voice note (no text) cancels the in-flight triage and the chat dr
   assert.ok(store.chat(ALICE).takeoverUntil > now())
 })
 
+test('an owner reply in a LID chat carrying the own PN as alt starts a takeover instead of acting as self-chat', async t => {
+  const { brain, assistant, transport, store, now } = setup(t)
+  const LID = '55555@lid'
+  await assistant.handleMessage(incoming(LID, 'bisa kue custom unicorn?'))
+  await assistant.idle()
+  const release = brain.hold()
+  await assistant.handleMessage(incoming(LID, 'jam buka?'))
+  await waitFor(() => brain.calls.length === 2)
+  const meIds = getMeIds({ id: '6281111111111:7@s.whatsapp.net', lid: '99887766554433:7@lid' })
+  const key = { remoteJid: LID, remoteJidAlt: '6281111111111:7@s.whatsapp.net', fromMe: true }
+  for (const [id, text] of [['R1', 'bentar ya kak'], ['R2', '/pause']]) {
+    const { message } = normalizeUpsert({ key: { ...key, id }, message: { conversation: text }, messageTimestamp: Math.floor(now() / 1000) }, { type: 'notify', meIds })
+    await assistant.handleMessage(message)
+  }
+  release()
+  await assistant.idle()
+  assert.equal(transport.toCustomer().length, 0, 'nothing is auto-sent on top of the owner')
+  assert.equal(store.getDraft(1).status, 'cancelled')
+  assert.ok(store.chat(LID).takeoverUntil > now())
+  assert.equal(store.paused, false, 'a /command typed in a customer chat is not an owner command')
+})
+
 test('notices that fail while WhatsApp reconnects are queued and re-sent, never dropped', async t => {
   const { transport, deliver, store, assistant } = setup(t)
   transport.down = true

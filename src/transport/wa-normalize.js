@@ -54,13 +54,16 @@ export function normalizeUpsert (raw, { type, meIds }) {
   if (!key?.remoteJid || !key.id) return { skip: 'no_key' }
   const jidKind = classifyJid(key.remoteJid)
   if (jidKind !== 'direct') return { skip: jidKind, id: key.id }
-  const isSelfChat = isSelfChatJid(key.remoteJid, meIds) || isSelfChatJid(key.remoteJidAlt, meIds)
+  // remoteJid only: Baileys fills remoteJidAlt from sender_pn/sender_lid first, so on the owner's replies in a
+  // customer chat the alt can be the owner's own JID. An own JID is never the chat's other form, so it is dropped.
+  const isSelfChat = isSelfChatJid(key.remoteJid, meIds)
+  const chatIdAlt = key.remoteJidAlt && !isSelfChatJid(key.remoteJidAlt, meIds) ? key.remoteJidAlt : undefined
   const isCiphertext = !raw.message && raw.messageStubType === WAMessageStubType.CIPHERTEXT
   const { text, contentType, quotedText } = extractText(raw.message)
   const message = {
     id: key.id,
     chatId: key.remoteJid,
-    chatIdAlt: key.remoteJidAlt ?? undefined,
+    chatIdAlt,
     fromMe: Boolean(key.fromMe),
     isSelfChat,
     senderName: raw.pushName ?? undefined,

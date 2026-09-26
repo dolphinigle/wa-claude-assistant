@@ -6,7 +6,7 @@ import makeWASocket, {
 import pino from 'pino'
 import qrcode from 'qrcode-terminal'
 import { parseCommand } from '../owner.js'
-import { backoffMs, classifyDisconnect, extractText, getMeIds, normalizeUpsert, toEpochSeconds } from './wa-normalize.js'
+import { backoffMs, classifyDisconnect, extractText, getMeIds, isSelfChatJid, normalizeUpsert, toEpochSeconds } from './wa-normalize.js'
 
 const HISTORY_PER_CHAT = 50
 const MAX_META_AI_IDS = 500
@@ -160,7 +160,7 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       // The phone's own form of the self-chat JID (PN vs LID is unverified) is the best target for notices. Only a
       // real command counts, so other traffic on an own JID cannot re-point the notices.
       const { message } = normalized
-      if (message.isSelfChat && message.fromMe && !config.whatsapp?.selfChatJid && isKnownCommand(message.text)) selfChatJid = message.chatId
+      if (message.fromMe && isSelfChatJid(message.chatId, meIds) && !config.whatsapp?.selfChatJid && isKnownCommand(message.text)) selfChatJid = message.chatId
       try {
         await onMessage(normalized.message)
       } catch (error) {
@@ -216,8 +216,10 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       try { await sock?.end(undefined) } catch {}
     },
     send,
+    // Notices carry other customers' texts and numbers: they may only ever go to one of the owner's own JIDs.
     sendToSelf (text, options) {
       if (!selfChatJid) throw new Error('self-chat JID unknown (not connected yet)')
+      if (!isSelfChatJid(selfChatJid, meIds)) throw new Error(`self-chat target ${selfChatJid} is not one of the own JIDs (${meIds.join(', ') || 'unknown'}); refusing to send a notice there`)
       return send(selfChatJid, text, options)
     },
     async markRead (messages) {
