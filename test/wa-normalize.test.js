@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { WAMessageStubType } from 'baileys'
-import { backoffMs, classifyDisconnect, classifyJid, getMeIds, isSelfChatJid, normalizeUpsert, toEpochSeconds } from '../src/transport/wa-normalize.js'
+import { attachmentKind, backoffMs, classifyDisconnect, classifyJid, getMeIds, isSelfChatJid, normalizeUpsert, toEpochSeconds } from '../src/transport/wa-normalize.js'
 
 const ME = { id: '6281111111111:7@s.whatsapp.net', lid: '99887766554433:7@lid', name: 'Owner' }
 const meIds = getMeIds(ME)
@@ -63,6 +63,17 @@ test('ephemeral, viewOnce and document-with-caption wrappers are unwrapped', () 
   assert.equal(viewOnce.attachment, 'image', 'a captioned file is marked, so a thanks with a payment proof is not a closing')
   assert.equal(normalizeUpsert(wa({ documentWithCaptionMessage: { message: { documentMessage: { caption: 'invoice' } } } }), { type: 'notify', meIds }).message.attachment, 'document')
   assert.equal(normalizeUpsert(wa({ conversation: 'makasih kak' }), { type: 'notify', meIds }).message.attachment, undefined)
+})
+
+test('content without text is named too, so a thanks after a location pin or contact card is not a closing', () => {
+  for (const [contentType, kind] of [['locationMessage', 'location'], ['liveLocationMessage', 'location'], ['contactMessage', 'contact'],
+    ['contactsArrayMessage', 'contact'], ['pollCreationMessageV3', 'poll'], ['eventMessage', 'event'], ['orderMessage', 'other'], ['someFutureMessage', 'other']]) {
+    assert.equal(attachmentKind(contentType), kind, contentType)
+  }
+  for (const contentType of ['conversation', 'extendedTextMessage', 'stickerMessage', 'reactionMessage', 'protocolMessage', 'pollUpdateMessage', undefined]) {
+    assert.equal(attachmentKind(contentType), undefined, contentType)
+  }
+  assert.deepEqual(normalizeUpsert(wa({ locationMessage: { degreesLatitude: -6.9, degreesLongitude: 107.6 } }), { type: 'notify', meIds }), { skip: 'no_text', id: '3EB0A1B2C3D4E5F6', contentType: 'locationMessage' }, 'still never triaged')
 })
 
 test('skips: status, broadcast list, group, newsletter, Meta AI, non-text, reactions, protocol, ciphertext', () => {

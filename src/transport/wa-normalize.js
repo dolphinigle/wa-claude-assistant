@@ -29,12 +29,22 @@ export function extractText (message) {
   return { text: text ?? undefined, contentType, quotedText: quotedText ?? undefined, isForwarded }
 }
 
-// Files whose content nobody but the owner can see: only their caption reaches Claude. Stickers and reactions are not
-// included, and carry no text anyway.
-const ATTACHMENT_KINDS = { imageMessage: 'image', videoMessage: 'video', ptvMessage: 'video', documentMessage: 'document', audioMessage: 'audio' }
+// What nobody but the owner can see: files, of which only the caption reaches Claude, and content without text (a
+// location pin, a contact card, a poll), which is never triaged but must still hold a thanks after it. Anything not
+// named here is 'other'. Text, stickers, reactions and protocol messages are not such content.
+const ATTACHMENT_KINDS = {
+  imageMessage: 'image', videoMessage: 'video', ptvMessage: 'video', documentMessage: 'document', audioMessage: 'audio',
+  locationMessage: 'location', liveLocationMessage: 'location', contactMessage: 'contact', contactsArrayMessage: 'contact',
+  pollCreationMessage: 'poll', pollCreationMessageV2: 'poll', pollCreationMessageV3: 'poll', pollCreationMessageV4: 'poll',
+  pollCreationMessageV5: 'poll', eventMessage: 'event'
+}
+const NOT_ATTACHMENTS = new Set(['conversation', 'extendedTextMessage', 'protocolMessage', 'reactionMessage', 'encReactionMessage',
+  'stickerMessage', 'lottieStickerMessage', 'stickerSyncRmrMessage', 'stickerPackMessage', 'pollUpdateMessage', 'encEventResponseMessage',
+  'keepInChatMessage', 'pinInChatMessage', 'senderKeyDistributionMessage', 'fastRatchetKeySenderKeyDistributionMessage',
+  'placeholderMessage', 'secretEncryptedMessage', 'encCommentMessage', 'albumMessage'])
 
-/** 'image' | 'video' | 'document' | 'audio' for a message that carries a file, else undefined. */
-export const attachmentKind = contentType => ATTACHMENT_KINDS[contentType]
+/** 'image' | 'video' | 'document' | 'audio' | 'location' | 'contact' | 'poll' | 'event' | 'other', or undefined for text. */
+export const attachmentKind = contentType => (!contentType || NOT_ATTACHMENTS.has(contentType) ? undefined : ATTACHMENT_KINDS[contentType] ?? 'other')
 
 export function toEpochSeconds (timestamp) {
   if (timestamp === null || timestamp === undefined) return 0

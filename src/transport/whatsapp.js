@@ -270,7 +270,7 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       const keys = messages.map(message => message.raw?.key).filter(Boolean)
       if (keys.length > 0 && sock && connected) await sock.readMessages(keys)
     },
-    // A photo without a caption stays in: a thanks after an unseen payment proof is not a closing.
+    // A photo without a caption, a location pin or a contact card stays in: a thanks after one is not a closing.
     getHistory (chatId, limit) {
       return (history.get(chatId) ?? []).filter(item => item.text || item.attachment).slice(-limit)
         .map(({ id, fromMe, text, attachment, timestamp }) => ({ id, fromMe, text: text ?? '', attachment, timestamp }))
