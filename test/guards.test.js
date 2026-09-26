@@ -56,6 +56,27 @@ test('a detail must come from a fact the reply cites, and match its kind', () =>
   assert.deepEqual(check('Buka jam 8 sampai jam 5 ya Kak', ['F1']), { ok: true, reasons: [] })
 })
 
+test('a duration, percentage or hour in a cited fact never licenses the same bare number or another unit', () => {
+  for (const [reply, facts, reason] of [
+    ['Brownies tahan 3 pekan di suhu ruang ya Kak.', ['F12'], 'unsupported_duration:3 w'],
+    ['Brownies tahan 3 bln di suhu ruang ya Kak.', ['F12'], 'unsupported_duration:3 mo'],
+    ['Brownies tahan 3 thn di suhu ruang ya Kak.', ['F12'], 'unsupported_duration:3 y'],
+    ['Kue kering tahan 1 thn ya Kak.', ['F12'], 'unsupported_duration:1 y'],
+    ['Pesan paling lambat 2 hari sebelumnya ya Kak, minimal 3 loyang.', ['F9'], 'unsupported_quantity:3 loyang'],
+    ['Brownies tahan 3 fortnight ya Kak.', ['F12'], 'unsupported_quantity:3 fortnight'],
+    ['Minimal 20 loyang ya Kak, Rp 85.000.', ['F5'], 'unsupported_quantity:20 loyang'],
+    ['Pesan paling lambat 2 hari sebelumnya, minimal 3 ya Kak.', ['F9'], 'unsupported_number:3'],
+    ['DP 50% ya Kak, untuk 50 pesanan.', ['F10'], 'unsupported_quantity:50 pesanan'],
+    ['Pesanan minimal 8 ya Kak.', ['F1'], 'unsupported_number:8']
+  ]) {
+    const result = check(reply, facts)
+    assert.ok(result.reasons.includes(reason), `${reply}: ${result.reasons}`)
+  }
+  assert.deepEqual(check('Buka 8 sampai 5 ya Kak', ['F1']), { ok: true, reasons: [] }, 'an hour next to a time word')
+  assert.deepEqual(check('Kue kering tahan 1 bln dalam toples tertutup ya Kak', ['F12']), { ok: true, reasons: [] }, 'a unit abbreviation of the cited duration')
+  assert.deepEqual(extractDetails('3 pekan, 2 mgg, 10 detik, 1 thn, 6 bln').durations, ['3 w', '2 w', '10 s', '1 y', '6 mo'])
+})
+
 test('numbers without ASCII digits fail closed: words, fullwidth and other scripts', () => {
   for (const [reply, reason] of [
     ['Brownies harganya seratus ribu ya Kak.', 'unsupported_number_word:seratus,ribu'],
@@ -109,7 +130,8 @@ test('replies built from facts pass', () => {
 test('unsupported details fail with a reason', () => {
   const cases = [
     ['Cheesecake harganya Rp 150.000', 'unsupported_amount:150000'],
-    ['Kami buka tanggal 25 Desember', 'unsupported_number:25'],
+    ['Kami buka tanggal 25 Desember', 'unsupported_quantity:25 desember'],
+    ['Tanggal 25 ya Kak', 'unsupported_number:25'],
     ['Buka sampai 21.00 kak', 'unsupported_time:21:00'],
     ['Hubungi 0812-3456-7890 ya', 'unsupported_phone:6281234567890'],
     ['Cek https://bit.ly/promo', 'unsupported_url:bit.ly/promo'],

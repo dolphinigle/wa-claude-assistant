@@ -6,12 +6,13 @@
 const THOUSANDS = /^\d{1,3}(?:[.,]\d{3})+$/
 const MULTIPLIERS = { rb: 1e3, ribu: 1e3, k: 1e3, jt: 1e6, juta: 1e6 }
 const DURATION_UNITS = {
-  menit: 'min', minute: 'min', minutes: 'min', min: 'min', mins: 'min',
-  jam: 'h', hour: 'h', hours: 'h', hr: 'h', hrs: 'h',
+  detik: 's', dtk: 's', second: 's', seconds: 's', sec: 's', secs: 's',
+  menit: 'min', mnt: 'min', minute: 'min', minutes: 'min', min: 'min', mins: 'min',
+  jam: 'h', jm: 'h', hour: 'h', hours: 'h', hr: 'h', hrs: 'h',
   hari: 'd', day: 'd', days: 'd',
-  minggu: 'w', week: 'w', weeks: 'w',
-  bulan: 'mo', month: 'mo', months: 'mo',
-  tahun: 'y', year: 'y', years: 'y'
+  minggu: 'w', mgg: 'w', pekan: 'w', week: 'w', weeks: 'w', wk: 'w', wks: 'w',
+  bulan: 'mo', bln: 'mo', month: 'mo', months: 'mo',
+  tahun: 'y', thn: 'y', year: 'y', years: 'y', yr: 'y', yrs: 'y'
 }
 const DAY_PARTS = { pagi: 'am', siang: 'noon', sore: 'pm', malam: 'night' }
 
@@ -28,7 +29,13 @@ const PERCENT = /(?<![\d.,])(\d+(?:[.,]\d+)?)\s*(?:%|persen\b|percent\b)/gi
 const MONEY_PREFIX = /(?:\brp\.?|\bidr)\s*(\d[\d.,]*\d|\d)(?:\s*(rb|ribu|k|jt|juta)\b)?/gi
 const MONEY_SUFFIX = /(?<![\d.,])(\d[\d.,]*\d|\d)\s*(rb|ribu|k|jt|juta)\b/gi
 const THOUSANDS_NUMBER = /(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?![\d])/g
+// A number with a word that is not a known unit ("3 loyang", "3 fortnight") carries that word as its unit: it must
+// appear with the same word in the cited facts. Words that only connect a bare number to the sentence are not units.
+const QUANTITY = /(?<![\d.,])(\d+(?:[.,]\d+)?)\s*(\p{L}+)(?![\p{L}\p{N}])/gu
+const NOT_UNITS = new Set('ya yah kak kakak dan atau sampai hingga sd s x to and or until till dengan untuk ke di dari wib wita wit'.split(' '))
 const NUMBER = /\d+(?:[.,]\d+)?/g
+// "buka 8 sampai 5" may reuse the hour of a cited opening time as a bare number, but only next to a time word.
+const TIME_WORDS = /\b(?:jam|pukul|buka|tutup|open|opens|close|closes|closed|wib|wita|wit)\b/i
 
 // Numbers written as words carry no digits for the checks above ("seratus ribu", "seminggu", "one hundred"), so any
 // such word must also appear in the cited facts. Common words like "satu" (salah satu) or "one" just mean a draft.
@@ -76,7 +83,7 @@ export const normalizeText = input => String(input ?? '').normalize('NFKC').repl
 /** Extracts concrete details from text. Matched spans are blanked so later passes don't double count. */
 export function extractDetails (input) {
   let text = normalizeText(input)
-  const details = { urls: [], emails: [], phones: [], times: [], hours: [], durations: [], percents: [], amounts: [], numbers: [], numberWords: [], otherDigits: false }
+  const details = { urls: [], emails: [], phones: [], times: [], hours: [], durations: [], percents: [], amounts: [], quantities: [], numbers: [], numberWords: [], otherDigits: false }
   const take = (pattern, handle) => {
     text = text.replace(pattern, (...match) => {
       const keep = handle(...match)
@@ -98,6 +105,11 @@ export function extractDetails (input) {
   take(MONEY_PREFIX, (_, amount, unit) => { details.amounts.push(Math.round(parseDecimal(amount) * (MULTIPLIERS[unit?.toLowerCase()] ?? 1))) })
   take(MONEY_SUFFIX, (_, amount, unit) => { details.amounts.push(Math.round(parseDecimal(amount) * MULTIPLIERS[unit.toLowerCase()])) })
   take(THOUSANDS_NUMBER, amount => { details.amounts.push(parseDecimal(amount)) })
+  take(QUANTITY, (_, amount, word) => {
+    const unit = word.toLowerCase()
+    if (NOT_UNITS.has(unit)) return false // left for the bare-number pass
+    details.quantities.push(`${parseDecimal(amount)} ${unit}`)
+  })
   take(NUMBER, number => { details.numbers.push(parseDecimal(number)) })
   details.numberWords = (text.toLowerCase().match(/\p{L}+/gu) ?? []).filter(isNumberWord)
   details.otherDigits = /\p{Nd}/u.test(text) // digits of other scripts (٣, ३, …): nothing above can check them
@@ -122,11 +134,12 @@ export function buildAllowList (knowledge, factIds) {
   const factsText = ids ? ids.map(id => knowledge.facts.get(id)).join('\n') : knowledge.factsText.replace(/\[F\d+\]/gi, ' ')
   const details = extractDetails(factsText)
   const times = new Set([...details.times, ...details.hours.flatMap(hourReadings)])
-  const numbers = new Set([...details.numbers, ...details.percents, ...details.durations.map(duration => Number(duration.split(' ')[0]))])
+  // Kinds stay apart: the 3 of "3 hari" or the 50 of "50%" never licenses a bare 3 or 50 ("minimal 3 loyang").
+  const hourNumbers = new Set()
   for (const minutes of times) {
     const hour = Math.floor(minutes / 60)
-    numbers.add(hour) // "buka 8" for 08.00
-    if (hour > 12) numbers.add(hour - 12) // "sampai 5" for 17.00
+    hourNumbers.add(hour) // "buka 8" for 08.00
+    if (hour > 12) hourNumbers.add(hour - 12) // "sampai 5" for 17.00
   }
   const allow = {
     urls: new Set(details.urls),
@@ -136,7 +149,9 @@ export function buildAllowList (knowledge, factIds) {
     durations: new Set(details.durations),
     percents: new Set(details.percents),
     amounts: new Set(details.amounts),
-    numbers,
+    quantities: new Set(details.quantities),
+    numbers: new Set(details.numbers),
+    hourNumbers,
     numberWords: new Set(details.numberWords),
     factsLower: normalizeText(factsText).toLowerCase()
   }
@@ -216,7 +231,8 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
   check('duration', details.durations, allow.durations)
   check('percent', details.percents, allow.percents)
   check('amount', details.amounts, allow.amounts)
-  check('number', details.numbers, allow.numbers)
+  check('quantity', details.quantities, allow.quantities)
+  check('number', details.numbers, TIME_WORDS.test(text) ? new Set([...allow.numbers, ...allow.hourNumbers]) : allow.numbers)
   check('number_word', details.numberWords, allow.numberWords)
   if (details.otherDigits) reasons.push('non_ascii_digits')
 
