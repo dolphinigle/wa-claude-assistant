@@ -9,6 +9,7 @@ import { buildUserTurn } from './prompt.js'
 
 export const CATEGORIES = ['simple', 'complex', 'important', 'ignore']
 const KILL_GRACE_MS = 5000
+const EXIT_DRAIN_MS = 1000
 const MAX_STDERR_CHARS = 4000
 
 export function buildArgs ({ model, systemPromptFile, schemaJson }) {
@@ -139,6 +140,8 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
       let failure
       let settled = false
       let killTimer
+      let forceTimer
+      let drainTimer
 
       // A non-empty sandbox means something wrote into Claude's cwd; refuse rather than let it be read.
       const leftovers = readdirSync(sandboxDir)
@@ -149,17 +152,31 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
 
       let child
       try {
-        child = spawn(claude.bin, args, { cwd: sandboxDir, env: buildEnv(claude), stdio: ['pipe', 'pipe', 'pipe'], shell: false })
+        // Its own process group: a timeout or shutdown then also reaches whatever it started (a wrapper script that
+        // does not exec, a helper process), which would otherwise keep stdout open and the call pending.
+        child = spawn(claude.bin, args, { cwd: sandboxDir, env: buildEnv(claude), stdio: ['pipe', 'pipe', 'pipe'], shell: false, detached: true })
       } catch (error) {
         resolve({ ok: false, error: `spawn_failed: ${error.message}`, meta: { durationMs: 0 } })
         return
       }
 
+      const signalGroup = signal => {
+        try { process.kill(-child.pid, signal) } catch { try { child.kill(signal) } catch {} }
+      }
+      // Settles without waiting for 'close', which needs every holder of the pipes (descendants included) to exit.
+      const abandon = (exitCode = child.exitCode, signal = child.signalCode ?? 'SIGKILL') => {
+        child.stdout.destroy()
+        child.stderr.destroy()
+        finish(exitCode, signal)
+      }
       const kill = reason => {
         failure ??= reason
-        if (child.exitCode !== null || child.signalCode !== null) return
-        child.kill('SIGTERM')
-        killTimer ??= setTimeout(() => child.kill('SIGKILL'), killGraceMs)
+        if (settled) return
+        signalGroup('SIGTERM')
+        killTimer ??= setTimeout(() => {
+          signalGroup('SIGKILL')
+          forceTimer = setTimeout(abandon, EXIT_DRAIN_MS) // held by a process outside the group
+        }, killGraceMs)
       }
       running.add(kill)
       const timeout = setTimeout(() => kill('timeout'), claude.timeoutMs)
@@ -235,8 +252,7 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
         if (settled) return
         settled = true
         running.delete(kill)
-        clearTimeout(timeout)
-        clearTimeout(killTimer)
+        for (const timer of [timeout, killTimer, forceTimer, drainTimer]) clearTimeout(timer)
         try {
           settle(exitCode, signal)
         } catch (error) {
@@ -245,6 +261,10 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
       }
 
       child.on('error', error => { failure ??= `spawn_failed: ${error.message}`; finish(null, null) })
+      // The child exited but something it started still holds its stdout: stop that and settle with what was read.
+      child.on('exit', (code, signal) => {
+        drainTimer = setTimeout(() => { signalGroup('SIGKILL'); abandon(code, signal) }, EXIT_DRAIN_MS)
+      })
       child.on('close', (code, signal) => finish(code, signal))
       child.stdin.end(stdinText)
     })

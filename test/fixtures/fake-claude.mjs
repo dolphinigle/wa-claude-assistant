@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Stand-in for the `claude` binary in unit tests. It reads stdin like the real CLI and picks a scenario from a
 // "SCENARIO:<name>" marker inside the message text, since the wrapper's env and argv are fixed.
+import { spawn } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 
 const chunks = []
@@ -87,6 +88,21 @@ switch (scenario) {
     out(init)
     setInterval(() => {}, 1000)
     break
+  case 'grandchild_holds_stdout': {
+    // A wrapper that started a helper sharing our stdout, then hangs: the helper keeps the pipe open after we die.
+    const helper = spawn('sleep', ['30'], { stdio: ['ignore', 'inherit', 'inherit'] })
+    process.stderr.write(`GRANDCHILD=${helper.pid}\n`)
+    out(init)
+    setInterval(() => {}, 1000)
+    break
+  }
+  case 'exit_leaves_grandchild': {
+    // A complete, successful run whose helper outlives it while holding stdout.
+    const helper = spawn('sleep', ['30'], { stdio: ['ignore', 'inherit', 'inherit'] })
+    helper.unref()
+    out(init); out(rateLimit); out(result({ structured_output: { ...triage, reason: JSON.stringify({ grandchild: helper.pid }) } }))
+    break
+  }
   case 'write_sandbox':
     writeFileSync('leaked.txt', 'x')
     out(init); out(rateLimit); out(result())

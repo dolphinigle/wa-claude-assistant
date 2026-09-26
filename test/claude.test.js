@@ -136,6 +136,34 @@ test('a child that ignores SIGTERM is SIGKILLed after the grace period', async t
   assert.ok(Date.now() - started < 3000)
 })
 
+const isGone = async pid => {
+  for (let tries = 0; tries < 50; tries++) {
+    try { process.kill(pid, 0) } catch { return true }
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  return false
+}
+
+test('a timed-out call whose helper holds stdout settles on time: the whole process group is killed', { timeout: 10_000 }, async t => {
+  const started = Date.now()
+  const result = await ask(brainFor(t, { timeoutMs: 300 }, { killGraceMs: 200 }), 'SCENARIO:grandchild_holds_stdout')
+  const pid = Number(result.meta.stderr?.match(/GRANDCHILD=(\d+)/)?.[1])
+  t.after(() => { try { process.kill(pid, 'SIGKILL') } catch {} })
+  assert.equal(result.error, 'timeout')
+  assert.ok(Date.now() - started < 2500, `settled after ${Date.now() - started} ms`)
+  assert.ok(pid > 0 && await isGone(pid), 'the helper was killed too')
+})
+
+test('a finished call whose helper outlives it still settles with its result', { timeout: 10_000 }, async t => {
+  const started = Date.now()
+  const result = await ask(brainFor(t), 'SCENARIO:exit_leaves_grandchild')
+  const pid = JSON.parse(result.triage?.reason ?? '{}').grandchild
+  t.after(() => { try { process.kill(pid, 'SIGKILL') } catch {} })
+  assert.equal(result.ok, true, result.error)
+  assert.ok(Date.now() - started < 3000, `settled after ${Date.now() - started} ms`)
+  assert.ok(await isGone(pid), 'the helper was killed')
+})
+
 test('a `null` JSON line is skipped, not a crash, and the result after it still counts', async t => {
   const result = await ask(brainFor(t), 'SCENARIO:null_line')
   assert.equal(result.ok, true, result.error)
