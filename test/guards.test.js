@@ -183,7 +183,9 @@ test('a reply without facts passes only in a purely social exchange', () => {
     ['thanks!', "You're welcome! Have a nice day."],
     ['👍', 'Sama-sama ya Kak'],
     ['🙏🏽', 'Terima kasih juga, Kak ❤️'],
-    ['bye, thanks', 'Thank you too! Take care.']
+    ['bye, thanks', 'Thank you too! Take care.'],
+    ['makasih kak, selamat siang', 'Sama-sama, Kak. Selamat siang 🙏'], // a greeting may go with a thanks
+    ['Thank you so much :)', "You're welcome!"]
   ]) assert.deepEqual(social(reply, incoming), { ok: true, reasons: [] }, `${incoming} → ${reply}`)
 
   for (const [incoming, reply] of [
@@ -218,8 +220,40 @@ test('a reply without facts passes only in a purely social exchange', () => {
     ['', 'Sama-sama Kak'],
     ['kak', 'Sama-sama Kak'],
     ['dibantu ya kak', 'Sama-sama Kak'],
-    ['ditunggu ya kak', 'Sama-sama Kak']
+    ['ditunggu ya kak', 'Sama-sama Kak'],
+    // a greeting alone opens a conversation, and friendly words out of their phrase complain
+    ['Selamat pagi kak', 'Terima kasih, Kak. Selamat pagi 🙏'],
+    ['halo kak', 'Sama-sama Kak'],
+    ['Pagi kak 🙏', 'Sama-sama Kak 🙏'],
+    ['too much', "You're welcome!"],
+    ['no good', "You're welcome!"],
+    ['ok :(', 'Sama-sama Kak']
   ]) assert.ok(social(reply, incoming).reasons.includes('no_facts_used'), `${incoming} → ${reply}`)
+})
+
+test('the customer side is matched as phrases: a greeting alone, or a friendly word out of its phrase, is no thanks', () => {
+  for (const text of ['ok makasih kak 🙏', 'makasih banyak ya kak', 'thank you very much', 'thanks a lot!', 'thank you too', 'no problem kak',
+    'see you soon', 'sampai jumpa lagi kak', 'hati-hati ya kak', 'oh ok kak', 'good night', 'makasih kak, selamat malam', 'Great, thanks!',
+    'ok kak :)', 'makasih:)', 'mksh kak ^^', 'sip 👌', '🙏🏽', 'Terima kasih kembali kak ❤️']) {
+    assert.equal(isSocialMessage(text), true, text)
+  }
+  for (const text of ['Selamat pagi kak', 'halo kak', 'hai', 'hello', 'good morning', 'pagi kak', 'selamat malam kak', 'Pagi kak 🙏', 'halo kak 🙏',
+    'no good', 'too much', 'it was too much', 'oh no', 'no no no', 'so bad', 'wow', 'wah', 'ya kak', 'infonya kak', 'selamat ya kak',
+    'ok :(', 'ok -_-', 'T_T', 'makasih *kak*', 'ok kak :/']) {
+    assert.equal(isSocialMessage(text), false, text)
+  }
+})
+
+test('a thanks answered with facts fails: nobody asked for them, and a fact licenses a promise', () => {
+  const check = (reply, factsUsed, incomingText) => checkReply({ reply, factsUsed, incomingText }, { knowledge, ...guards })
+  for (const [incoming, reply, facts] of [
+    ['ok makasih kak 🙏', 'Sama-sama kak, besok kami kirim ya', ['F3']],
+    ['thanks!', "Thanks! We're open now", ['F1']],
+    ['makasih kak', 'Sama-sama kak, pesanannya pasti kami siapkan tepat waktu ya', ['F9']],
+    ['ok kak', 'Siap kak, sudah kami catat pesanannya ya', ['F13']],
+    ['makasih kak', 'Sama-sama, Kak 🙏', ['F1']]
+  ]) assert.ok(check(reply, facts, incoming).reasons.includes('social_message_answered_with_facts'), `${incoming} → ${reply}`)
+  assert.deepEqual(check('Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya Kak.', ['F1'], 'ok kak, jam buka?'), { ok: true, reasons: [] }, 'a question with its thanks is no social message')
 })
 
 test('the customer side may acknowledge; the reply side is a closed set of closings', () => {
