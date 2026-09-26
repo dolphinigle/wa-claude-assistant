@@ -197,7 +197,9 @@ research and uses more of your subscription quota. Re-run `npm run eval` after c
 
 ## Config reference
 
-`config.json` holds the defaults; `config.local.json` (gitignored) is deep-merged over it (arrays replace).
+`config.json` holds the defaults; `config.local.json` (gitignored) is deep-merged over it (arrays replace). A key that
+was removed stops the start instead of being ignored: `autoSend.minConfidence` (the confidence gate is gone since the
+answer/escalate switch; delete the key).
 
 | Key | Default | Meaning |
 |---|---|---|

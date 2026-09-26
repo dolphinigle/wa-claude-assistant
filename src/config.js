@@ -22,6 +22,12 @@ function readJson (file) {
   }
 }
 
+// Keys that no longer do anything. A stricter value set in config.local.json must not be dropped without a word, so
+// the start is refused until the owner removes it.
+const REMOVED_KEYS = [
+  ['autoSend.minConfidence', 'the confidence gate was removed with the answer/escalate decision; see "Safety defaults" in the README for the gates that apply']
+]
+
 /**
  * config.json (committed defaults) deep-merged with config.local.json (gitignored), then `overrides`.
  * Relative paths are resolved against `rootDir`.
@@ -33,6 +39,9 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
   const config = deepMerge(deepMerge(base, local), overrides)
 
   if (!['shadow', 'live'].includes(config.mode)) throw new Error(`config.mode must be "shadow" or "live", got ${JSON.stringify(config.mode)}`)
+  for (const [key, why] of REMOVED_KEYS) {
+    if (key.split('.').reduce((node, part) => node?.[part], config) !== undefined) throw new Error(`config ${key} is no longer supported (${why}); remove it from config.local.json`)
+  }
   config.rootDir = rootDir
   config.paths = {
     auth: path.resolve(rootDir, config.paths.auth),
