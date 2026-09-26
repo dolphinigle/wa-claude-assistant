@@ -870,6 +870,71 @@ test('drafted after a closing: our side said something new, a file, a quote of a
   assert.equal(store.getDraft(7).closing, false, 'a thanks with a file closes nothing')
 })
 
+test('live /ok or /edit after a photo, voice note or pin came in while the thanks draft waited: the next thanks is drafted (skip-safety-r2-1)', async t => {
+  for (const approve of ['/ok 1', '/edit 1 Sama-sama kak, sehat selalu 🙏']) {
+    for (const attachment of ['image', 'audio', 'location', 'other']) {
+      const { transport, store, advance, stamp, say, command, skipped } = chatSetup(t)
+      await say(ALICE, 'jam berapa buka kak?')
+      await say(ALICE, 'ok makasih kak')
+      advance(20_000)
+      transport.remember({ id: 'IMG1', chatId: ALICE, fromMe: false, text: '', attachment, ...stamp() }) // never triaged, only remembered
+      await command(approve)
+      assert.ok(store.isClosingReply(transport.toCustomer().at(-1).id), `${approve}: sent as the closing`)
+      await say(ALICE, '🙏')
+      assert.deepEqual([skipped(), store.pendingDrafts().map(draft => draft.excerpt)], [[], ['🙏']], `${approve}, ${attachment}`)
+    }
+  }
+})
+
+test('untriaged content on the other addressing form, or before a restart, is never skipped over (consistency-r2-2)', async t => {
+  const LID = '123456789012345@lid'
+  for (const where of ['other form', 'restart']) {
+    const { transport, store, assistant, advance, stamp, say, command, skipped } = chatSetup(t)
+    await say(ALICE, 'jam berapa buka kak?', { chatIdAlt: LID })
+    await say(ALICE, 'ok makasih kak', { chatIdAlt: LID })
+    await command('/no 1')
+    advance(20_000)
+    // As the WhatsApp transport reports a captionless photo: remembered in its own chat's history, and noted.
+    const photo = { id: 'IMG1', chatId: where === 'other form' ? LID : ALICE, chatIdAlt: where === 'other form' ? ALICE : undefined, ...stamp(), attachment: 'image' }
+    transport.remember({ ...photo, fromMe: false, text: '' })
+    assistant.noteUntriaged(photo)
+    if (where === 'restart') transport.history.clear()
+    await say(ALICE, 'makasih kak 🙏')
+    assert.deepEqual([skipped(), store.pendingDrafts().map(draft => draft.excerpt)], [[], ['makasih kak 🙏']], where)
+  }
+})
+
+test('a thanks quoting our older photo or voice note after a closing is drafted (skip-safety-r2-2)', async t => {
+  const meIds = getMeIds({ id: '6281111111111:7@s.whatsapp.net' })
+  for (const quotedMessage of [{ imageMessage: { mimetype: 'image/jpeg' } }, { audioMessage: { ptt: true } }, { locationMessage: { degreesLatitude: -6.9 } }]) {
+    const { store, deliver, advance, stamp, say, command, skipped } = chatSetup(t)
+    await deliver({ id: 'P1', chatId: ALICE, fromMe: true, isSelfChat: false, text: '', attachment: 'image', ...stamp(), kind: 'notify' })
+    advance(31 * 60_000)
+    await say(ALICE, 'ok makasih kak')
+    await command('/ok 1')
+    advance(60_000)
+    const raw = { key: { remoteJid: ALICE, id: `Q${Math.random()}`, fromMe: false }, message: { extendedTextMessage: { text: 'ok makasih kak 👍', contextInfo: { stanzaId: 'P1', quotedMessage } } }, messageTimestamp: stamp().timestamp, pushName: 'Sari' }
+    await deliver(normalizeUpsert(raw, { type: 'notify', meIds }).message)
+    assert.deepEqual([skipped(), store.pendingDrafts().map(draft => draft.excerpt)], [[], ['ok makasih kak 👍']], Object.keys(quotedMessage)[0])
+  }
+})
+
+test('a yes or a thanks with laughter, an emoticon or another spelling, answered with a fact, is never auto-sent (send-path-r2-1, consistency-r2-1)', async t => {
+  const respond = input => {
+    const text = input.messages.map(message => message.text).join(' ')
+    if (/Coblong/.test(text)) return triageResult({ decision: 'escalate', reply: 'Bisa Kak. Mau dikirim pakai GoSend?' })
+    return triageResult({ decision: 'answer', reply: 'Baik Kak, dikirim pakai GoSend ya, ongkir dibayar pembeli.', facts_used: ['F3'] })
+  }
+  const { transport, store, say, command, reasons } = chatSetup(t, { respond })
+  await say(ALICE, 'Kak brownies bisa dikirim ke Coblong?')
+  await command('/ok 1')
+  const texts = ['iya kak hehe', 'iya kak :D', 'ok kak :p', 'siap kak :v', 'iya kak <3', 'Yes please', 'makasih kak hehe 🙏', 'Terima kasih atas bantuannya']
+  for (const text of texts) await say(ALICE, text)
+  assert.deepEqual(texts.map((_, index) => reasons(index + 2)), Array(texts.length).fill(['decision:answer', 'guard:social_message_answered_with_facts']))
+  assert.deepEqual(transport.toCustomer().map(item => item.text), ['Bisa Kak. Mau dikirim pakai GoSend?'])
+  assert.equal(store.pendingDrafts().length, texts.length)
+})
+
 test('a restart empties the history: a closing this session stands, one from an earlier session does not', async t => {
   const { transport, store, advance, say, command, skipped } = chatSetup(t)
   await say(ALICE, 'jam buka kak?')

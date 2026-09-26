@@ -50,19 +50,21 @@ function setup (t, whatsapp = {}, { lidToPn } = {}) {
   const store = new Store(dir)
   const { sockets, createSocket } = fakeSockets(lidToPn)
   const received = []
+  const untriaged = []
   const fatal = []
   let ready = 0
   const connections = []
   const transport = createWhatsAppTransport({
     config, store, logger: silent, createSocket,
     onMessage: async message => { received.push(message) },
+    onUntriaged: item => { untriaged.push(item) },
     onReady: () => { ready++ },
     onConnected: info => { connections.push(info) },
     onFatal: verdict => { fatal.push(verdict) }
   })
   t.after(() => transport.stop())
   const emit = (event, payload) => sockets.at(-1).ev.emit(event, payload)
-  return { store, transport, sockets, received, fatal, emit, ready: () => ready, connections: () => connections.length, outages: () => connections.map(info => info.outageMs) }
+  return { store, transport, sockets, received, untriaged, fatal, emit, ready: () => ready, connections: () => connections.length, outages: () => connections.map(info => info.outageMs) }
 }
 
 const open = emit => emit('connection.update', { connection: 'open' })
@@ -250,6 +252,34 @@ test('the owner\'s own Meta AI prompts are dropped and never re-point the self-c
   assert.deepEqual(received.map(message => message.id), ['MA2'], 'only the stanza with an @bot recipient is known to be Meta AI')
   await transport.sendToSelf('🤖 hi', { messageId: 'N1' })
   assert.equal(sockets[0].sent[0].jid, OWNER_PN, 'an unknown /command does not move the notices')
+})
+
+test('a customer\'s content that is never triaged is reported with its chat and time; stickers, reactions and our own files are not', async t => {
+  const { transport, received, untriaged, emit } = setup(t)
+  await transport.start()
+  open(emit)
+  const LID = '123456789012345@lid'
+  const photo = raw(LID, { imageMessage: { mimetype: 'image/jpeg' } }, { key: { remoteJid: LID, remoteJidAlt: CUSTOMER, id: 'IMG1', fromMe: false } })
+  const stub = { key: { remoteJid: CUSTOMER, id: 'X1', fromMe: false }, message: null, messageStubType: 2, messageTimestamp: nowSeconds() }
+  emit('messages.upsert', {
+    type: 'notify',
+    messages: [photo, stub, raw(CUSTOMER, { stickerMessage: {} }), raw(CUSTOMER, { reactionMessage: { text: '👍', key: { id: 'IMG1' } } }),
+      raw(CUSTOMER, { imageMessage: { caption: 'ini kak' } }), raw(CUSTOMER, { imageMessage: {} }, { key: { remoteJid: CUSTOMER, id: 'OWN1', fromMe: true } })]
+  })
+  await sleep(5)
+  assert.deepEqual(untriaged.map(item => [item.id, item.chatId, item.chatIdAlt, item.attachment, item.timestamp]),
+    [['IMG1', LID, CUSTOMER, 'image', photo.messageTimestamp], ['X1', CUSTOMER, undefined, 'other', stub.messageTimestamp]])
+  assert.deepEqual(received.map(message => message.text), ['ini kak', ''], 'the captioned photo is triaged; the owner\'s own photo starts a takeover')
+})
+
+test('an untriaged file on a LID chat with no alt gets its phone number from the local LID mapping', async t => {
+  const LID = '123456789012345@lid'
+  const { transport, untriaged, emit } = setup(t, {}, { lidToPn: { [LID]: CUSTOMER } })
+  await transport.start()
+  open(emit)
+  emit('messages.upsert', { type: 'notify', messages: [raw(LID, { locationMessage: { degreesLatitude: -6.9 } }, { key: { remoteJid: LID, id: 'PIN1', fromMe: false } })] })
+  await sleep(5)
+  assert.deepEqual(untriaged.map(item => [item.chatId, item.chatIdAlt, item.attachment]), [[LID, CUSTOMER, 'location']])
 })
 
 test('a decrypted resend replaces its ciphertext stub in the history', async t => {

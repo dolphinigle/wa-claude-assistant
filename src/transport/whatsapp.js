@@ -47,13 +47,15 @@ export async function createBaileysSocket ({ authDir, logger, getMessage }) {
 /**
  * @param {object} options
  * @param {(message: object) => Promise<void>} options.onMessage  normalized customer/self-chat messages
+ * @param {(item: {id: string, chatId: string, chatIdAlt?: string, timestamp: number, attachment: string}) => void} [options.onUntriaged]
+ *   a customer's content that is never triaged: a file without a caption, a pin, a contact card, an undecryptable message
  * @param {() => void} [options.onReady]  first successful connection of this process
  * @param {(info: {outageMs: number}) => void} [options.onConnected]  every successful (re)connection, e.g. to re-send
  *   failed notices; `outageMs` is how long WhatsApp was unreachable before it (0 on the first connection)
  * @param {(verdict: object) => void} [options.onFatal]  the transport stopped and will not reconnect
  * @param {Function} [options.createSocket]  injectable for tests; defaults to the real Baileys socket
  */
-export function createWhatsAppTransport ({ config, store, onMessage, onReady, onConnected, onFatal, logger = console, createSocket = createBaileysSocket }) {
+export function createWhatsAppTransport ({ config, store, onMessage, onUntriaged, onReady, onConnected, onFatal, logger = console, createSocket = createBaileysSocket }) {
   const baileysLogger = createBaileysLogger()
   const history = new Map() // chatId → [{id, fromMe, text, timestamp, raw}]
   const metaAiIds = new Set() // ids of the owner's own Meta AI prompts (see connect())
@@ -190,6 +192,10 @@ export function createWhatsAppTransport ({ config, store, onMessage, onReady, on
       remember(raw)
       // A placeholder-resend answer (requestId) is a replay with the original timestamp, not a live message.
       const normalized = normalizeUpsert(raw, { type: requestId ? 'append' : type, meIds })
+      if (normalized.untriaged) {
+        normalized.untriaged.chatIdAlt ??= await resolvePhoneJid(normalized.untriaged.chatId) // links the two forms, as for a message
+        try { onUntriaged?.(normalized.untriaged) } catch (error) { logger.error(`[whatsapp] untriaged handler failed: ${error.stack ?? error.message}`) }
+      }
       if (normalized.skip === 'ciphertext') {
         // Past maxAge the assistant would skip the message anyway; don't ask the phone for it.
         const ageMs = Date.now() - toEpochSeconds(raw.messageTimestamp) * 1000

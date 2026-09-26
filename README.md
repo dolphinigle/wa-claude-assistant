@@ -163,8 +163,11 @@ cancelled.
 - **Attachments are never auto-answered:** Claude sees a photo's, video's or document's caption and is told a file
   is attached, but never the file, so a `makasih kak 🙏` on a transfer screenshot is a draft
   (`thanks_not_auto_sent, attachment:image`), gets no blue ticks, and the notice shows `[image] makasih kak 🙏`. A
-  photo without a caption, a location pin, a contact card or other content without text is not triaged, but it stays
-  in the chat history (Claude sees it as `attachment="location"` and so on), so a thanks after it is never skipped.
+  photo without a caption, a voice note, a location pin, a contact card, a message that could not be decrypted or
+  other content without text is not triaged, but it stays in the chat history (Claude sees it as
+  `attachment="location"` and so on) and its time is kept in `data/state.json`, so a thanks after it is never skipped:
+  also when it came while a thanks draft waited and your `/ok` sent the closing after it, when it came on the other
+  addressing form, and after a restart.
 - **A thanks is never auto-answered** (owner decision, 2026-09-26). Whatever Claude decides and whatever facts it
   cites, an answer to a thanks is a draft whose notice leads with `thanks_not_auto_sent`, so Claude's thanks-back
   (`Sama-sama, Kak 🙏`) waits for your `/ok`. A thanks is skipped, with no reply and no notice (audited as action
@@ -174,8 +177,9 @@ cancelled.
   only when it is itself just a thanks-back: one that asks or offers anything (`Sama-sama kak! Mau sekalian pesan
   untuk Sabtu?`) is new, so an `iya kak, makasih 🙏` after it is drafted. Any other message from our side after that
   thanks (on either addressing form, and from before a restart: the time of our last word is kept in
-  `data/state.json`), anything but a thanks from the customer (an `iya`, a question, a photo, a location pin, a
-  message that could not be decrypted), a thanks with a file or one that quotes an older message, a closing from an
+  `data/state.json`), anything but a thanks from the customer since that thanks (an `iya`, a question, a photo, a
+  location pin, a message that could not be decrypted), a thanks with a file or one that quotes an older message
+  (also a photo, voice note or pin of ours, which has no text: quotes are matched by message id), a closing from an
   earlier session (`disclosure.sessionGapHours`) and a failed triage are never skipped. Every other thanks is a
   draft, also while another draft of that chat is open. In shadow mode the bot's answers never reach the chat, so a
   thanks after a shadow auto-reply meets the customer's question still unanswered in the history and is drafted
@@ -191,10 +195,13 @@ cancelled.
   and phrases that can agree to, arrange or ask for something (`no problem`, `anytime`, `see you`, `sampai jumpa`,
   `hati-hati`, `lagi`, `dong`) are not in that vocabulary: after a closing they are drafted, not skipped. For
   auto-send it is matched broadly, since a false match only costs a draft while a miss could auto-send a promise
-  (`isSocialMessage`): all of the above, a yes alone (`iya kak`, `boleh`, `mau`, 👍), a thanks with a request
-  (`makasih kak, ditunggu ya`), other spellings (`tks`, `thank u`, `hatur nuhun`, repeated letters as in
-  `makasihh kakk`) and a greeting next to any of them. An answer to such a message is never auto-sent, whatever it
-  cites; neither is a reply that says `sama-sama` or `you're welcome`, however the customer spelled the thanks.
+  (`isSocialMessage`): all of the above, a yes alone (`iya kak`, `boleh`, `mau`, `please`, `lanjut`, `ya udah`, 👍),
+  a thanks with a request (`makasih kak, ditunggu ya`), other spellings (`tks`, `thank u`, `mksi`, `hatur nuhun`,
+  `terima kasih atas bantuannya`, repeated letters as in `makasihh kakk`), laughter (`hehe`, `wkwk`), any text
+  emoticon (`:D`, `xD`, `:v`, `:(`, `<3`) and a greeting next to any of them, at any length (a burst of thanks is
+  still social). An answer to such a message is never auto-sent, whatever it cites; neither is a reply that says
+  `sama-sama`, `you're (very) welcome`, `senang bisa membantu` or `happy to help`, or that opens with `no problem`,
+  `anytime` or `kembali kasih`, however the customer spelled the thanks.
 - **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with a short
   Indonesian/English line saying it is an automated AI reply. Approved drafts carry no marker.
 - **Contacts are shown with their number:** notices say `Name (+62…)`, because the name is the sender's own
@@ -283,8 +290,9 @@ its auto-send is forbidden: a thanks is never auto-answered, so the policy draft
 (a skip reaches nobody, so an `escalate` fixture may only be skipped if it sets `skipOk`); both must be 0.
 
 - [eval/last-run.md](eval/last-run.md) is a **rescore** (2026-09-26, no Claude calls) of the full run below with
-  the current guards and policy, after the change that never auto-answers a thanks and the review fixes that hold
-  any answer to a social message or with a thanks-back: **0 forbidden auto-sends**, **0 skipped escalations**,
+  the current guards and policy, after the change that never auto-answers a thanks and two rounds of review fixes
+  (hold any answer to a social message or with a thanks-back, a broader social matcher, untriaged content and quotes
+  of files never skipped over): **0 forbidden auto-sends**, **0 skipped escalations**,
   decision **20/20**, **3/3 allowed cases auto-sent**. Sonnet's `Sama-sama, Kak 🙏` to "ok makasih kak 🙏" is now a
   draft (`thanks_not_auto_sent`; the guards add `no_facts_used, thanks_back`).
 - The full run on `claude-sonnet-5` with thinking off (2026-09-26, 20 calls), after the closing rules were tightened
@@ -354,7 +362,10 @@ Prototype limits of this code:
 - Text only: incoming media without a caption, location pins, contact cards and the like are not triaged (they only
   show in the history Claude gets, as an attachment it cannot see), captioned
   media is triaged on its caption and never auto-answered, edits and deletions (`messages.update`) are ignored; no
-  typing indicator. Your own replies from the phone start the human takeover whatever they are (voice note, sticker,
+  typing indicator. A question sent right after a photo without a caption (`yang kayak gini harganya berapa?`) is
+  triaged on its own: Claude sees the photo as an attachment in the history and is told to escalate, but no
+  deterministic gate holds its answer (open owner question: hold any answer while the customer's newest file is
+  unanswered). Your own replies from the phone start the human takeover whatever they are (voice note, sticker,
   photo, reaction).
 - Drafts can still over-promise or invent details (e.g. "we don't have sugar-free options"): that is why escalations
   always wait for you.
@@ -365,8 +376,10 @@ Prototype limits of this code:
   defense there. There is no self-reported confidence score (owner decision).
 - The in-memory history per chat starts empty after a restart (plus whatever history sync delivers), so right after
   one a thanks is skipped whenever a closing was recorded this session, even if the customer wrote something else
-  before the restart (an unanswered question: it was triaged on its own) that the history no longer shows. Words of
-  ours are not lost that way: which of our messages were sent as closings, and when our side last wrote, are kept in
-  `data/state.json`. State is a single JSON file: fine for one owner, not for volume.
+  before the restart (an unanswered question: it was triaged on its own, so you have its draft) that the history no
+  longer shows. The same holds for a question on the contact's other addressing form. Words of ours and content that
+  is never triaged are not lost that way: which of our messages were sent as closings, when our side last wrote, and
+  when the customer last sent a file, pin or undecryptable message are kept in `data/state.json`. State is a single
+  JSON file: fine for one owner, not for volume.
 - Only one process may run per `auth/`: a second copy replaces the first, which gets status 440 and stops rather
   than fight.

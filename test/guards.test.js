@@ -199,6 +199,19 @@ test('a reply without facts never passes, and a thanks-back is held by its own w
   assert.deepEqual(reply('Thanks for asking! We are at Jl. Contoh Raya No. 12, Coblong, Bandung.', ['F2']), { ok: true, reasons: [] })
 })
 
+test('the thanks-back backstop knows every thanks-back the customer side lists (send-path-r2-2)', () => {
+  const hours = ' Kami buka Senin–Sabtu pukul 08.00–17.00 WIB.'
+  for (const opening of ['Senang bisa membantu, Kak!', 'Senang membantu Kak 🙏', 'Kembali kasih, Kak!', "You're very welcome!", 'You are most welcome.',
+    'Your welcome kak!', 'Happy to help!', 'Glad I could help!', 'No problem!', 'No worries, Kak.', 'Anytime!']) {
+    assert.deepEqual(reply(opening + hours, ['F1'], 'Terima kasih atas bantuannya'), { ok: false, reasons: ['social_message_answered_with_facts', 'thanks_back'] }, opening)
+    assert.deepEqual(reply(opening + hours, ['F1']).reasons, ['thanks_back'], `${opening}, whatever the customer wrote`)
+  }
+  // "No problem" and "kembali kasih" only as the opening: inside an answer they mean something else.
+  for (const text of ['Nanti kami kembali kasih kabar ya Kak.' + hours, 'Kami buka Senin–Sabtu pukul 08.00–17.00 WIB, no problem kalau datang sore.']) {
+    assert.deepEqual(reply(text, ['F1']), { ok: true, reasons: [] }, text)
+  }
+})
+
 test('an answer to a thanks, a goodbye or a yes alone is held whatever it cites: a fact there licenses a promise nobody asked for', () => {
   for (const [incoming, text, facts] of [
     ['ok kak', 'Siap kak, sudah kami catat pesanannya ya', ['F13']],
@@ -244,9 +257,32 @@ test('isSocialMessage: every thanks, and also a goodbye or a yes alone, other sp
   }
   // A greeting alone opens a conversation; a digit or a word outside the vocabulary is content.
   for (const text of ['Selamat pagi kak', 'halo kak', 'pagi kak 🙏', 'hai 😊', 'kak', 'wah', ':)', '', '...', 'ok 2 loyang', 'dibantu kak',
-    'iya kak, dikirim besok ya', 'no good', 'jam berapa buka?', 'makasih 🙏'.repeat(40), 'ok '.repeat(31), undefined]) {
+    'iya kak, dikirim besok ya', 'no good', 'jam berapa buka?', 'hehe', 'hi', 'kami kembali kasih kabar', 'ok '.repeat(300) + 'tolong refund', undefined]) {
     assert.equal(isSocialMessage(text), false, String(text))
   }
+})
+
+test('isSocialMessage: laughter, text emoticons and the common ways to say yes or thanks (send-path-r2-1, consistency-r2-1)', () => {
+  for (const text of ['makasih kak hehe', 'makasih kak hehe 🙏', 'iya kak hehe', 'iya kak wkwk', 'ok kak wkwkwk', 'haha oke kak makasih',
+    'ahahah siap kak', 'ok lol', 'oke kak :D', 'ok kak xD', 'iya kak :D', 'ok kak :p', 'siap kak :v', 'iya kak <3', 'oke kak :3', 'ok kak :(',
+    'makasih :D', 'makasih;p', 'makasih kak <3', 'Yes please', 'ya udah kak', 'yaudah kak', 'jadi kak', 'fix kak', 'oke lanjut', 'gas kak',
+    'sudah kak', "thank's kak", 'thx u', 'mksi kak', 'trmksh kak', 'Terima kasih atas bantuannya', 'Terima kasih atas infonya kak',
+    'makasih kak sangat membantu', 'Thanks, much appreciated!', 'senang bisa membantu kak', 'kembali kasih kak', 'your welcome']) {
+    assert.equal(isSocialMessage(text), true, text)
+  }
+  // Everything isThanks takes is social too, smileys included: the broad matcher never knows less than the narrow one.
+  for (const text of [...THANKS_EXAMPLES, 'makasih :D', 'makasih;p', 'makasih kak <3', 'makasih kak :)']) {
+    if (isThanks(text)) assert.equal(isSocialMessage(text), true, text)
+  }
+})
+
+test('isSocialMessage has no size limit: a burst of thanks or a spammed one is still social (send-path-r2-4)', () => {
+  const burst = ['Makasih banyak ya kak ' + '🙏'.repeat(10), 'iya kak siap ' + '👍'.repeat(5), 'makasih ya kak ' + '❤️'.repeat(10)].join('\n')
+  for (const text of [burst, 'Makasih kak ' + '🙏'.repeat(30), 'makasih 🙏'.repeat(40), 'ok '.repeat(31), 'makasih kak '.repeat(100)]) {
+    assert.equal(isThanks(text), false, 'too long for the skip')
+    assert.equal(isSocialMessage(text), true, 'held all the same')
+  }
+  assert.deepEqual(reply('Siap Kak, ditunggu pesanannya ya. Pesan paling lambat 2 hari sebelumnya.', ['F9'], burst).reasons, ['social_message_answered_with_facts'])
 })
 
 test('isThanks: an acknowledgement or 👍 alone, a greeting, a question, digits or any other symbol is no thanks', () => {
@@ -268,18 +304,24 @@ test('isThanks: an acknowledgement or 👍 alone, a greeting, a question, digits
   }
 })
 
-test('isThanks: a long message is no thanks and costs little to reject: no backtracking, no recursion', () => {
+test('isThanks: a long message is no thanks and costs little to reject; isSocialMessage scans it in linear time', () => {
   assert.equal(isThanks('good bye '.repeat(8)), true, '16 words may still be a thanks')
   assert.equal(isThanks('good bye '.repeat(8) + 'kak'), false, '17 are not')
   assert.equal(isThanks('🙏'.repeat(17)), false)
-  const adversarial = ['good bye '.repeat(5000) + 'x', 'makasih '.repeat(5000), 'ok '.repeat(20000), 'ok '.repeat(12000) + 'tolong refund ke rekening saya',
-    'good bye '.repeat(7) + 'x', 'good bye '.repeat(14) + 'x', '🙏'.repeat(20000)]
-  const started = performance.now()
+  // [text, isSocialMessage]: a recursive split was exponential on "good bye" × n + "x".
+  const adversarial = [['good bye '.repeat(5000) + 'x', false], ['makasih '.repeat(5000), true], ['ok '.repeat(20000), true],
+    ['ok '.repeat(12000) + 'tolong refund ke rekening saya', false], ['good bye '.repeat(7) + 'x', false], ['good bye '.repeat(14) + 'x', false],
+    ['🙏'.repeat(20000), true], ['hehe '.repeat(13000), false], ['makasih kak :D '.repeat(4300), true]]
+  let started = performance.now()
   for (let round = 0; round < 50; round++) {
-    for (const text of adversarial) assert.equal(isThanks(text) || isSocialMessage(text), false, `${text.length} chars`)
+    for (const [text] of adversarial) assert.equal(isThanks(text), false, `${text.length} chars`)
   }
-  const elapsed = performance.now() - started
-  assert.ok(elapsed < 1000, `${Math.round(elapsed)} ms`)
+  assert.ok(performance.now() - started < 1000, `isThanks: ${Math.round(performance.now() - started)} ms`)
+  started = performance.now()
+  for (let round = 0; round < 5; round++) {
+    for (const [text, social] of adversarial) assert.equal(isSocialMessage(text), social, `${text.length} chars`)
+  }
+  assert.ok(performance.now() - started < 1000, `isSocialMessage: ${Math.round(performance.now() - started)} ms`)
 })
 
 test('a sensitive term that appears in the facts is allowed', () => {

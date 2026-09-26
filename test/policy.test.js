@@ -141,6 +141,43 @@ test('closedThisSession: our side wrote after the thanks where this history does
   }
 })
 
+test('closedThisSession: what the customer sent after the closed thanks is new, even where our closing reply came later (skip-safety-r2-1)', () => {
+  const reply = ours('Sama-sama, Kak 🙏', 20, { closing: true })
+  for (const attachment of ['image', 'audio', 'location', 'other']) {
+    assert.equal(closed([...THANKED, customer('', 29, { attachment }), reply]), false, `${attachment} while the thanks draft waited`)
+  }
+  assert.equal(closed([...THANKED, customer('', 30, { attachment: 'image' }), reply]), false, 'a file in the thanks\' own second: order unknown')
+  assert.equal(closed([...THANKED, customer('kak saya sudah transfer', 25), reply]), false, 'a question the draft never showed')
+  assert.equal(closed([...THANKED, customer('', 29, { attachment: 'image', timestamp: undefined }), reply]), false, 'a file of unknown age')
+  // What came before the thanks, or with it, was part of the thanks the owner dealt with.
+  assert.equal(closed([customer('', 35, { attachment: 'image' }), customer('jam buka?', 33), ours('Buka 08.00 ya', 32), customer('ok makasih kak', 30), reply]), true)
+  assert.equal(closed([...ANSWERED, customer('makasih kak', 30), customer('👍', 30), reply]), true, 'a burst: its 👍 is from the thanks\' second')
+  assert.equal(closed([...THANKED, customer('🙏', 25), reply]), true, 'a thanks while it waited is passed over')
+})
+
+test('closedThisSession: untriaged content on either form or before a restart is new from the closed thanks on (consistency-r2-2)', () => {
+  const closedWith = (history, lastUntriagedAt) => closedThisSession(history, { lastClosingAt: CLOSED_AT, sessionStart: SESSION_START, lastUntriagedAt })
+  for (const history of [THANKED, [...THANKED, ours('Sama-sama, Kak 🙏', 20, { closing: true })], []]) {
+    assert.equal(closedWith(history, at(10) * 1000), false, 'a photo after the thanks, which this history does not show')
+    assert.equal(closedWith(history, CLOSED_AT), false, 'in the same second: unknown order, so new')
+    assert.equal(closedWith(history, at(40) * 1000), true, 'before the thanks: the closing stands')
+  }
+  assert.equal(decide(triageResult(THANKS), thanksContext([], { lastUntriagedAt: at(10) * 1000 })).action, 'escalate', 'decide passes it on')
+})
+
+test('a thanks quoting an older message without text is drafted: quotes are told apart by id (skip-safety-r2-2)', () => {
+  const photo = ours('', 45, { attachment: 'image' })
+  const reply = ours('Sama-sama, Kak 🙏', 20, { closing: true })
+  const history = [photo, ...THANKED, reply]
+  const escalated = { action: 'escalate', reasons: ['decision:answer', 'thanks_not_auto_sent'] }
+  assert.deepEqual(decide(triageResult(THANKS), thanksContext(history, {}, { quoted: [{ id: photo.id, text: '' }] })), escalated, 'our older photo, by id')
+  assert.deepEqual(decide(triageResult(THANKS), thanksContext(history, {}, { quoted: [{ text: '' }] })), escalated, 'no id: an empty text is not our last')
+  const photoLast = [...THANKED, ours('', 25, { attachment: 'image' }), ours('', 24, { attachment: 'image', closing: true })]
+  assert.deepEqual(decide(triageResult(THANKS), thanksContext(photoLast, {}, { quoted: [{ id: photoLast.at(-2).id, text: '' }] })), escalated,
+    'two photos with no text: the id says which one')
+  assert.equal(decide(triageResult(THANKS), thanksContext(history, {}, { quoted: [{ id: reply.id, text: reply.text }] })).action, 'skip', 'our last message, by id')
+})
+
 test('a thanks after a closing this session is skipped, whatever Claude decided and whatever the gates say', () => {
   for (const triage of [THANKS, { decision: 'escalate', reply: '🙏' }, { ...THANKS, facts_used: ['F1'] }]) {
     for (const history of [THANKED, [...THANKED, ours('Sama-sama, Kak 🙏', 20, { closing: true })], []]) {

@@ -195,7 +195,8 @@ export function detectLanguage (text) {
 // - isThanks chooses the skip: a thanks right after a closing gets no reply and no notice (policy.js). It is narrow,
 //   since a missed thanks only becomes a draft while a false match could drop a real message.
 // - isSocialMessage holds the answer: whatever it cites, no answer to a thanks, a goodbye or a yes alone is auto-sent
-//   (checkReply). It is broad, since a false match only becomes a draft while a miss could auto-send a promise.
+//   (checkReply). It is broad, since a false match only becomes a draft while a miss could auto-send a promise: it
+//   has no size limit, and it takes any text emoticon and laughter ("iya kak :D", "makasih kak hehe").
 //
 // isThanks needs a thanks or goodbye; an acknowledgement ("ok", "iya", "siap") or a 👍 may only go with one, since
 // alone it can be a yes to something our side asked. Greetings are not in it: "Selamat pagi kak" opens a
@@ -215,20 +216,31 @@ const THANKS_PHRASES = {
   fillers: [...HONORIFICS, 'ya', 'yaa', 'deh', 'nih', 'juga', 'banyak', 'again', 'so much', 'very much', 'a lot', 'for your help',
     'for the help', 'for the info', 'infonya', 'you too', 'oh', 'oo', 'wah', 'and']
 }
+// Words that only answer a thanks. Claude's reply is held by them whatever the customer wrote, however the thanks was
+// spelled (checkReply); "Terima kasih sudah menghubungi kami" opens ordinary answers, so a plain thanks is not one. The
+// openers also answer a request ("No problem, kami kirim besok"), so only a reply that starts with one is held.
+// isSocialMessage takes both lists too, so the customer's side never knows fewer of them than the reply's side.
+const THANKS_BACK_PHRASES = ['sama sama', 'sama 2', 'terima kasih kembali', 'terimakasih kembali', 'makasih kembali', 'terima kasih juga',
+  'makasih juga', 'thank you too', 'thanks too', 'you re welcome', 'you are welcome', 'your welcome', 'you re very welcome',
+  'you re most welcome', 'you re so welcome', 'you are very welcome', 'you are most welcome', 'my pleasure', 'senang bisa membantu',
+  'senang dapat membantu', 'senang membantu', 'glad to help', 'glad i could help', 'glad we could help', 'happy to help']
+const THANKS_BACK_OPENERS = ['kembali kasih', 'no problem', 'no worries', 'anytime'] // "kami kembali kasih kabar" is no thanks-back
+
 // isSocialMessage takes all of that, plus what agrees to, arranges or asks for something ("no problem", "see you", a
-// yes alone: "iya kak", "boleh", "👍"; "makasih, ditunggu ya"), greetings next to any of it, other spellings of a thanks,
-// and repeated letters folded ("makasihh kakk"). A greeting alone is not social: "Selamat pagi kak" is answered like
-// any other message.
+// yes alone: "iya kak", "boleh", "please", "lanjut", "👍"; "makasih, ditunggu ya"), greetings next to any of it, other
+// spellings of a thanks, laughter, and repeated letters folded ("makasihh kakk"). A greeting alone is not social:
+// "Selamat pagi kak" is answered like any other message.
 const SOCIAL_PHRASES = {
-  closings: [...THANKS_PHRASES.closings, 'thank', 'thank u', 'thanks u', 'tks', 'mks', 'mksih', 'maksih', 'mkasih', 'makaseh', 'trimakasih',
-    'trima kasih', 'tysm', 'hatur nuhun', 'nuhun', 'matur nuwun', 'suwun', 'welcome', 'my pleasure', 'no problem', 'no worries', 'anytime',
-    'glad to help', 'happy to help', 'senang bisa membantu', 'senang membantu', 'see you', 'sampai jumpa', 'sampai ketemu', 'hati hati', 'you too'],
+  closings: [...THANKS_PHRASES.closings, ...THANKS_BACK_PHRASES, ...THANKS_BACK_OPENERS, 'thank', 'thank u', 'thanks u', 'thank s', 'thx u',
+    'tks', 'mks', 'mksi', 'mksih', 'maksih', 'mkasih', 'makaseh', 'makaci', 'trimakasih', 'trima kasih', 'trmksh', 'trmks', 'tysm',
+    'hatur nuhun', 'nuhun', 'matur nuwun', 'suwun', 'welcome', 'appreciated', 'much appreciated', 'appreciate it', 'i appreciate it',
+    'see you', 'sampai jumpa', 'sampai ketemu', 'hati hati', 'you too'],
   acknowledgements: [...THANKS_PHRASES.acknowledgements, 'ya', 'yaa', 'y', 'yoi', 'sure', 'boleh', 'mau', 'bisa', 'setuju', 'deal',
-    'sounds good', 'of course', 'mantul'],
+    'sounds good', 'of course', 'mantul', 'please', 'pls', 'plz', 'jadi', 'fix', 'lanjut', 'gas', 'udah', 'sudah', 'yaudah', 'yasudah'],
   greetings: ['selamat pagi', 'selamat siang', 'selamat sore', 'selamat malam', 'pagi', 'siang', 'sore', 'malam', 'good morning',
     'good afternoon', 'good evening', 'halo', 'hallo', 'hai', 'hi', 'hello', 'hey', 'salam'],
   fillers: [...THANKS_PHRASES.fillers.filter(phrase => !['ya', 'yaa', 'you too'].includes(phrase)), 'dong', 'lagi', 'soon', 'wow', 'banget',
-    'bgt', 'sekali', 'ditunggu', 'dibantu']
+    'bgt', 'sekali', 'ditunggu', 'dibantu', 'atas', 'bantuannya', 'informasinya', 'sangat', 'membantu', 'haha']
 }
 
 /**
@@ -247,7 +259,13 @@ function vocabulary (lists, fold = word => word) {
   return { kinds, phrases, fold, longest: Math.max(...[...phrases.keys()].map(phrase => phrase.split(' ').length)) }
 }
 const THANKS_VOCABULARY = vocabulary(THANKS_PHRASES)
-const SOCIAL_VOCABULARY = vocabulary(SOCIAL_PHRASES, word => word.replace(/(\p{L})\1+/gu, '$1')) // makasihh, kakk, okee
+// Laughter is spelled a hundred ways (hehe, wkwkwk, ahahah, kwkw, lol): matched by its shape, it becomes the one filler
+// "haha". Two syllables at least, so "hi" and "hai" stay greetings.
+const LAUGHTER = /^(?:[aeiou]?(?:h[aeiou]){2,}h?|k?(?:wk)+w?|lol|xd)$/u
+const SOCIAL_VOCABULARY = vocabulary(SOCIAL_PHRASES, word => {
+  const folded = word.replace(/(\p{L})\1+/gu, '$1') // makasihh, kakk, okee
+  return LAUGHTER.test(folded) ? 'haha' : folded
+})
 
 /**
  * The kinds of phrases each way of splitting the words into phrases of the vocabulary uses, as bitmasks; empty if
@@ -276,13 +294,15 @@ const EMOJI = /[\p{Extended_Pictographic}\p{So}]/gu
 const EMOJI_PARTS = /[\p{Emoji_Modifier}︎️]/gu // skin tones and presentation selectors: 🙏🏽, ❤️
 // Text smileys that are friendly; every other symbol ("ok :(", "-_-", "T_T") is not plain punctuation.
 const SMILEYS = /[:;=]-?(?:[)\]]|[dp](?!\p{L}))|\^_?\^|<3/gu
+// Every text emoticon, friendly or not, for isSocialMessage: next to a yes, ":D", ":p", ":v", "xD", ":(", ":3" or "<3"
+// still leaves a yes, and their letters and digits must not read as content.
+const EMOTICONS = /[:;=]['-]?(?:[()[\]/\\|*3]|[dpvo](?![\p{L}\p{N}]))|\^_*\^|<3|(?<![\p{L}\p{N}])(?:x-?d|-_+-|t_+t)(?![\p{L}\p{N}])/gu
 const PUNCTUATION = /[\s.,!~'’‘"“”–—-]/gu
 
-// A thanks or a yes is short: a longer message is content, whatever its words, and a spammed one is rejected before any
-// pass over it.
-const MAX_SOCIAL_CHARS = 300
+// A thanks is short: a longer message is content, whatever its words, and a spammed one is rejected before any pass
+// over it. (isSocialMessage has no such limit: there a longer message of social words only is still social.)
+const MAX_THANKS_CHARS = 300
 const MAX_THANKS_TOKENS = 16
-const MAX_SOCIAL_TOKENS = 30
 
 /**
  * The customer only thanks or says goodbye: a thanks or goodbye phrase, with at most acknowledgements, honorifics and
@@ -290,7 +310,7 @@ const MAX_SOCIAL_TOKENS = 30
  * friendly or agreeing emoji and friendly smileys, at most 16 words and emoji in at most 300 characters.
  */
 export function isThanks (input) {
-  if (String(input ?? '').length > MAX_SOCIAL_CHARS) return false
+  if (String(input ?? '').length > MAX_THANKS_CHARS) return false
   const text = normalizeText(input).toLowerCase().replace(SMILEYS, ' ')
   if (/[?¿]/.test(text) || /\p{N}/u.test(text)) return false
   if (text.replace(/\p{L}+/gu, '').replace(EMOJI, '').replace(EMOJI_PARTS, '').replace(PUNCTUATION, '') !== '') return false
@@ -304,27 +324,25 @@ export function isThanks (input) {
 }
 
 /**
- * The customer's words are only social: a thanks, a goodbye or a yes, with honorifics, softeners and maybe a greeting
- * around it, or emoji with no greeting ("👍", "kak 🙏"). Any emoji, symbol or question mark may go with it; a digit
- * or a word outside the vocabulary is content, and so is anything past 30 words and emoji or 300 characters.
+ * The customer's words are only social: a thanks, a goodbye or a yes, with honorifics, softeners, laughter and maybe a
+ * greeting around it, or emoji with no greeting ("👍", "kak 🙏"). Any emoji, emoticon, symbol or question mark may go
+ * with it; a digit or a word outside the vocabulary is content. However long it is: a burst of thanks is still social,
+ * and the split is linear.
  */
 export function isSocialMessage (input) {
-  if (String(input ?? '').length > MAX_SOCIAL_CHARS) return false
-  const text = normalizeText(input).toLowerCase()
+  const text = normalizeText(input).toLowerCase().replace(EMOTICONS, ' ')
   if (/\p{N}/u.test(text)) return false
   const words = text.match(/\p{L}+/gu) ?? []
   const emoji = text.match(EMOJI) ?? []
-  if (words.length + emoji.length > MAX_SOCIAL_TOKENS) return false
   const { closings, acknowledgements, greetings } = SOCIAL_VOCABULARY.kinds
   return splitKinds(words, SOCIAL_VOCABULARY).some(kinds => (kinds & (closings | acknowledgements)) !== 0 ||
     (emoji.length > 0 && (kinds & greetings) === 0))
 }
 
-// Words that only answer a thanks: Claude's thanks-back is held by them whatever the customer wrote, however the
-// thanks was spelled. "Terima kasih sudah menghubungi kami" opens ordinary answers, so a plain thanks is not one.
-const THANKS_BACK_PHRASES = ['sama sama', 'sama 2', 'terima kasih kembali', 'terimakasih kembali', 'makasih kembali', 'terima kasih juga',
-  'makasih juga', 'thank you too', 'thanks too', 'you re welcome', 'youre welcome', 'you are welcome', 'my pleasure']
-const THANKS_BACK = new RegExp(`(?<![\\p{L}\\p{N}])(?:${THANKS_BACK_PHRASES.map(phrase => phrase.replace(/ /g, '[^\\p{L}\\p{N}]*')).join('|')})(?![\\p{L}\\p{N}])`, 'iu')
+// Words are joined by any run of non-letters, none included: "sama-sama", "sama2", "you’re", "youre".
+const phrasePattern = phrase => phrase.replace(/ /g, '[^\\p{L}\\p{N}]*')
+const THANKS_BACK = new RegExp(`(?<![\\p{L}\\p{N}])(?:${THANKS_BACK_PHRASES.map(phrasePattern).join('|')})(?![\\p{L}\\p{N}])|` +
+  `^[^\\p{L}\\p{N}]*(?:${THANKS_BACK_OPENERS.map(phrasePattern).join('|')})(?![\\p{L}\\p{N}])`, 'iu')
 
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 // Indonesian attaches affixes to the very words the list is about (diskonnya, direfund, digratiskan, jaminan), and

@@ -210,8 +210,8 @@ export class Store {
   // --- inbound messages accepted but not routed yet --------------------------
 
   /** Kept until triage has decided, so a restart or crash between accepting and routing cannot lose it silently. */
-  addToInbox ({ id, chatId, chatIdAlt, senderName, text, attachment, quotedText, timestamp, kind, isBacklog }) {
-    this.state.inbox[id] = { id, chatId, chatIdAlt, senderName, text, attachment, quotedText, timestamp, kind, isBacklog, acceptedAt: this.now() }
+  addToInbox ({ id, chatId, chatIdAlt, senderName, text, attachment, quotedText, quotedId, timestamp, kind, isBacklog }) {
+    this.state.inbox[id] = { id, chatId, chatIdAlt, senderName, text, attachment, quotedText, quotedId, timestamp, kind, isBacklog, acceptedAt: this.now() }
     this.save()
   }
 

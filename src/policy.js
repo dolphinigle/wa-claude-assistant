@@ -12,6 +12,10 @@ const HOUR_MS = 60 * 60 * 1000
  * Whether a closing this session still stands, read from the newest message back. A closing is a thanks the owner
  * dealt with (its draft sent, edited or discarded, shadow included); `lastClosingAt` is when that thanks arrived.
  * - anything but a thanks from the customer (a question, an "iya", a file) is new: not closed
+ * - so is anything but a thanks the customer sent after the thanks the owner dealt with, wherever it sits: the owner's
+ *   closing reply, sent later, must not hide a photo that came while the draft waited (the draft never showed it)
+ * - so is `lastUntriagedAt` from that thanks on: content that is never triaged (a photo without a caption, a pin, a
+ *   message that could not be decrypted) on either form, or before a restart, which the history does not show
  * - the customer's own thanks since are passed over
  * - our message sent as that closing (`closing`: the owner's /ok or /edit of the thanks draft, when it is itself only a
  *   thanks-back) is the last word: closed
@@ -22,12 +26,19 @@ const HOUR_MS = 60 * 60 * 1000
  * - a history that ends before any message of ours (a restart empties it) leaves the recorded closing standing
  * @param {{fromMe: boolean, text?: string, attachment?: string, timestamp?: number, closing?: boolean}[]} history
  *   oldest first; timestamps in epoch seconds
- * @param {{lastClosingAt?: number, sessionStart?: number, lastOursAt?: number}} [options]  epoch ms; `lastOursAt`:
- *   when our side last wrote to this contact on either form, closings left out (assistant.js)
+ * @param {{lastClosingAt?: number, sessionStart?: number, lastOursAt?: number, lastUntriagedAt?: number}} [options]
+ *   epoch ms; `lastOursAt`: when our side last wrote to this contact on either form, closings left out;
+ *   `lastUntriagedAt`: when the customer last sent content that is never triaged, on either form (assistant.js)
  */
-export function closedThisSession (history = [], { lastClosingAt = 0, sessionStart = 0, lastOursAt = 0 } = {}) {
+export function closedThisSession (history = [], { lastClosingAt = 0, sessionStart = 0, lastOursAt = 0, lastUntriagedAt = 0 } = {}) {
   if (!(lastClosingAt > sessionStart)) return false
   if (lastOursAt >= lastClosingAt) return false
+  if (lastUntriagedAt >= lastClosingAt) return false
+  // A file never joins a triaged burst, so one from the thanks' own second may still be newer; a text from that second
+  // belongs to the burst the owner dealt with. Unknown age is new.
+  const newerFile = item => !(item.timestamp * 1000 < lastClosingAt)
+  const newerText = item => !(item.timestamp * 1000 <= lastClosingAt)
+  if (history.some(item => !item.fromMe && (item.attachment ? newerFile(item) : newerText(item) && !isThanks(item.text)))) return false
   for (let index = history.length - 1; index >= 0; index--) {
     const item = history[index]
     if (!item.fromMe) {
@@ -49,11 +60,12 @@ const flatText = text => normalizeText(text).replace(/\s+/g, ' ').trim()
  * @param {{ok: boolean, reasons: string[]}} [ctx.guard]  guards.checkReply() output for the reply
  * @param {string} [ctx.incomingText]  the new messages' text, joined
  * @param {string[]} [ctx.attachments]  kinds of the files attached to the new messages (image, video, …)
- * @param {string[]} [ctx.quoted]  texts of the earlier messages the new ones reply to (WhatsApp quotes)
+ * @param {(string|{id?: string, text?: string})[]} [ctx.quoted]  the earlier messages the new ones reply to (WhatsApp
+ *   quotes): their ids where known, and their texts ('' for a photo, a voice note or a pin)
  * @param {object[]} [ctx.history]  earlier messages of the chat, oldest first (see closedThisSession)
  * @param {boolean} ctx.paused
- * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, lastClosingAt?: number, lastOursAt?: number}} ctx.chat
- *   `lastClosingAt`: when the last thanks the owner dealt with arrived; `lastOursAt`: see closedThisSession
+ * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, lastClosingAt?: number, lastOursAt?: number, lastUntriagedAt?: number}} ctx.chat
+ *   `lastClosingAt`: when the last thanks the owner dealt with arrived; `lastOursAt`, `lastUntriagedAt`: see closedThisSession
  * @param {number} ctx.now  epoch ms
  * @param {number} ctx.chatAutoSendsLastHour
  * @param {number} ctx.autoSendsLastDay
@@ -67,15 +79,17 @@ export function decide (result, ctx) {
   const attachments = ctx.attachments ?? []
   const sessionMs = (config.disclosure?.sessionGapHours ?? 12) * HOUR_MS
   const thanks = ctx.incomingText !== undefined && isThanks(ctx.incomingText)
-  // A thanks quoting an earlier message answers that message, not our side's last one.
+  // A thanks quoting an earlier message answers that message, not our side's last one. Ids tell two messages apart
+  // even when neither has text (an older photo of ours quoted after our closing); texts are the fallback.
   const lastOurs = history.findLast(item => item.fromMe)
-  const quotesEarlier = (ctx.quoted ?? []).some(text => !lastOurs || flatText(text) !== flatText(lastOurs.text))
+  const quotesEarlier = (ctx.quoted ?? []).map(quote => (typeof quote === 'string' ? { text: quote } : quote ?? {}))
+    .some(({ id, text }) => !lastOurs || (id && lastOurs.id ? id !== lastOurs.id : flatText(text) !== flatText(lastOurs.text)))
 
   if (!result?.ok || !result.triage) return { action: 'escalate', reasons: [`triage_failed:${result?.error ?? 'unknown'}`] }
   const { decision } = result.triage
   // A thanks after a closing needs nothing from anyone, whatever Claude made of it.
   if (thanks && attachments.length === 0 && !quotesEarlier &&
-    closedThisSession(history, { lastClosingAt: chat.lastClosingAt, sessionStart: ctx.now - sessionMs, lastOursAt: chat.lastOursAt })) {
+    closedThisSession(history, { lastClosingAt: chat.lastClosingAt, sessionStart: ctx.now - sessionMs, lastOursAt: chat.lastOursAt, lastUntriagedAt: chat.lastUntriagedAt })) {
     return { action: 'skip', reasons: [`decision:${decision}`, 'closing_already_sent'] }
   }
   if (decision !== 'answer') return { action: 'escalate', reasons: [`decision:${decision}`] }

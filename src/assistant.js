@@ -41,6 +41,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   const lastClosingAt = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.lastClosingAt ?? 0))
   // Our side's last word on either form, kept across restarts: the owner on the phone, or any send but a closing.
   const lastOursAt = chatId => Math.max(0, ...linkedChats(chatId).flatMap(chat => [chat.ownerRepliedAt ?? 0, chat.lastSentAt ?? 0]))
+  const lastUntriagedAt = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.lastUntriagedAt ?? 0))
   const chatAutoSendsLastHour = chatId => store.linkedChatIds(chatId).reduce((sum, id) => sum + store.countChatAutoSends(id, HOUR_MS), 0)
   /** Epoch ms of a burst's newest message: a closing is dated by the thanks it closes, not by when it was handled. */
   const lastMessageAt = batch => Math.max(...batch.map(message => message.timestamp)) * 1000
@@ -189,6 +190,21 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const accepted = { ...message, isBacklog }
     store.addToInbox(accepted)
     if (!stopped) enqueue(accepted)
+  }
+
+  /**
+   * Content from a customer that is never triaged (a photo without a caption, a location pin, a contact card, a message
+   * that could not be decrypted yet) reaches the owner only on the phone. Its time is kept on the chat record, so a
+   * thanks after it is never skipped, even on the other addressing form or after a restart (policy.js).
+   */
+  function noteUntriaged ({ chatId, chatIdAlt, timestamp } = {}) {
+    if (!chatId || !(timestamp > 0)) return
+    const at = timestamp * 1000
+    const chat = store.chat(chatId)
+    store.updateChat(chatId, {
+      lastUntriagedAt: Math.max(chat.lastUntriagedAt ?? 0, at),
+      ...(chatIdAlt && { chatIdAlt }) // the contact's own message, like handleMessage's
+    })
   }
 
   async function handleSelfChat (message, isBacklog) {
@@ -351,7 +367,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       guard,
       incomingText,
       attachments,
-      quoted: batch.map(message => message.quotedText).filter(Boolean),
+      quoted: batch.filter(message => message.quotedId || message.quotedText !== undefined)
+        .map(message => ({ id: message.quotedId, text: message.quotedText ?? '' })),
       history: history.map(item => (item.fromMe ? { ...item, closing: store.isClosingReply(item.id) } : item)),
       paused: store.paused,
       chat: {
@@ -360,7 +377,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
         blocklistUnchecked: blocklistUnchecked(chatId),
         takeoverUntil: takeoverUntil(chatId),
         lastClosingAt: lastClosingAt(chatId),
-        lastOursAt: lastOursAt(chatId)
+        lastOursAt: lastOursAt(chatId),
+        lastUntriagedAt: lastUntriagedAt(chatId)
       },
       now: now(),
       chatAutoSendsLastHour: chatAutoSendsLastHour(chatId),
@@ -461,6 +479,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
 
   return {
     handleMessage,
+    noteUntriaged,
     flushOwnerOutbox,
     recoverInbox,
     gate,

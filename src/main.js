@@ -36,6 +36,7 @@ if (useConsole) {
     config,
     store,
     onMessage,
+    onUntriaged: item => assistant.noteUntriaged(item),
     onReady: () => { announce().catch(() => {}) },
     onConnected: ({ outageMs = 0 } = {}) => {
       // Nobody was told while it lasted: the socket was down. Messages from then arrive as backlog (drafts only).

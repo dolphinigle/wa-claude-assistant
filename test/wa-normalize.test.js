@@ -37,7 +37,7 @@ test('plain conversation', () => {
   const { message } = normalizeUpsert(wa({ conversation: 'Kak, buka jam berapa?' }), { type: 'notify', meIds })
   assert.deepEqual({ ...message, raw: undefined }, {
     id: '3EB0A1B2C3D4E5F6', chatId: CUSTOMER, chatIdAlt: undefined, fromMe: false, isSelfChat: false, senderName: 'Sari',
-    text: 'Kak, buka jam berapa?', timestamp: 1790400000, kind: 'notify', quotedText: undefined, contentType: 'conversation', attachment: undefined, isForwarded: false, raw: undefined
+    text: 'Kak, buka jam berapa?', timestamp: 1790400000, kind: 'notify', quotedText: undefined, quotedId: undefined, contentType: 'conversation', attachment: undefined, isForwarded: false, raw: undefined
   })
 })
 
@@ -48,6 +48,7 @@ test('extendedTextMessage with a quoted message and LID addressing with PN alt',
   const { message } = normalizeUpsert(raw, { type: 'append', meIds })
   assert.equal(message.text, 'yang ini kak')
   assert.equal(message.quotedText, 'Brownies 85rb')
+  assert.equal(message.quotedId, 'ABC')
   assert.equal(message.chatId, '123456789012345@lid', 'state is keyed by remoteJid exactly as received')
   assert.equal(message.chatIdAlt, CUSTOMER)
   assert.equal(message.kind, 'append')
@@ -73,7 +74,39 @@ test('content without text is named too, so a thanks after a location pin or con
   for (const contentType of ['conversation', 'extendedTextMessage', 'stickerMessage', 'reactionMessage', 'protocolMessage', 'pollUpdateMessage', undefined]) {
     assert.equal(attachmentKind(contentType), undefined, contentType)
   }
-  assert.deepEqual(normalizeUpsert(wa({ locationMessage: { degreesLatitude: -6.9, degreesLongitude: 107.6 } }), { type: 'notify', meIds }), { skip: 'no_text', id: '3EB0A1B2C3D4E5F6', contentType: 'locationMessage' }, 'still never triaged')
+  assert.deepEqual(normalizeUpsert(wa({ locationMessage: { degreesLatitude: -6.9, degreesLongitude: 107.6 } }), { type: 'notify', meIds }), {
+    skip: 'no_text', id: '3EB0A1B2C3D4E5F6', contentType: 'locationMessage',
+    untriaged: { id: '3EB0A1B2C3D4E5F6', chatId: CUSTOMER, chatIdAlt: undefined, timestamp: 1790400000, attachment: 'location' }
+  }, 'still never triaged, but reported as untriaged')
+})
+
+test('a customer\'s content that is never triaged is reported, with its chat and time: a file, a pin, an undecryptable message', () => {
+  const untriaged = (raw, type = 'notify') => normalizeUpsert(raw, { type, meIds }).untriaged
+  const lid = { remoteJid: '123456789012345@lid', remoteJidAlt: CUSTOMER }
+  assert.deepEqual(untriaged(wa({ imageMessage: { mimetype: 'image/jpeg' } }, lid)),
+    { id: '3EB0A1B2C3D4E5F6', chatId: '123456789012345@lid', chatIdAlt: CUSTOMER, timestamp: 1790400000, attachment: 'image' })
+  assert.equal(untriaged(wa({ audioMessage: { ptt: true } })).attachment, 'audio')
+  assert.equal(untriaged(wa({ imageMessage: { caption: '   ' } })).attachment, 'image', 'a blank caption is no text')
+  assert.equal(untriaged(wa(null, {}, { messageStubType: WAMessageStubType.CIPHERTEXT })).attachment, 'other')
+  assert.equal(untriaged(wa({ imageMessage: { mimetype: 'image/jpeg' } }), 'append').attachment, 'image', 'offline backlog too')
+  // Not content, triaged anyway, or not the customer's.
+  for (const raw of [wa({ stickerMessage: {} }), wa({ reactionMessage: { text: '👍', key: { id: 'X' } } }), wa({ conversation: '   ' }),
+    wa({ imageMessage: { caption: 'ini kak' } }), wa({ imageMessage: {} }, { fromMe: true }),
+    wa({ imageMessage: {} }, { remoteJid: '6281111111111@s.whatsapp.net', fromMe: true }), wa({ imageMessage: {} }, { remoteJid: '120363000000000000@g.us', participant: CUSTOMER })]) {
+    assert.equal(untriaged(raw), undefined, JSON.stringify(raw.message))
+  }
+})
+
+test('a quote of a message without text is still a quote: its id, and an empty text', () => {
+  for (const quotedMessage of [{ imageMessage: { mimetype: 'image/jpeg' } }, { audioMessage: { ptt: true } }, { locationMessage: { degreesLatitude: -6.9 } }]) {
+    const raw = wa({ extendedTextMessage: { text: 'ok makasih kak 👍', contextInfo: { stanzaId: 'P1', participant: '6281111111111@s.whatsapp.net', quotedMessage } } })
+    const { message } = normalizeUpsert(raw, { type: 'notify', meIds })
+    assert.deepEqual([message.quotedId, message.quotedText], ['P1', ''], Object.keys(quotedMessage)[0])
+  }
+  const idOnly = wa({ extendedTextMessage: { text: 'ok makasih kak', contextInfo: { stanzaId: 'P2' } } })
+  assert.deepEqual([normalizeUpsert(idOnly, { type: 'notify', meIds }).message.quotedId, normalizeUpsert(idOnly, { type: 'notify', meIds }).message.quotedText], ['P2', ''])
+  const forwarded = wa({ extendedTextMessage: { text: 'makasih kak', contextInfo: { isForwarded: true, forwardingScore: 1, expiration: 86400 } } })
+  assert.deepEqual([normalizeUpsert(forwarded, { type: 'notify', meIds }).message.quotedId, normalizeUpsert(forwarded, { type: 'notify', meIds }).message.quotedText], [undefined, undefined], 'contextInfo alone is no quote')
 })
 
 test('skips: status, broadcast list, group, newsletter, Meta AI, non-text, reactions, protocol, ciphertext', () => {

@@ -17,16 +17,22 @@ export function classifyJid (jid) {
   return 'other'
 }
 
+/**
+ * A quote (a reply to an earlier message) has `quotedId`, the quoted message's id, and `quotedText`, which is '' when
+ * the quoted message has no text (a photo without a caption, a voice note, a pin): it is still a quote. Neither is set
+ * on a message that quotes nothing.
+ */
 export function extractText (message) {
   const content = normalizeMessageContent(message)
-  if (!content) return { text: undefined, contentType: undefined, quotedText: undefined, isForwarded: false }
+  if (!content) return { text: undefined, contentType: undefined, quotedText: undefined, quotedId: undefined, isForwarded: false }
   const text = content.conversation ?? content.extendedTextMessage?.text ?? content.imageMessage?.caption ??
     content.videoMessage?.caption ?? content.documentMessage?.caption
   const contentType = getContentType(content)
   const contextInfo = typeof content[contentType] === 'object' ? content[contentType]?.contextInfo : undefined
-  const quotedText = contextInfo?.quotedMessage ? extractText(contextInfo.quotedMessage).text : undefined
+  const quotedId = contextInfo?.stanzaId || undefined
+  const quotedText = contextInfo?.quotedMessage || quotedId ? extractText(contextInfo.quotedMessage).text ?? '' : undefined
   const isForwarded = Boolean(contextInfo?.isForwarded || contextInfo?.forwardingScore > 0)
-  return { text: text ?? undefined, contentType, quotedText: quotedText ?? undefined, isForwarded }
+  return { text: text ?? undefined, contentType, quotedText, quotedId, isForwarded }
 }
 
 // What nobody but the owner can see: files, of which only the caption reaches Claude, and content without text (a
@@ -81,7 +87,7 @@ export function normalizeUpsert (raw, { type, meIds }) {
   const isSelfChat = isSelfChatJid(key.remoteJid, meIds)
   const chatIdAlt = key.remoteJidAlt && !isSelfChatJid(key.remoteJidAlt, meIds) ? key.remoteJidAlt : undefined
   const isCiphertext = isCiphertextStub(raw)
-  const { text, contentType, quotedText, isForwarded } = extractText(raw.message)
+  const { text, contentType, quotedText, quotedId, isForwarded } = extractText(raw.message)
   const message = {
     id: key.id,
     chatId: key.remoteJid,
@@ -93,6 +99,7 @@ export function normalizeUpsert (raw, { type, meIds }) {
     timestamp: toEpochSeconds(raw.messageTimestamp),
     kind: type === 'notify' ? 'notify' : 'append',
     quotedText,
+    quotedId,
     contentType,
     attachment: attachmentKind(contentType), // a caption ("makasih kak") can come with a payment proof
     isForwarded, // someone else's words: never an owner command, even in "Message yourself"
@@ -101,9 +108,13 @@ export function normalizeUpsert (raw, { type, meIds }) {
   // Anything the owner sends in a customer chat (voice note, sticker, reaction, even one we cannot decrypt) is a
   // human reply and must start the takeover, so it is kept before the text-only filters below.
   if (key.fromMe && !isSelfChat && (contentType || isCiphertext)) return { message }
-  if (isCiphertext) return { skip: 'ciphertext', id: key.id }
+  // A customer's content that is never triaged, which a thanks after it must not be skipped over (assistant.js).
+  const untriaged = !key.fromMe && !isSelfChat && (isCiphertext || message.attachment) && !text?.trim()
+    ? { id: key.id, chatId: message.chatId, chatIdAlt, timestamp: message.timestamp, attachment: isCiphertext ? 'other' : message.attachment }
+    : undefined
+  if (isCiphertext) return { skip: 'ciphertext', id: key.id, untriaged }
   if (!isRealMessage(raw)) return { skip: 'not_real', id: key.id }
-  if (!text?.trim()) return { skip: 'no_text', id: key.id, contentType }
+  if (!text?.trim()) return { skip: 'no_text', id: key.id, contentType, untriaged }
   return { message }
 }
 
