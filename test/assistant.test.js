@@ -1,0 +1,261 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { test } from 'node:test'
+import { createAssistant } from '../src/assistant.js'
+import { Store } from '../src/store.js'
+import { getMeIds, normalizeUpsert } from '../src/transport/wa-normalize.js'
+import { createFakeBrain, createFakeTransport, incoming, knowledge, makeConfig, SIMPLE_HOURS, sleep, tempDir, triageResult } from './helpers.js'
+
+const ALICE = '6282222222222@s.whatsapp.net'
+const BOB = '6283333333333@s.whatsapp.net'
+const silent = { log () {}, warn () {}, error () {} }
+
+// Picks the triage by keyword in the combined message text, like a very small model.
+const byKeyword = input => {
+  const text = input.messages.map(message => message.text).join(' ')
+  if (/jam|buka/i.test(text)) return triageResult(SIMPLE_HOURS)
+  if (/transfer/i.test(text)) return triageResult({ category: 'important', reply: 'Baik Kak, saya cek dulu.' })
+  if (/makasih/i.test(text)) return triageResult({ category: 'ignore' })
+  if (/cheesecake/i.test(text)) return triageResult({ category: 'simple', reply: 'Cheesecake Rp 150.000 ya Kak', facts_used: ['F5'] })
+  if (/crash/i.test(text)) return { ok: false, error: 'timeout', meta: {} }
+  return triageResult({ category: 'complex', reply: 'Baik Kak, saya tanyakan dulu ya.' })
+}
+
+function setup (t, { config: overrides = {}, respond = byKeyword } = {}) {
+  let clock = Date.now()
+  const now = () => clock
+  const dir = tempDir(t)
+  const config = makeConfig({ mode: 'live', debounceMs: 10, ...overrides }, dir)
+  const store = new Store(dir, { now, logger: silent })
+  const transport = createFakeTransport()
+  const brain = createFakeBrain(respond)
+  const assistant = createAssistant({ config, store, brain, transport, knowledge, now, logger: silent })
+  t.after(() => assistant.stop())
+  const deliver = async message => { await assistant.handleMessage(message); await assistant.idle() }
+  const owner = text => deliver({ id: `OWN${Math.random()}`, chatId: 'self', fromMe: true, isSelfChat: true, text, timestamp: Math.floor(clock / 1000), kind: 'notify' })
+  const audit = () => readFileSync(store.auditFile, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+  return { config, store, transport, brain, assistant, deliver, owner, audit, advance: ms => { clock += ms }, now }
+}
+
+const waitFor = async (condition, timeoutMs = 1000) => {
+  const started = Date.now()
+  while (!condition()) {
+    if (Date.now() - started > timeoutMs) throw new Error('waitFor timed out')
+    await sleep(2)
+  }
+}
+
+test('live: a simple question is auto-sent with disclosure, quoted, marked read, owner notified', async t => {
+  const { transport, deliver, store } = setup(t)
+  const message = incoming(ALICE, 'Kak jam berapa buka?', { raw: { key: { id: 'raw' } } })
+  await deliver(message)
+  const [sent] = transport.toCustomer()
+  assert.equal(sent.chatId, ALICE)
+  assert.ok(sent.text.startsWith('🤖 Balasan otomatis dari asisten AI'))
+  assert.ok(sent.text.endsWith(SIMPLE_HOURS.reply))
+  assert.deepEqual(sent.quotedRaw, message.raw)
+  assert.deepEqual(transport.read, [message.id])
+  assert.match(transport.toSelf()[0], /✅ Auto-replied to 6282222222222|✅ Auto-replied to /)
+  assert.ok(store.isSentByBot(sent.id), 'the customer send is loop-guarded')
+  assert.equal(store.countChatAutoSends(ALICE, 3_600_000), 1)
+})
+
+test('disclosure only on the first auto-reply of a session', async t => {
+  const { transport, deliver, advance } = setup(t)
+  await deliver(incoming(ALICE, 'jam buka?'))
+  advance(60 * 60 * 1000)
+  await deliver(incoming(ALICE, 'buka hari sabtu juga?'))
+  advance(13 * 60 * 60 * 1000)
+  await deliver(incoming(ALICE, 'jam buka lagi?'))
+  const disclosed = transport.toCustomer().map(item => item.text.startsWith('🤖 Balasan otomatis'))
+  assert.deepEqual(disclosed, [true, false, true])
+})
+
+test('shadow mode never sends to a customer, even on /ok', async t => {
+  const { transport, deliver, owner, store } = setup(t, { config: { mode: 'shadow' } })
+  await deliver(incoming(ALICE, 'jam buka?'))
+  await deliver(incoming(BOB, 'bisa bikin kue custom?'))
+  await owner('/ok 1')
+  await owner('/edit 1 teks saya')
+  assert.deepEqual(transport.toCustomer(), [])
+  const self = transport.toSelf()
+  assert.ok(self.some(text => text.startsWith('🤖 [SHADOW] Would auto-reply')))
+  assert.ok(self.some(text => text.includes('📝 DRAFT #1')))
+  assert.ok(self.some(text => text.includes('[SHADOW] Draft #1 approved')))
+  assert.equal(store.getDraft(1).status, 'approved_shadow')
+})
+
+test('debounce combines a burst into one triage', async t => {
+  const { brain, assistant, transport } = setup(t, { config: { debounceMs: 40 } })
+  await assistant.handleMessage(incoming(ALICE, 'kak'))
+  await assistant.handleMessage(incoming(ALICE, 'buka jam berapa?'))
+  await assistant.idle()
+  assert.equal(brain.calls.length, 1)
+  assert.deepEqual(brain.calls[0].messages.map(message => message.text), ['kak', 'buka jam berapa?'])
+  assert.equal(transport.toCustomer().length, 1)
+})
+
+test('a message arriving during an in-flight triage discards the stale result and re-triages', async t => {
+  const { brain, assistant, transport, audit } = setup(t)
+  const release = brain.hold()
+  await assistant.handleMessage(incoming(ALICE, 'mau pesan kue'))
+  await waitFor(() => brain.calls.length === 1)
+  await assistant.handleMessage(incoming(ALICE, 'jam berapa buka?'))
+  await waitFor(() => brain.calls.length === 2)
+  release()
+  await assistant.idle()
+  assert.deepEqual(brain.calls[1].messages.map(message => message.text), ['mau pesan kue', 'jam berapa buka?'])
+  assert.equal(transport.toCustomer().length, 1, 'only the fresh result is acted on')
+  assert.equal(transport.toSelf().filter(text => text.includes('DRAFT')).length, 0, 'the stale complex draft was dropped')
+  assert.ok(audit().some(entry => entry.event === 'triage_discarded_stale'))
+})
+
+test('duplicate message ids are processed once', async t => {
+  const { brain, deliver } = setup(t)
+  const message = incoming(ALICE, 'jam buka?')
+  await deliver(message)
+  await deliver({ ...message })
+  assert.equal(brain.calls.length, 1)
+})
+
+test('loop guard: the echo of a bot send is ignored and does not start a takeover', async t => {
+  const { transport, deliver, store, brain } = setup(t)
+  await deliver(incoming(ALICE, 'jam buka?'))
+  const [sent] = transport.toCustomer()
+  await deliver({ id: sent.id, chatId: ALICE, fromMe: true, isSelfChat: false, text: sent.text, timestamp: Math.floor(Date.now() / 1000), kind: 'append' })
+  for (const notice of transport.sent.filter(item => item.chatId === 'self')) {
+    await deliver({ id: notice.id, chatId: 'self', fromMe: true, isSelfChat: true, text: notice.text, timestamp: Math.floor(Date.now() / 1000), kind: 'append' })
+  }
+  assert.equal(store.chat(ALICE).takeoverUntil, 0)
+  assert.equal(brain.calls.length, 1)
+})
+
+test('human takeover: owner typing in a customer chat cancels its drafts and silences the bot there', async t => {
+  const { transport, deliver, store, brain, advance, now } = setup(t)
+  await deliver(incoming(ALICE, 'bisa kue custom unicorn?'))
+  assert.equal(store.getDraft(1).status, 'pending')
+  await deliver(incoming(ALICE, 'bisa kak, sebentar ya', { fromMe: true, timestamp: Math.floor(now() / 1000) }))
+  assert.equal(store.getDraft(1).status, 'cancelled')
+  assert.ok(transport.toSelf().some(text => text.includes('cancelled draft #1')))
+  assert.ok(store.chat(ALICE).takeoverUntil > now())
+
+  await deliver(incoming(ALICE, 'jam buka?'))
+  assert.equal(brain.calls.length, 1, 'no triage during takeover')
+  assert.equal(transport.toCustomer().length, 0)
+
+  advance(31 * 60 * 1000)
+  await deliver(incoming(ALICE, 'jam buka?', { timestamp: Math.floor(now() / 1000) }))
+  assert.equal(transport.toCustomer().length, 1, 'bot resumes after the window')
+})
+
+test('takeover during an in-flight triage drops its result', async t => {
+  const { brain, assistant, transport, now } = setup(t)
+  const release = brain.hold()
+  await assistant.handleMessage(incoming(ALICE, 'jam buka?'))
+  await waitFor(() => brain.calls.length === 1)
+  await assistant.handleMessage(incoming(ALICE, 'saya jawab sendiri', { fromMe: true, timestamp: Math.floor(now() / 1000) }))
+  release()
+  await assistant.idle()
+  assert.equal(transport.toCustomer().length, 0)
+})
+
+test('per-chat and per-day rate limits downgrade to drafts', async t => {
+  const { transport, deliver, store } = setup(t, { config: { autoSend: { maxPerChatPerHour: 2, maxPerDay: 3 } } })
+  for (let index = 0; index < 3; index++) await deliver(incoming(ALICE, `jam buka? ${index}`))
+  assert.equal(transport.toCustomer().length, 2)
+  assert.match(transport.toSelf().at(-1), /Not auto-sent: chat_rate_limit/)
+  await deliver(incoming(BOB, 'jam buka?'))
+  await deliver(incoming('6284444444444@s.whatsapp.net', 'jam buka?'))
+  assert.equal(transport.toCustomer().length, 3)
+  assert.ok(store.pendingDrafts().some(draft => draft.policyReasons.includes('daily_rate_limit')))
+})
+
+test('backlog: old appends are skipped, recent ones are drafted, never auto-sent', async t => {
+  const { transport, deliver, store, brain, now } = setup(t)
+  store.advanceLastProcessedTs(Math.floor(now() / 1000) - 3 * 3600)
+  const nowSeconds = Math.floor(now() / 1000)
+  await deliver(incoming(ALICE, 'jam buka? (sudah diproses)', { kind: 'append', timestamp: nowSeconds - 4 * 3600 }))
+  await deliver(incoming(ALICE, 'jam buka? (terlalu lama)', { kind: 'append', timestamp: nowSeconds - 2 * 3600 }))
+  assert.equal(brain.calls.length, 0)
+  await deliver(incoming(BOB, 'jam buka? (baru)', { kind: 'append', timestamp: nowSeconds - 10 * 60 }))
+  assert.equal(brain.calls.length, 1)
+  assert.equal(transport.toCustomer().length, 0)
+  assert.ok(store.getDraft(1).policyReasons.includes('backlog'))
+})
+
+test('groups, status and newsletters never reach the brain (raw Baileys shapes through the normalizer)', async t => {
+  const { assistant, brain } = setup(t)
+  const meIds = getMeIds({ id: '6281111111111:7@s.whatsapp.net' })
+  for (const remoteJid of ['120363000000000000@g.us', 'status@broadcast', '120363111111111111@newsletter', '867051314767696@bot']) {
+    const normalized = normalizeUpsert({ key: { remoteJid, id: `R-${remoteJid}`, fromMe: false, participant: ALICE }, message: { conversation: 'jam buka?' }, messageTimestamp: Math.floor(Date.now() / 1000) }, { type: 'notify', meIds })
+    assert.ok(normalized.skip)
+    if (normalized.message) await assistant.handleMessage(normalized.message)
+  }
+  await assistant.idle()
+  assert.equal(brain.calls.length, 0)
+})
+
+test('blocklisted chats are never triaged, and the gate refuses to send to them', async t => {
+  const { brain, deliver, assistant } = setup(t, { config: { blocklist: ['0822-2222-2222'] } })
+  await deliver(incoming(ALICE, 'jam buka?'))
+  assert.equal(brain.calls.length, 0)
+  assert.deepEqual(await assistant.gate.sendToCustomer(ALICE, 'hi'), { sent: false, error: 'chat is blocklisted' })
+})
+
+test('/ok, /edit and /no from self-chat', async t => {
+  const { transport, deliver, owner, store } = setup(t)
+  await deliver(incoming(ALICE, 'bisa kue custom?'))
+  await deliver(incoming(BOB, 'saya sudah transfer'))
+  await deliver(incoming('6284444444444@s.whatsapp.net', 'kue ulang tahun 3 tingkat?'))
+  assert.match(transport.toSelf().find(text => text.includes('#2')), /🚨 URGENT #2/)
+
+  await owner('/ok 1')
+  await owner('/edit 2 Sudah kami terima Kak, terima kasih.')
+  await owner('/no 3')
+  assert.deepEqual(transport.toCustomer().map(item => [item.chatId, item.text]), [
+    [ALICE, 'Baik Kak, saya tanyakan dulu ya.'],
+    [BOB, 'Sudah kami terima Kak, terima kasih.']
+  ])
+  assert.deepEqual([1, 2, 3].map(id => store.getDraft(id).status), ['approved', 'edited', 'rejected'])
+  assert.ok(!transport.toCustomer().some(item => item.text.includes('Balasan otomatis')), 'approved drafts carry no AI marker')
+})
+
+test('self-chat: only the owner’s own /commands act; notes and non-fromMe messages are ignored', async t => {
+  const { transport, deliver, store } = setup(t)
+  await deliver({ id: 'N1', chatId: 'self', fromMe: true, isSelfChat: true, text: 'catatan: beli telur', timestamp: Math.floor(Date.now() / 1000), kind: 'notify' })
+  await deliver({ id: 'N2', chatId: 'self', fromMe: false, isSelfChat: true, text: '/pause', timestamp: Math.floor(Date.now() / 1000), kind: 'notify' })
+  assert.equal(store.paused, false)
+  assert.equal(transport.sent.length, 0)
+})
+
+test('triage failure escalates with an empty draft; ignore sends nothing', async t => {
+  const { transport, deliver } = setup(t)
+  await deliver(incoming(ALICE, 'crash please'))
+  await deliver(incoming(BOB, 'ok makasih'))
+  const self = transport.toSelf()
+  assert.equal(self.length, 1)
+  assert.match(self[0], /🚨 URGENT #1/)
+  assert.match(self[0], /Triage failed \(timeout\)/)
+  assert.match(self[0], /Draft: \(none, write your own\)/)
+  assert.equal(transport.toCustomer().length, 0)
+})
+
+test('guard failure and /pause downgrade a simple reply to a draft', async t => {
+  const { transport, deliver, owner } = setup(t)
+  await deliver(incoming(ALICE, 'cheesecake ada?'))
+  assert.match(transport.toSelf().at(-1), /Not auto-sent: guard:unsupported_amount:150000/)
+  await owner('/pause')
+  await deliver(incoming(BOB, 'jam buka?'))
+  assert.match(transport.toSelf().at(-1), /Not auto-sent: paused/)
+  assert.equal(transport.toCustomer().length, 0)
+})
+
+test('/mute blocks auto-replies in that chat only', async t => {
+  const { transport, deliver, owner } = setup(t)
+  await deliver(incoming(ALICE, 'jam buka?', { senderName: 'Alice' }))
+  await owner('/mute alice')
+  await deliver(incoming(ALICE, 'jam buka lagi?', { senderName: 'Alice' }))
+  await deliver(incoming(BOB, 'jam buka?'))
+  assert.deepEqual(transport.toCustomer().map(item => item.chatId), [ALICE, BOB])
+  assert.ok(transport.toSelf().some(text => text.includes('Not auto-sent: muted')))
+})
