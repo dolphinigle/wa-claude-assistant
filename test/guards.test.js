@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, isSocialMessage, privateIdentifiers, privateIdentifiersFor } from '../src/guards.js'
+import { buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, isSocialMessage, isSocialReply, privateIdentifiers, privateIdentifiersFor } from '../src/guards.js'
 import { parseKnowledge } from '../src/knowledge.js'
 import { knowledge, makeConfig } from './helpers.js'
 
@@ -181,7 +181,9 @@ test('a reply without facts passes only in a purely social exchange', () => {
     ['ok makasih kak 🙏', 'Sama-sama, Kak 🙏'],
     ['Siap kak, terima kasih banyak ya', 'Terima kasih kembali, Kak. Semoga harinya menyenangkan 😊'],
     ['thanks!', "You're welcome! Have a nice day."],
-    ['👍', 'Sama-sama ya Kak']
+    ['👍', 'Sama-sama ya Kak'],
+    ['🙏🏽', 'Terima kasih juga, Kak ❤️'],
+    ['bye, thanks', 'Thank you too! Take care.']
   ]) assert.deepEqual(social(reply, incoming), { ok: true, reasons: [] }, `${incoming} → ${reply}`)
 
   for (const [incoming, reply] of [
@@ -191,10 +193,40 @@ test('a reply without facts passes only in a purely social exchange', () => {
     ['makasih, besok jam 9 ya', 'Sama-sama Kak'], // and set a time
     ['ok makasih kak', 'Sama-sama Kak, ditunggu jam 9 ya'],
     ['ok makasih kak', 'Sama-sama, gratis ongkir ya'],
-    [undefined, 'Sama-sama Kak'] // the customer's text is not known: fail closed
+    [undefined, 'Sama-sama Kak'], // the customer's text is not known: fail closed
+    // yes-answers and promises made of friendly words
+    ['makasih kak 🙏', 'Dibantu ya kak 🙏'],
+    ['makasih kak', 'Ya kak, ditunggu ya 🙏'],
+    ['makasih kak', 'Ya kak'],
+    ['thanks', 'We have it! Have a great day.'],
+    ['thanks', 'Thank you, we have it for you'],
+    ['thanks', 'No problem, see you soon!'],
+    ['ok kak siap', 'Ditunggu ya Kak 🙏'], // confirms a pickup nobody approved
+    ['ok', 'See you soon!'],
+    ['ok kak siap', 'Sampai jumpa lagi ya Kak'],
+    ['makasih kak', 'Sama-sama 👍'], // 👍 agrees
+    ['🙏', '👍'], // no words at all
+    ['🙏', '🙏'],
+    // no closing on the customer's side: angry emoji, bare punctuation, a bare honorific, a request
+    ['😡', 'Sama-sama, Kak 🙏'],
+    ['😡😡', 'Sama-sama ya Kak 🙏'],
+    ['👎', 'Sama-sama ya Kak'],
+    ['💩 💩', 'Sama-sama Kak'],
+    ['makasih kak 😡', 'Sama-sama Kak'],
+    ['!!!', 'Sama-sama Kak'],
+    ['...', 'Sama-sama Kak'],
+    ['', 'Sama-sama Kak'],
+    ['kak', 'Sama-sama Kak'],
+    ['dibantu ya kak', 'Sama-sama Kak'],
+    ['ditunggu ya kak', 'Sama-sama Kak']
   ]) assert.ok(social(reply, incoming).reasons.includes('no_facts_used'), `${incoming} → ${reply}`)
-  assert.equal(isSocialMessage('ok makasih kak'), false, 'acknowledgements only on the customer side')
-  assert.equal(isSocialMessage('ok makasih kak', { acknowledgements: true }), true)
+})
+
+test('the customer side may acknowledge; the reply side is a closed set of closings', () => {
+  assert.equal(isSocialMessage('ok kak siap 👍'), true, 'acknowledgements close the customer\'s message')
+  assert.equal(isSocialReply('Oke kak, siap'), false, 'but never the reply')
+  assert.equal(isSocialReply('Ya kak, sama-sama'), false, 'a leading yes is not a closing')
+  assert.equal(isSocialReply('Sama-sama Kak, semoga harinya menyenangkan ya'), true, '"ya" may soften a head or a wish')
 })
 
 test('a sensitive term that appears in the facts is allowed', () => {

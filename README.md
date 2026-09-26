@@ -71,9 +71,13 @@ flowchart LR
   bare 3, and a number with any other word (`3 loyang`, `25 Desember`) must appear with that same word. Numbers
   written as words (`seratus ribu`, `sepekan`, `separuh`, `kedua`, `twice`, `a quarter`), digits of other scripts
   and any bare domain fail unless the cited facts have them. `facts_used` must name existing facts, and may be empty
-  only in a purely social exchange: the customer's message and the reply are each a thanks, greeting or goodbye with
-  no question and no digits, every word from a small social vocabulary (`ok makasih kak 🙏` → `Sama-sama, Kak 🙏`;
-  `ok`, `siap` and `iya` may close the customer's message but not the reply). No placeholders, no fact ids, a length
+  only in a purely social exchange, with no question and no digits on either side. The customer's message is a thanks,
+  greeting, goodbye or acknowledgement: every word from a small vocabulary and every emoji a friendly one (`😡`, `👎`
+  or a bare `!!!` is not a thanks). The reply is a thanks-back or goodbye (`sama-sama`, `terima kasih kembali`,
+  `you're welcome`, `bye`) with at most an honorific, a greeting and a well-wish (`semoga harinya menyenangkan`,
+  `have a nice day`): `ok makasih kak 🙏` → `Sama-sama, Kak 🙏`. A yes (`ya kak`, `oke`, `siap`, `👍`), a promise
+  (`dibantu`, `ditunggu`, `we have it`), an arrangement (`see you soon`, `sampai jumpa`) or an emoji alone never
+  passes as a reply. No placeholders, no fact ids, a length
   cap, no sensitive terms (discount, voucher, gift, refund, bank account …, including affixed forms like
   `diskonnya`, `direfund`) unless the cited facts contain them, and the reply must be in the sender's language. Any failure escalates the
   answer, with the reason in the notice.
