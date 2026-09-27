@@ -305,12 +305,20 @@ export const thanksAgrees = input => readThanks(input)?.agrees === true
 // also be spelled the chat way ("makasiii", "trimakasih", "thank u", "matur nuwun", "makasih bgt kak", send-path-r1-3):
 // a word the vocabulary does not know is read without its doubled letters, then as its usual spelling or dropped as a
 // softener, and what is left must still be a thanks for readThanks. The skip keeps the narrow isThanks.
+// What the thanks is for is dropped too, as whole words ("atas bantuannya", "untuk infonya": "atas nama Dewi" keeps
+// "nama Dewi"), and so is laughter ("hehe", "wkwk") and a done "(sudah) dibantu" (send-path-r2-1).
 const CHAT_THANKS = new Map(Object.entries({
-  trimakasih: 'terimakasih', trimakasi: 'terimakasih', terimakasi: 'terimakasih', trmksh: 'terimakasih', makacih: 'makasih',
-  macih: 'makasih', maci: 'makasih', mksi: 'makasih', mks: 'makasih', nuwun: 'makasih', suwun: 'makasih', nuhun: 'makasih',
-  tks: 'thanks', thanx: 'thanks', thnx: 'thanks', tqvm: 'thanks', tqsm: 'thanks', u: 'you'
+  trimakasih: 'terimakasih', trimakasi: 'terimakasih', terimakasi: 'terimakasih', trmksh: 'terimakasih', trmkasih: 'terimakasih',
+  makacih: 'makasih', macih: 'makasih', maci: 'makasih', mksi: 'makasih', mks: 'makasih', mkasih: 'makasih', mkasi: 'makasih',
+  mksih: 'makasih', maksih: 'makasih', makaseh: 'makasih', nuwun: 'makasih', suwun: 'makasih', nuhun: 'makasih',
+  tks: 'thanks', thanx: 'thanks', thnx: 'thanks', tqvm: 'thanks', tqsm: 'thanks', thanku: 'thank you', thankyu: 'thank you',
+  tenkyu: 'tengkyu', tengkiu: 'tengkyu', u: 'you'
 }))
-const CHAT_SOFTENERS = new Set('matur hatur bgt banget bngt bener sekali bang om dek mba bro sist bos yah'.split(' '))
+const CHAT_SOFTENERS = new Set(('matur hatur bgt banget bngt bener sekali bang om dek mba bro sist bos yah ' +
+  'atas untuk bantuannya bantuan informasinya responnya jawabannya').split(' '))
+const LAUGHTER = /^(?:(?:h[aeiu]){2,}h?|(?:wk){2,}w?)$/u
+// Only once done: "makasih, dibalas ya" may ask for a reply.
+const DONE_FOR_US = /(?<!\p{L})(?:sudah|sudh|udah|udh|uda|sdh|dah|telah)\s+(?:di|mem|men|me)?(?:bantu|bantuin|balas|bales|jawab|respon|info|infokan|infoin|kabari|kabarin|layani)(?!\p{L})/gu
 const THANKS_WORDS = new Set([...THANKS_VOCABULARY.phrases.keys()].flatMap(phrase => phrase.split(' ')))
 const FOLDED_THANKS_WORDS = new Map()
 for (const word of THANKS_WORDS) if (!FOLDED_THANKS_WORDS.has(foldRepeats(word))) FOLDED_THANKS_WORDS.set(foldRepeats(word), word)
@@ -319,12 +327,13 @@ const chatSpelling = word => {
   const folded = foldRepeats(word)
   const known = FOLDED_THANKS_WORDS.get(folded) ?? CHAT_THANKS.get(word) ?? CHAT_THANKS.get(folded)
   if (known) return known
-  return CHAT_SOFTENERS.has(word) || CHAT_SOFTENERS.has(folded) ? '' : word
+  return CHAT_SOFTENERS.has(word) || CHAT_SOFTENERS.has(folded) || LAUGHTER.test(folded) ? '' : word
 }
 
 /** The customer only thanks, also in a chat spelling (see above); for the placeholder only, never for the skip. */
 export const isLooseThanks = input => isThanks(input) ||
-  (String(input ?? '').length <= MAX_THANKS_CHARS && isThanks(normalizeText(input).toLowerCase().replace(/\p{L}+/gu, chatSpelling)))
+  (String(input ?? '').length <= MAX_THANKS_CHARS &&
+    isThanks(normalizeText(input).toLowerCase().replace(DONE_FOR_US, ' ').replace(/\p{L}+/gu, chatSpelling)))
 
 // asksSomething chooses the auto-send (owner decision, 2026-09-27): only an answer to a message that asks something may
 // go out on its own. A thanks, a yes, a no, "gapapa", "saya tunggu" or "saya mau ambil besok" asks nothing, so a fact

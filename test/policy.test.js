@@ -447,3 +447,24 @@ test('placeholder: none for a thanks in a chat spelling the skip does not take, 
     assert.equal(decide(triageResult(WAITING), { ...waitingContext(), incomingText }).placeholder, true, `${incomingText}: more than a thanks`)
   }
 })
+
+test('placeholder: none for a thanks with what it is for, a laugh or a done "dibantu", whatever Claude says (send-path-r2-1)', () => {
+  for (const incomingText of ['mkasih kak', 'hehe makasih kak', 'makasih kak udah dibantu 🙏', 'makasih atas infonya kak', 'terima kasih atas bantuannya']) {
+    for (const triage of [WAITING, { ...THANKS, customer_waiting: true }]) {
+      const decision = decide(triageResult(triage), { ...waitingContext(), incomingText })
+      assert.deepEqual([decision.action, decision.placeholder, decision.placeholderWithheld], ['escalate', false, ['thanks']], `${incomingText} (${triage.decision})`)
+    }
+  }
+  assert.equal(decide(triageResult(WAITING), { ...waitingContext(), incomingText: 'makasih kak, atas nama Dewi ya' }).placeholder, true, 'a name for the order')
+})
+
+test('placeholder: a thanks caption on a file is no thanks, as for the skip: a transfer proof may wait (consistency-r2-1)', () => {
+  for (const [incomingText, attachments] of [['makasih kak 🙏', ['image']], ['terima kasih', ['document']]]) {
+    for (const triage of [WAITING, { ...THANKS, customer_waiting: true }]) {
+      const decision = decide(triageResult(triage), { ...waitingContext(), incomingText, attachments })
+      assert.deepEqual([decision.action, decision.placeholder, decision.placeholderWithheld], ['escalate', true, []], `${incomingText} + ${attachments} (${triage.decision})`)
+    }
+  }
+  assert.deepEqual(decide(triageResult(THANKS), { ...waitingContext(), incomingText: 'makasih kak 🙏', attachments: ['image'] }).placeholderWithheld,
+    ['customer_not_waiting'], 'Claude\'s flag still decides')
+})

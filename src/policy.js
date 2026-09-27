@@ -113,18 +113,21 @@ function chatBlockers (ctx) {
  * waiting for the owner: not family, friends, spam, a scam or a manipulation attempt) lets one out, since a family
  * emergency must never get "tunggu sebentar". A thanks never gets one, whatever Claude says: it waits for nothing. It
  * is read loosely here (isLooseThanks: "makasih bgt kak", "thank u"), since a false match only withholds a fixed text.
- * Nor does a text without a letter or digit (😡😡, 🙏, ?) that comes without a file: it does not say what the sender wants.
+ * As for the skip, a thanks has no file: a "makasih kak 🙏" on a transfer screenshot may be a payment to confirm
+ * (consistency-r2-1). Nor does a text without a letter or digit (😡😡, 🙏, ?) that comes without a file: it does not
+ * say what the sender wants.
  * Backlog never does: it comes late, and the owner may have answered it on the phone meanwhile. One placeholder covers
  * every escalation while a draft whose customer got one is open (`chat.placeholderSent`); it counts toward the caps.
  */
 function placeholderWithheld (result, ctx) {
   if (!result?.ok || !result.triage) return ['triage_failed']
   const { config, chat = {} } = ctx
+  const withFile = (ctx.attachments ?? []).length > 0
   const withheld = []
   if (config.placeholder?.enabled !== true) withheld.push('placeholder_disabled')
   if (result.triage.customer_waiting !== true) withheld.push('customer_not_waiting')
-  if (ctx.incomingText !== undefined && isLooseThanks(ctx.incomingText)) withheld.push('thanks')
-  if ((ctx.attachments ?? []).length === 0 && !/[\p{L}\p{N}]/u.test(ctx.incomingText ?? '')) withheld.push('no_words')
+  if (!withFile && ctx.incomingText !== undefined && isLooseThanks(ctx.incomingText)) withheld.push('thanks')
+  if (!withFile && !/[\p{L}\p{N}]/u.test(ctx.incomingText ?? '')) withheld.push('no_words')
   withheld.push(...chatBlockers(ctx))
   if (ctx.isBacklog) withheld.push('backlog')
   if (chat.placeholderSent) withheld.push('placeholder_already_sent')

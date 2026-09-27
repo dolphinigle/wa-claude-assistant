@@ -274,8 +274,10 @@ cancelled.
   please 🙏` when the message is English by `detectLanguage`), never Claude's words. It needs all of: the triage
   succeeded, Claude set `customer_waiting` (a new required schema field: a customer waiting for an answer or an action
   from you; anything but `true` counts as false), the message is no thanks and has a letter or digit or a file (not
-  `😡😡`, `🙏` or `?` alone; a thanks is read more loosely here than for the skip, chat spellings included:
-  `makasih bgt kak`, `trimakasih`, `thank u`, `matur nuwun`), `placeholder.enabled`, not paused, the chat not muted, blocklisted or
+  `😡😡`, `🙏` or `?` alone; a thanks is read more loosely here than for the skip, chat spellings, what it is for, a
+  laugh and a done `dibantu` included: `makasih bgt kak`, `trimakasih`, `thank u`, `matur nuwun`, `hehe makasih kak`,
+  `terima kasih atas bantuannya`, `makasih kak udah dibantu`; as for the skip, a thanks has no file, so a `makasih kak 🙏`
+  on a transfer screenshot may get one), `placeholder.enabled`, not paused, the chat not muted, blocklisted or
   `blocklist_unchecked`, no human takeover, the hourly and daily auto-send caps not reached, not backlog, and the
   contact got none since it last had no open draft (one per open-draft period, drafts already open when it went out
   included: after `/ok`, `/edit`, `/no`, expiry or your own reply leaves nothing open, the next escalation gets one

@@ -465,3 +465,16 @@ test('isLooseThanks: a thanks in a chat spelling too, for the placeholder; nothi
     assert.equal(isLooseThanks(text), false, text)
   }
 })
+
+test('isLooseThanks: a thanks with what it is for, a laugh or a done "dibantu" is still only a thanks (send-path-r2-1)', () => {
+  for (const text of ['mkasih kak', 'hehe makasih kak', 'wkwk makasih kak', 'hahaha thank u', 'makasih kak udah dibantu 🙏', 'makasih kak sudah dibantu',
+    'makasih udah dibantu', 'makasih sudah membantu kak', 'makasih kak udah dijawab', 'makasih atas infonya kak', 'makasih kak atas infonya',
+    'terima kasih atas bantuannya', 'terima kasih untuk informasinya', 'thanku kak']) {
+    assert.equal(isThanks(text), false, `${text}: the skip stays narrow`)
+    assert.equal(isLooseThanks(text), true, text)
+  }
+  for (const text of ['makasih kak, atas nama Dewi ya', 'makasih, dibalas ya kak', 'makasih kak udah sampai', 'makasih kak udah saya bayar',
+    'makasih kak udah', 'sudah dibantu', 'hehe', 'hehe ok kak', 'untuk besok kak makasih', 'ok kak', 'siap kak ditunggu', 'Halo kak']) {
+    assert.equal(isLooseThanks(text), false, text)
+  }
+})
