@@ -26,7 +26,9 @@ const brain = useFakeBrain ? createFakeBrain() : createClaudeBrain({ config, kno
 let assistant
 const onMessage = message => assistant.handleMessage(message)
 const onlyListed = allowChatsSummary(config)
-const announce = () => assistant.announce(`${BOT_PREFIX} Assistant online · mode: ${config.mode}${store.paused ? ' · PAUSED' : ''}${onlyListed ? ` · ${onlyListed}` : ''} · brain: ${brain.name}. Send /help for commands.`)
+// Demo mode invents answers (owner decision 2026-09-27): the owner must see that it is on, wherever the bot says hello.
+const demo = config.demo.enabled ? ' · DEMO: answers may be invented' : ''
+const announce = () => assistant.announce(`${BOT_PREFIX} Assistant online · mode: ${config.mode}${demo}${store.paused ? ' · PAUSED' : ''}${onlyListed ? ` · ${onlyListed}` : ''} · brain: ${brain.name}. Send /help for commands.`)
 
 let transport
 if (useConsole) {
@@ -55,7 +57,7 @@ if (useConsole) {
 assistant = createAssistant({ config, store, brain, transport, knowledge })
 assistant.recoverInbox()
 
-console.log(`wa-claude-assistant · transport: ${transport.name} · brain: ${brain.name} · mode: ${config.mode.toUpperCase()}${onlyListed ? ` · ${onlyListed}` : ''} · data: ${config.paths.data}`)
+console.log(`wa-claude-assistant · transport: ${transport.name} · brain: ${brain.name} · mode: ${config.mode.toUpperCase()}${demo}${onlyListed ? ` · ${onlyListed}` : ''} · data: ${config.paths.data}`)
 if (config.mode === 'live') console.log('LIVE MODE: auto-replies WILL be sent to customers. Set "mode": "shadow" to stop.')
 else console.log('Shadow mode: nothing is sent to anyone except your own "Message yourself" chat.')
 

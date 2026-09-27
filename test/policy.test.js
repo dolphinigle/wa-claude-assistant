@@ -649,3 +649,38 @@ test('greeting: the session ends as the disclosure\'s does: a greeting, reply or
   ctx.chat = { ...ctx.chat, lastGreetingReplyAt: NOW - 13 * HOUR_MS, lastOursAt: NOW - 13 * HOUR_MS }
   assert.equal(decide(triageResult(GREETING), ctx).action, 'auto_send')
 })
+
+// Demo mode (owner decision 2026-09-27): invented answers go out, payment details never do.
+const demoConfig = makeConfig({ demo: { enabled: true }, allowChats: ['081293850000'] })
+const demoContext = (incomingText, triage) => ({ ...baseContext(), config: demoConfig, incomingText, guard: guardTriage(triage, { knowledge, config: demoConfig, incomingText }) })
+
+test('demo mode: an invented price citing no fact passes the guards and auto-sends', () => {
+  const incomingText = 'Kak, ada cheesecake? berapa harganya?'
+  const triage = { decision: 'answer', reply: 'Ada Kak, cheesecake 18 cm harganya Rp 175.000, bisa diantar besok ya.', facts_used: [] }
+  assert.equal(guardTriage(triage, { knowledge, config, incomingText }).ok, false, 'held outside demo mode')
+  const ctx = demoContext(incomingText, triage)
+  assert.deepEqual(ctx.guard, { ok: true, reasons: [] })
+  assert.equal(decide(triageResult(triage), ctx).action, 'auto_send')
+})
+
+test('demo mode: a reply with payment details is held (demo_payment_detail)', () => {
+  for (const reply of ['Silakan transfer ke BCA 1234567890 ya Kak', 'No. rek kami 123-456-7890 ya Kak', 'Rekeningnya nanti dikirim ya Kak', 'Bisa lewat Mandiri ya Kak']) {
+    const ctx = demoContext('Kak, bayarnya ke mana?', { decision: 'answer', reply, facts_used: [] })
+    const { action, reasons } = route(triageResult({ decision: 'answer', reply }), ctx)
+    assert.equal(action, 'escalate', reply)
+    assert.ok(reasons.includes('guard:demo_payment_detail'), `${reply}: ${reasons}`)
+  }
+  const fine = demoContext('Kak, tart 3 tingkat berapa?', { decision: 'answer', reply: 'Halo Kak Brian, tart 3 tingkat Rp 1.250.000 ya', facts_used: [] })
+  assert.deepEqual(fine.guard, { ok: true, reasons: [] }, 'a name is no bank code, a price no account number')
+})
+
+test('demo mode: a thanks gets Claude\'s thanks-back, and the per-chat cap is demo.maxPerChatPerHour', () => {
+  const thanks = { decision: 'answer', reply: 'Sama-sama, Kak 🙏', facts_used: [] }
+  assert.equal(decide(triageResult(thanks), { ...baseContext(), incomingText: 'ok makasih kak' }).reasons[1], 'no_question', 'held outside demo mode')
+  assert.equal(decide(triageResult(thanks), demoContext('ok makasih kak', thanks)).action, 'auto_send')
+  const ctx = demoContext('Kak, jam berapa buka?', ANSWER_HOURS)
+  ctx.chatAutoSendsLastHour = 29
+  assert.equal(decide(triageResult(ANSWER_HOURS), ctx).action, 'auto_send', 'autoSend.maxPerChatPerHour (3) does not apply')
+  ctx.chatAutoSendsLastHour = 30
+  assert.deepEqual(route(triageResult(ANSWER_HOURS), ctx), { action: 'escalate', reasons: ['decision:answer', 'chat_rate_limit'] })
+})

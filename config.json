@@ -34,6 +34,10 @@
       "en": "Hi! How can I help you? 🙏"
     }
   },
+  "demo": {
+    "enabled": false,
+    "maxPerChatPerHour": 30
+  },
   "notifyOwnerOnAutoSend": true,
   "draftTtlHours": 24,
   "guards": {

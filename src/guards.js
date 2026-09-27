@@ -3,7 +3,8 @@ import os from 'node:os'
 // Deterministic checks on a reply before it may be auto-sent. They do not judge meaning; they make sure every
 // concrete detail (number, price, time, duration, percentage, phone, URL, email) is copied from the facts the reply
 // cites in `facts_used`, so a model slip becomes a draft instead of a wrong promise. When unsure they fail, which
-// only means the owner sees a draft.
+// only means the owner sees a draft. Demo mode (`demo.enabled`, testers only) invents details on purpose: there only
+// payment details are checked in place of the facts (checkReply).
 
 const THOUSANDS = /^\d{1,3}(?:[.,]\d{3})+$/
 const MULTIPLIERS = { rb: 1e3, ribu: 1e3, k: 1e3, jt: 1e6, juta: 1e6 }
@@ -611,10 +612,21 @@ export function findPrivateDetails (text, { words = [], paths = [] } = {}) {
   ]
 }
 
+// Demo mode invents what the facts do not say, but never how to pay: a bank, an account or a transfer target, or a
+// run of 8+ digits (spaces or dashes allowed: "123-456-7890"), which also holds an invented phone number that may be
+// a stranger's. Bank codes as whole words only ("Brian" is no BRI); the rest with affixes ("rekeningnya").
+const PAYMENT_TERMS = ['rekening', 'no. rek', 'no rek', 'norek', 'account number', 'transfer ke']
+const BANKS = /(?<![\p{L}\p{N}])(?:bca|bni|bri|mandiri)(?![\p{L}\p{N}])/iu
+const ACCOUNT_DIGITS = /\p{Nd}(?:[ -]?\p{Nd}){7,}/u
+const hasPaymentDetail = text => BANKS.test(text) || ACCOUNT_DIGITS.test(text) || PAYMENT_TERMS.some(term => containsTerm(text, term))
+
 /**
+ * @param {object} options
+ * @param {boolean} [options.demo]  demo mode (owner decision 2026-09-27): no check against the facts, only
+ *   `demo_payment_detail` in their place; every other check stays
  * @returns {{ok: boolean, reasons: string[]}}
  */
-export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, maxReplyChars = 600, sensitiveTerms = [], privateIdentifiers: identifiers }) {
+export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, maxReplyChars = 600, sensitiveTerms = [], privateIdentifiers: identifiers, demo = false }) {
   const reasons = []
   const text = normalizeText(reply).trim()
   if (!text) return { ok: false, reasons: ['empty_reply'] }
@@ -622,6 +634,26 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
   if (/\[F\d+\]/i.test(text)) reasons.push('fact_id_in_reply')
   else if (PLACEHOLDERS.some(pattern => pattern.test(text))) reasons.push('placeholder')
 
+  if (demo) {
+    if (hasPaymentDetail(text)) reasons.push('demo_payment_detail')
+  } else {
+    reasons.push(...factReasons(text, factsUsed, { knowledge, sensitiveTerms }))
+  }
+  // No value in the reason: it lands in the audit log and in eval reports.
+  if (findPrivateDetails(text, identifiers).length > 0) reasons.push('private_detail')
+
+  // Voice says mirror the sender's language; an auto-reply in the other language goes to the owner instead.
+  if (incomingText !== undefined) {
+    const incoming = detectLanguage(incomingText)
+    const replied = detectLanguage(text)
+    if (incoming !== 'unknown' && replied !== 'unknown' && incoming !== replied) reasons.push(`language_mismatch:${incoming}->${replied}`)
+  }
+  return { ok: reasons.length === 0, reasons }
+}
+
+/** Why the reply says more than the facts it cites: every detail and sensitive term must come from them. */
+function factReasons (text, factsUsed, { knowledge, sensitiveTerms }) {
+  const reasons = []
   const cited = Array.isArray(factsUsed) ? factsUsed : []
   if (cited.length > 0) {
     const unknown = cited.filter(id => !knowledge.facts.has(factId(id)))
@@ -657,16 +689,7 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
   for (const term of sensitiveTerms) {
     if (containsTerm(text, term) && !containsTerm(allow.factsLower, term)) reasons.push(`sensitive_term:${term}`)
   }
-  // No value in the reason: it lands in the audit log and in eval reports.
-  if (findPrivateDetails(text, identifiers).length > 0) reasons.push('private_detail')
-
-  // Voice says mirror the sender's language; an auto-reply in the other language goes to the owner instead.
-  if (incomingText !== undefined) {
-    const incoming = detectLanguage(incomingText)
-    const replied = detectLanguage(text)
-    if (incoming !== 'unknown' && replied !== 'unknown' && incoming !== replied) reasons.push(`language_mismatch:${incoming}->${replied}`)
-  }
-  return { ok: reasons.length === 0, reasons }
+  return reasons
 }
 
 const identifiersCache = new WeakMap()
@@ -678,5 +701,6 @@ export const privateIdentifiersFor = config => {
 /** Guards for a triage result: only an "answer" can be auto-sent, so only it is checked. */
 export function guardTriage (triage, { knowledge, config, incomingText }) {
   if (triage?.decision !== 'answer') return undefined
-  return checkReply({ reply: triage.reply, factsUsed: triage.facts_used, incomingText }, { knowledge, ...config.guards, privateIdentifiers: privateIdentifiersFor(config) })
+  return checkReply({ reply: triage.reply, factsUsed: triage.facts_used, incomingText },
+    { knowledge, ...config.guards, privateIdentifiers: privateIdentifiersFor(config), demo: config.demo?.enabled === true })
 }

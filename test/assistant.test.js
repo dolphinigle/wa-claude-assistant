@@ -60,6 +60,12 @@ test('live: an answer is auto-sent with disclosure, quoted, marked read, owner n
   assert.equal(store.countChatAutoSends(ALICE, 3_600_000), 1)
 })
 
+test('demo mode: the one-line auto-reply notice says [DEMO]', async t => {
+  const { transport, deliver } = setup(t, { config: { demo: { enabled: true } } })
+  await deliver(incoming(ALICE, 'Kak jam berapa buka?'))
+  assert.match(transport.toSelf()[0], /^🤖 \[DEMO\] ✅ Auto-replied to [^\n]+: "Kami buka/)
+})
+
 test('contextMessages 0 gives Claude and the policy no earlier messages at all', async t => {
   const { transport, brain, assistant } = setup(t, { config: { contextMessages: 0 } })
   const ts = Math.floor(Date.now() / 1000)

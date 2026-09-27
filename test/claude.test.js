@@ -253,3 +253,12 @@ test('concurrency limit is respected', async t => {
   const maxOverlap = Math.max(...spans.map(span => spans.filter(other => other.startedAt < span.endedAt && other.endedAt > span.startedAt).length))
   assert.ok(maxOverlap <= 2, `overlap ${maxOverlap}`)
 })
+
+test('demo mode appends prompts/triage-demo.md to the system prompt; without it the prompt is the template alone', t => {
+  const promptsDir = makeConfig().paths.prompts
+  const expected = readFileSync(path.join(promptsDir, 'triage-system.md'), 'utf8').replace('{{KNOWLEDGE}}', () => knowledge.promptText)
+  assert.equal(readFileSync(brainFor(t).systemPromptFile, 'utf8'), expected)
+  const config = makeConfig({ claude: { bin: FAKE_CLAUDE }, demo: { enabled: true } }, tempDir(t))
+  const demo = readFileSync(createClaudeBrain({ config, knowledge, logger: { warn () {} } }).systemPromptFile, 'utf8')
+  assert.equal(demo, `${expected}\n${readFileSync(path.join(promptsDir, 'triage-demo.md'), 'utf8')}`)
+})

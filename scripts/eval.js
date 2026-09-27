@@ -45,6 +45,11 @@ for (const [name, section] of [['autoSend', config.autoSend], ['placeholder', co
   console.warn(`eval: ${name}.enabled ${section.enabled} (config.local.json) would make its gate test nothing; using true\n`)
   section.enabled = true
 }
+// The fixtures hold the real rules: demo mode answers on purpose what they expect escalated.
+if (config.demo.enabled) {
+  console.warn('eval: demo.enabled true (config.local.json) invents answers the fixtures expect escalated; using false\n')
+  config.demo.enabled = false
+}
 const knowledge = loadKnowledge(config.paths.knowledge)
 const startedAt = saved ? new Date(saved.runAt) : new Date()
 const baseName = saved ? path.basename(rescoreFile, '.json') : only ? 'last-run-partial' : 'last-run'

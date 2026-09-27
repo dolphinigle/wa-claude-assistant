@@ -105,11 +105,14 @@ function createLimiter (concurrency) {
  * Renders prompts/triage-system.md with the knowledge injected; returns the written file path. The name is the
  * content's hash and the write is atomic: `npm start`, selftest and eval share data/, and a selftest after editing
  * knowledge.md must not change (or half-write) the prompt the running bot's guards were built against.
+ * `demo` appends prompts/triage-demo.md (owner decision 2026-09-27); without it the prompt is byte for byte the one the
+ * saved eval ran, and the demo file is not even read.
  */
-export function renderSystemPrompt ({ promptsDir, outDir, knowledgeText }) {
+export function renderSystemPrompt ({ promptsDir, outDir, knowledgeText, demo = false }) {
   const template = readFileSync(path.join(promptsDir, 'triage-system.md'), 'utf8')
   if (!template.includes('{{KNOWLEDGE}}')) throw new Error('triage-system.md must contain {{KNOWLEDGE}}')
-  const prompt = template.replace('{{KNOWLEDGE}}', () => knowledgeText)
+  const demoSection = demo ? `\n${readFileSync(path.join(promptsDir, 'triage-demo.md'), 'utf8')}` : ''
+  const prompt = template.replace('{{KNOWLEDGE}}', () => knowledgeText) + demoSection
   mkdirSync(outDir, { recursive: true, mode: 0o700 })
   const file = path.join(outDir, `triage-system.${createHash('sha256').update(prompt).digest('hex').slice(0, 12)}.txt`)
   writeFileAtomic(file, prompt)
@@ -124,7 +127,7 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
   const dataDir = config.paths.data
   const sandboxDir = path.join(dataDir, 'claude-sandbox')
   mkdirSync(sandboxDir, { recursive: true, mode: 0o700 })
-  const systemPromptFile = renderSystemPrompt({ promptsDir: config.paths.prompts, outDir: path.join(dataDir, 'prompt'), knowledgeText: knowledge.promptText })
+  const systemPromptFile = renderSystemPrompt({ promptsDir: config.paths.prompts, outDir: path.join(dataDir, 'prompt'), knowledgeText: knowledge.promptText, demo: config.demo?.enabled === true })
   const schemaJson = JSON.stringify(JSON.parse(readFileSync(path.join(config.paths.prompts, 'triage-schema.json'), 'utf8')))
   const args = buildArgs({ model: claude.model, systemPromptFile, schemaJson })
   const env = buildEnv(claude) // a bad thinking setting stops the start, not every call

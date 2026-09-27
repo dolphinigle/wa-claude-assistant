@@ -525,11 +525,12 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     if (needsDisclosure) store.updateChat(chatId, { [disclosureKey]: now() })
     if (outcome.sent) await markReadUnlessOpen(chatId, batch)
     const name = contactLabel(chatId)
+    const demo = config.demo?.enabled ? '[DEMO] ' : '' // the reply may be invented
     if (outcome.shadow) {
-      await sendToOwner(`${BOT_PREFIX} [SHADOW] Would auto-reply to ${name}\nThey wrote: "${excerpt(describe(batch))}"\nReply:\n${text}`)
+      await sendToOwner(`${BOT_PREFIX} [SHADOW] ${demo}Would auto-reply to ${name}\nThey wrote: "${excerpt(describe(batch))}"\nReply:\n${text}`)
     } else if (config.notifyOwnerOnAutoSend) {
       // One line: the owner can read the whole exchange in the customer's chat.
-      await sendToOwner(`${BOT_PREFIX} ✅ Auto-replied to ${name}: "${excerpt(reply, 80)}"`)
+      await sendToOwner(`${BOT_PREFIX} ${demo}✅ Auto-replied to ${name}: "${excerpt(reply, 80)}"`)
     }
   }
 

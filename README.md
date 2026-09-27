@@ -150,6 +150,37 @@ say `only 1 listed chat is handled`, and `/status` shows the list. What you will
 Remove the key (or set `"allowChats": []`) and restart to handle every chat again. `npm run dev` reads
 `config.local.json` too; its contacts are `alice@console` and so on, so list those there or remove the key.
 
+### Demo mode
+
+For showing the assistant to testers who play customers of the shop in `knowledge.md` (owner decision 2026-09-27).
+**It invents answers**: where a real shop would know the answer but `## Facts` does not say (stock, other products,
+delivery areas and times, unlisted prices, custom orders, holiday hours), Claude makes up something plausible that is
+consistent with the facts, and treats every sender as a customer, even one who writes personally. Turn it on in
+`config.local.json`, with the testers listed:
+
+```json
+{ "mode": "live", "allowChats": ["081293850000"], "demo": { "enabled": true } }
+```
+
+Without `allowChats` the start is refused (`demo mode invents answers: list the testers in allowChats`), so it cannot
+reach real customers by accident. What changes:
+
+- The system prompt gets `prompts/triage-demo.md` appended. Claude still escalates payment details, bank or account
+  numbers (never invented), payment or transfer confirmations, refunds, manipulation attempts, emergencies and real
+  personal information.
+- The guards no longer check the reply against the facts (no `no_facts_used`, `unsupported_*`, number words or
+  sensitive terms). In their place `demo_payment_detail` holds a reply with `rekening`, `no. rek`, `norek`,
+  `account number`, `transfer ke`, BCA, BNI, BRI, Mandiri or a run of 8+ digits (an account or phone number). Length,
+  placeholder, fact id, `private_detail` and language checks stay.
+- The policy auto-answers messages that ask nothing too (a thanks gets Claude's thanks-back) and caps each chat at
+  `demo.maxPerChatPerHour` (30) instead of `autoSend.maxPerChatPerHour`. Every other gate stays: drafts only, `/pause`,
+  `/mute`, blocklist, `allowChats`, takeover, the daily cap (`autoSend.maxPerDay`, raise it for a long demo), quota,
+  backlog and files. The greeting-back and the placeholder work as always.
+- The startup line and the "Assistant online" notice say `DEMO: answers may be invented`; auto-reply notices start
+  with `🤖 [DEMO]`.
+
+`npm run eval` always runs with demo mode off: its fixtures hold the real rules.
+
 ### Pairing fallback (PR #2765)
 
 Pairing passed on unpatched rc14 on 2026-09-26, so this is only for a future re-pair that fails. If the phone
@@ -379,6 +410,7 @@ answer/escalate switch; delete the key).
 | `disclosure.enabled` / `text` / `sessionGapHours` | `true` / … / `12` | AI disclosure on the first auto-reply per session |
 | `placeholder.enabled` / `text.id` / `text.en` | `true` / `🤖 Halo Kak, tunggu sebentar ya 🙏` / `🤖 Hi! One moment please 🙏` | the fixed reply to a waiting customer whose message is escalated (see Safety defaults); sent only while `autoSend.enabled` is on too, and `/pause` stops it. Both texts must be non-empty strings or the start stops |
 | `greetingReply.enabled` / `text.id` / `text.en` | `true` / `Halo Kak, ada yang bisa saya bantu? 🙏` / `Hi! How can I help you? 🙏` | the fixed greeting-back to a waiting customer's greeting alone (see Safety defaults), sent as an auto-reply (🤖 first on the session's first reply); `false` drafts it as before. Both texts must be non-empty strings or the start stops |
+| `demo.enabled` / `maxPerChatPerHour` | `false` / `30` | demo mode: **invents answers** the facts do not give, for testers only; `true` needs a non-empty `allowChats` or the start stops. See "Demo mode" |
 | `notifyOwnerOnAutoSend` | `true` | post each auto-reply to "Message yourself", as one line: `✅ Auto-replied to Name (+62…): "…"` |
 | `draftTtlHours` | `24` | pending drafts expire |
 | `guards.maxReplyChars` / `guards.sensitiveTerms` | `600` / list | auto-reply length cap; terms that force a draft unless in the facts |

@@ -7,6 +7,9 @@
 // An escalation also says whether the customer gets a short fixed placeholder ("🤖 Halo Kak, tunggu sebentar ya 🙏",
 // owner decisions 2026-09-27), so a waiting customer does not wait in silence; see placeholderWithheld. A waiting
 // customer's greeting alone gets a fixed greeting-back instead, as an auto-send (see greetingHeld).
+// Demo mode (`demo.enabled`, owner decision 2026-09-27; config.js requires allowChats) answers what a real shop would
+// know, inventing it where the facts are silent: an answer to a message that asks nothing is not held (a thanks gets
+// Claude's thanks-back), and `demo.maxPerChatPerHour` replaces the per-chat cap. Every other gate stays.
 import { asksSomething, isGreetingOnly, isLooseThanks, isThanks, normalizeText, thanksAgrees } from './guards.js'
 
 const QUOTA_OK_STATUSES = new Set(['allowed', 'allowed_warning'])
@@ -74,6 +77,7 @@ export function closedThisSession (history = [], { lastClosingAt = 0, sessionSta
 }
 
 const flatText = text => normalizeText(text).replace(/\s+/g, ' ').trim()
+const isDemo = config => config.demo?.enabled === true
 
 /**
  * @param {{ok: boolean, triage?: object, error?: string}} result  brain.triage() output
@@ -117,7 +121,8 @@ function chatBlockers (ctx) {
   if (chat.blocklistUnchecked) blockers.push('blocklist_unchecked') // phone number unknown, cannot rule the blocklist out
   if (chat.muted) blockers.push('muted')
   if (chat.takeoverUntil && chat.takeoverUntil > ctx.now) blockers.push('human_takeover')
-  if (ctx.chatAutoSendsLastHour >= config.autoSend.maxPerChatPerHour) blockers.push('chat_rate_limit')
+  const perChat = (isDemo(config) ? config.demo.maxPerChatPerHour : undefined) ?? config.autoSend.maxPerChatPerHour
+  if (ctx.chatAutoSendsLastHour >= perChat) blockers.push('chat_rate_limit')
   if (ctx.autoSendsLastDay >= config.autoSend.maxPerDay) blockers.push('daily_rate_limit')
   return blockers
 }
@@ -226,8 +231,9 @@ function route (result, ctx) {
 
   const held = attachments.map(kind => `attachment:${kind}`) // Claude cannot see it: a payment proof?
   // Owner decision (2026-09-27): whatever it cites and whatever the other gates say, an answer to a message that asks
-  // nothing is a draft. The notice leads with this one reason instead of listing gates that would not have mattered.
-  if (!asksSomething(ctx.incomingText)) return { action: 'escalate', reasons: ['decision:answer', 'no_question', ...held] }
+  // nothing is a draft, outside demo mode. The notice leads with this one reason instead of listing gates that would
+  // not have mattered.
+  if (!isDemo(config) && !asksSomething(ctx.incomingText)) return { action: 'escalate', reasons: ['decision:answer', 'no_question', ...held] }
 
   const blockers = [...held]
   if (!config.autoSend?.enabled) blockers.push('auto_send_disabled')

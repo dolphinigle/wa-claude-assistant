@@ -62,6 +62,12 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
     const value = key.split('.').reduce((node, part) => node?.[part], config)
     if (typeof value !== 'boolean') throw new Error(`config.${key} must be true or false (no quotes), got ${JSON.stringify(value)}`)
   }
+  // Demo mode invents answers (owner decision 2026-09-27), so it must never reach a real customer by accident: an exact
+  // boolean, and only with the testers listed. Its per-chat cap must be a number: anything else would lift the cap.
+  const demo = config.demo
+  if (!isPlainObject(demo) || typeof demo.enabled !== 'boolean') throw new Error(`config.demo.enabled must be true or false (no quotes), got ${JSON.stringify(demo?.enabled ?? demo)}`)
+  if (demo.enabled && config.allowChats.length === 0) throw new Error('demo mode invents answers: list the testers in allowChats (config.demo.enabled is true, allowChats is empty)')
+  if (demo.enabled && !(Number.isInteger(demo.maxPerChatPerHour) && demo.maxPerChatPerHour >= 0)) throw new Error(`config.demo.maxPerChatPerHour must be a whole number >= 0, got ${JSON.stringify(demo.maxPerChatPerHour)}`)
   for (const [key, why] of REMOVED_KEYS) {
     if (key.split('.').reduce((node, part) => node?.[part], config) !== undefined) throw new Error(`config ${key} is no longer supported (${why}); remove it from config.local.json`)
   }

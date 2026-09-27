@@ -90,3 +90,12 @@ test('greetingReply: on by default with both texts; a malformed setting stops th
     assert.throws(() => loadConfig({ rootDir: rootWith(t, { greetingReply }) }), /config\.greetingReply must be/, JSON.stringify(greetingReply))
   }
 })
+
+test('demo mode: off by default, an exact boolean, and it refuses to start without testers in allowChats', t => {
+  assert.deepEqual(loadConfig({ rootDir: rootWith(t) }).demo, { enabled: false, maxPerChatPerHour: 30 })
+  assert.throws(() => loadConfig({ rootDir: rootWith(t, { demo: { enabled: true } }) }), /demo mode invents answers: list the testers in allowChats/)
+  assert.equal(loadConfig({ rootDir: rootWith(t, { demo: { enabled: true }, allowChats: ['081293850000'] }) }).demo.enabled, true)
+  for (const demo of [true, 'on', { enabled: 'true' }, { enabled: 1 }]) {
+    assert.throws(() => loadConfig({ rootDir: rootWith(t, { demo, allowChats: ['081293850000'] }) }), /config\.demo\.enabled must be true or false/, JSON.stringify(demo))
+  }
+})
