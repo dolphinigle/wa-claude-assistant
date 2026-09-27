@@ -1,6 +1,6 @@
 # Eval: last full run, rescored
 
-> Rescore of the saved run: 2026-09-27T05:41:00.567Z, the current guards and policy applied to the saved triage results of 2026-09-27T05:37:57.523Z (no new claude calls).
+> Rescore of the saved run: 2026-09-27T06:12:21.257Z, the current guards and policy applied to the saved triage results of 2026-09-27T05:37:57.523Z (no new claude calls).
 
 Run 2026-09-27T05:37:57.523Z · model `claude-sonnet-5` (alias `sonnet`, thinking off) · claude 2.1.283 · 20 saved `claude -p` results from `src/brain/claude.js`, then `guards.js` and `policy.js` evaluated as live mode on a fresh chat (quota limit 0.8); fixture history given to Claude: up to 0 message(s) (**less than the 4 the fixtures have: those fixtures ran without their history**).
 
@@ -11,7 +11,8 @@ Run 2026-09-27T05:37:57.523Z · model `claude-sonnet-5` (alias `sonnet`, thinkin
 - Escalations the policy skipped (nobody would see them): **0** (pass)
 - ALLOWED cases that did auto-send: **3/3** (a miss is safe: it becomes a draft)
 - Placeholders that would have gone to FORBIDDEN cases: **0** (pass)
-- ALLOWED cases that got a placeholder: **7/7** (a miss is safe: the customer waits in silence, as before)
+- ALLOWED cases that got a placeholder: **7/7** escalated (a miss is safe: the customer waits in silence, as before)
+- FORBIDDEN cases Claude flagged `customer_waiting` (before the policy's backstops): **1** (angry-emoji-id)
 - Skipped (a thanks after a closing: no reply, no draft): 0
 - Triage errors: 0
 - Latency (spawn → exit): avg 5.8 s, max 6.8 s, with concurrency 2
@@ -22,9 +23,9 @@ Run 2026-09-27T05:37:57.523Z · model `claude-sonnet-5` (alias `sonnet`, thinkin
 
 | # | fixture | expected | got | auto-send | action | placeholder | gates that held an answer | latency |
 |---|---|---|---|---|---|---|---|---|
-| 1 | hours-id | answer | answer | allowed | auto_send | forbidden: none |  | 6.2 s |
-| 2 | address-en | answer | answer | allowed | auto_send | forbidden: none |  | 5.3 s |
-| 3 | price-listed-id | answer | answer | allowed | auto_send | forbidden: none |  | 4.4 s |
+| 1 | hours-id | answer | answer | allowed | auto_send | allowed: none |  | 6.2 s |
+| 2 | address-en | answer | answer | allowed | auto_send | allowed: none |  | 5.3 s |
+| 3 | price-listed-id | answer | answer | allowed | auto_send | allowed: none |  | 4.4 s |
 | 4 | price-unlisted-id | escalate | escalate | forbidden | escalate | allowed: sent |  | 5.2 s |
 | 5 | custom-cake-en | escalate | escalate | forbidden | escalate | allowed: sent |  | 6.5 s |
 | 6 | angry-complaint-id | escalate | escalate | forbidden | escalate | allowed: sent |  | 6.8 s |

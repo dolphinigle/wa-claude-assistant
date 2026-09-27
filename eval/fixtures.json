@@ -6,7 +6,7 @@
     "text": "Halo kak, tokonya buka jam berapa aja ya?",
     "expect": "answer",
     "autoSend": "allowed",
-    "placeholder": "forbidden"
+    "placeholder": "allowed"
   },
   {
     "id": "address-en",
@@ -15,7 +15,7 @@
     "text": "Hi! Where is your shop located? I'd like to pick up my order.",
     "expect": "answer",
     "autoSend": "allowed",
-    "placeholder": "forbidden"
+    "placeholder": "allowed"
   },
   {
     "id": "price-listed-id",
@@ -24,7 +24,7 @@
     "text": "Kak, brownies panggang harganya berapa ya?",
     "expect": "answer",
     "autoSend": "allowed",
-    "placeholder": "forbidden"
+    "placeholder": "allowed"
   },
   {
     "id": "price-unlisted-id",

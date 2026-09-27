@@ -37,6 +37,13 @@ if (!saved && config.contextMessages < historyNeeded) {
   console.warn(`eval: contextMessages ${config.contextMessages} (config.local.json) would hide the fixtures' histories; using ${historyNeeded}\n`)
   config.contextMessages = historyNeeded
 }
+// Nor may it switch off what the hard gates test: with auto-replies or the placeholder off, every row passes its gate
+// without testing anything (consistency-r1-3).
+for (const [name, section] of [['autoSend', config.autoSend], ['placeholder', config.placeholder]]) {
+  if (section.enabled === true) continue
+  console.warn(`eval: ${name}.enabled ${section.enabled} (config.local.json) would make its gate test nothing; using true\n`)
+  section.enabled = true
+}
 const knowledge = loadKnowledge(config.paths.knowledge)
 const startedAt = saved ? new Date(saved.runAt) : new Date()
 const baseName = saved ? path.basename(rescoreFile, '.json') : only ? 'last-run-partial' : 'last-run'
@@ -114,7 +121,11 @@ const skippedEscalations = rows.filter(row => row.skippedEscalation)
 const allowedExpected = rows.filter(row => row.fixture.autoSend === 'allowed').length
 const allowedActual = rows.filter(row => row.allowedAutoSend).length
 const forbiddenPlaceholders = rows.filter(row => row.forbiddenPlaceholder)
-const placeholdersExpected = rows.filter(row => row.fixture.placeholder === 'allowed').length
+// The policy's own backstops (a thanks, no_words) hide what Claude said: this shows whether the prompt keeps
+// customer_waiting false on the FORBIDDEN cases by itself.
+const flaggedForbidden = rows.filter(row => row.fixture.placeholder === 'forbidden' && row.result.triage?.customer_waiting === true)
+// An allowed case that auto-sends gets its answer instead: only its escalation should get a placeholder.
+const placeholdersExpected = rows.filter(row => row.fixture.placeholder === 'allowed' && row.decision.action === 'escalate').length
 const placeholdersActual = rows.filter(row => row.allowedPlaceholder).length
 const errors = rows.filter(row => !row.result.ok)
 const latencies = rows.map(row => row.result.meta?.durationMs).filter(Number.isFinite)
@@ -139,7 +150,8 @@ const summary = [
   `- Escalations the policy skipped (nobody would see them): **${skippedEscalations.length}** ${skippedEscalations.length === 0 ? '(pass)' : `(FAIL: ${skippedEscalations.map(row => row.fixture.id).join(', ')})`}`,
   `- ALLOWED cases that did auto-send: **${allowedActual}/${allowedExpected}** (a miss is safe: it becomes a draft)`,
   `- Placeholders that would have gone to FORBIDDEN cases: **${forbiddenPlaceholders.length}** ${forbiddenPlaceholders.length === 0 ? '(pass)' : `(FAIL: ${forbiddenPlaceholders.map(row => row.fixture.id).join(', ')})`}`,
-  `- ALLOWED cases that got a placeholder: **${placeholdersActual}/${placeholdersExpected}** (a miss is safe: the customer waits in silence, as before)${predatesPlaceholder ? ' (the saved results predate customer_waiting)' : ''}`,
+  `- ALLOWED cases that got a placeholder: **${placeholdersActual}/${placeholdersExpected}** escalated (a miss is safe: the customer waits in silence, as before)${predatesPlaceholder ? ' (the saved results predate customer_waiting)' : ''}`,
+  `- FORBIDDEN cases Claude flagged \`customer_waiting\` (before the policy's backstops): **${flaggedForbidden.length}**${flaggedForbidden.length ? ` (${flaggedForbidden.map(row => row.fixture.id).join(', ')})` : ''}`,
   `- Skipped (a thanks after a closing: no reply, no draft): ${rows.filter(row => row.decision.action === 'skip').length}`,
   `- Triage errors: ${errors.length}${errors.length ? ` (${errors.map(row => `${row.fixture.id}: ${row.result.error}`).join('; ')})` : ''}`,
   `- Latency (spawn → exit): avg ${(avgLatency / 1000).toFixed(1)} s, max ${(maxLatency / 1000).toFixed(1)} s, with concurrency ${config.claude.concurrency}`,
