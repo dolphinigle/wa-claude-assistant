@@ -335,7 +335,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const batchIds = new Set(batch.map(message => message.id))
     const history = (transport.getHistory?.(chatId, config.contextMessages + batch.length) ?? [])
       .filter(item => (item.text || item.attachment) && !batchIds.has(item.id))
-      .slice(-config.contextMessages)
+      .slice(config.contextMessages > 0 ? -config.contextMessages : Infinity) // slice(-0) would keep everything
 
     let result
     try {

@@ -60,6 +60,17 @@ test('live: an answer is auto-sent with disclosure, quoted, marked read, owner n
   assert.equal(store.countChatAutoSends(ALICE, 3_600_000), 1)
 })
 
+test('contextMessages 0 gives Claude and the policy no earlier messages at all', async t => {
+  const { transport, brain, assistant } = setup(t, { config: { contextMessages: 0 } })
+  const ts = Math.floor(Date.now() / 1000)
+  transport.remember({ id: 'OLD1', chatId: ALICE, fromMe: true, text: 'van, nanti aku tes ya', timestamp: ts - 60 })
+  transport.remember({ id: 'OLD2', chatId: ALICE, fromMe: false, text: 'oke', timestamp: ts - 30 })
+  // Not remembered first: the transport's newest item is an older message, as when the batch is missing from it.
+  await assistant.handleMessage(incoming(ALICE, 'Kak jam berapa buka?'))
+  await assistant.idle()
+  assert.deepEqual(brain.calls[0].history, [])
+})
+
 test('an auto-reply is not marked read while the chat still has a draft waiting for the owner', async t => {
   const { transport, deliver, owner, advance, now, audit } = setup(t)
   const live = () => ({ timestamp: Math.floor(now() / 1000) })
