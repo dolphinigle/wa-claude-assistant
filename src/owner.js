@@ -9,10 +9,10 @@ export const HELP_TEXT = `${BOT_PREFIX} Commands (type them here, in "Message yo
 /ok N — send draft N as written
 /edit N <text> — send your text instead of draft N
 /no N — discard draft N
-/pause — stop all auto-replies (drafts still arrive)
-/resume — allow auto-replies again
+/pause — stop all auto-replies and placeholders (drafts still arrive)
+/resume — allow them again
 /status — mode, pending drafts, counters, quota
-/mute <N|number|name> — never auto-reply in that chat (N = a draft number)
+/mute <N|number|name> — no auto-replies or placeholders in that chat (N = a draft number)
 /unmute <N|number|name> — undo /mute
 /help — this list`
 
@@ -65,12 +65,22 @@ export function parseCommand (input) {
   }
 }
 
+/**
+ * The fixed placeholder the customer got while the draft waits (assistant.js), as one line since it is always the same;
+ * '' when none went out. `unknown`: the send failed in flight, so it may have been delivered.
+ */
+export function placeholderLine (placeholder) {
+  if (placeholder?.status === 'sent') return `↩️ They got: ${placeholder.text}`
+  if (placeholder?.status === 'shadow') return `↩️ [SHADOW] would have sent: ${placeholder.text}`
+  if (placeholder?.status === 'unknown') return `↩️ They may have got (the send failed): ${placeholder.text}`
+  return ''
+}
+
 /** One format for every escalation: Claude's summary and reason say why it needs the owner, the gates why an answer was held. */
 export function formatDraftNotice (draft) {
   const lines = [`${BOT_PREFIX} 📝 DRAFT #${draft.id} · ${draft.contactName}`, `They wrote: "${draft.excerpt}"`]
-  // The fixed placeholder the customer got while the draft waits (assistant.js); one line, since it is always the same.
-  if (draft.placeholder?.status === 'sent') lines.push(`↩️ They got: ${draft.placeholder.text}`)
-  if (draft.placeholder?.status === 'shadow') lines.push(`↩️ [SHADOW] would have sent: ${draft.placeholder.text}`)
+  const placeholder = placeholderLine(draft.placeholder)
+  if (placeholder) lines.push(placeholder)
   if (draft.summary) lines.push(`Summary: ${draft.summary}`)
   lines.push(draft.draft ? `Draft:\n${draft.draft}` : 'Draft: (none, write your own)')
   if (draft.privateDetails?.length > 0) lines.push(`⚠️ Check before /ok: the draft mentions your own account or machine details (${draft.privateDetails.join(', ')}).`)
@@ -167,12 +177,14 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
     const takeovers = chats.filter(([, chat]) => chat.takeoverUntil > at).map(([id, chat]) => `${chatName(id)} (until ${formatClock(chat.takeoverUntil, config.timezone)})`)
     const muted = chats.filter(([, chat]) => chat.muted).map(([id]) => chatName(id))
     const quota = store.lastRateLimit
-    const autoSend = !config.autoSend.enabled ? 'disabled in config' : store.paused ? 'PAUSED' : 'on'
+    const switched = enabled => (!enabled ? 'disabled in config' : store.paused ? 'PAUSED' : 'on')
     return [
       `${BOT_PREFIX} Status`,
       `Mode: ${config.mode === 'live' ? 'live' : 'shadow (nothing is sent to customers)'}`,
       ...(config.allowChats?.length > 0 ? [`Only these chats (allowChats): ${config.allowChats.join(', ')}`] : []),
-      `Auto-reply: ${autoSend}`,
+      `Auto-reply: ${switched(config.autoSend.enabled)}`,
+      // Its own switch: with auto-replies disabled in config, a waiting customer's escalation still gets it.
+      `Escalation placeholder: ${switched(config.placeholder?.enabled === true)}`,
       `Pending drafts: ${pending.length === 0 ? 'none' : pending.map(draft => `#${draft.id} ${draft.contactName}`).join(', ')}`,
       `Auto-replies and placeholders in the last 24 h: ${store.countAutoSends(24 * HOUR_MS)}/${config.autoSend.maxPerDay}`,
       `Claude quota: 5 h ${percent(quota?.fiveHourUtilization)}, 7 d ${percent(quota?.sevenDayUtilization)} (${quota?.status ?? 'not seen yet'})`,
@@ -213,8 +225,8 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
       case 'resume':
         if (timestampMs && timestampMs < store.pauseChangedAt) return `${BOT_PREFIX} Ignored a late /${command.name} typed before your last /pause or /resume.`
         store.setPaused(command.name === 'pause', timestampMs ?? now())
-        if (command.name === 'pause') return `${BOT_PREFIX} ⏸️ Auto-replies paused. Drafts still come here. /resume to undo.`
-        return `${BOT_PREFIX} ▶️ Auto-replies resumed${config.mode === 'live' ? '' : ' (shadow mode: still nothing is sent to customers)'}.`
+        if (command.name === 'pause') return `${BOT_PREFIX} ⏸️ Auto-replies and placeholders paused. Drafts still come here. /resume to undo.`
+        return `${BOT_PREFIX} ▶️ Auto-replies and placeholders resumed${config.mode === 'live' ? '' : ' (shadow mode: still nothing is sent to customers)'}.`
       case 'status':
         return status()
       case 'mute':
@@ -225,7 +237,7 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
         const records = command.name === 'mute' ? [chatId] : store.linkedChatIds(chatId).filter(id => store.existingChat(id))
         for (const id of records) store.updateChat(id, { muted: command.name === 'mute' })
         return command.name === 'mute'
-          ? `${BOT_PREFIX} 🔇 Muted ${chatName(chatId)}: no auto-replies there; drafts still come here.`
+          ? `${BOT_PREFIX} 🔇 Muted ${chatName(chatId)}: no auto-replies or placeholders there; drafts still come here.`
           : `${BOT_PREFIX} 🔈 Unmuted ${chatName(chatId)}.`
       }
       case 'help':

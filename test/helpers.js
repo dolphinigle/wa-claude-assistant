@@ -76,7 +76,7 @@ export function createFakeTransport ({ now = () => Date.now() } = {}) {
     },
     async send (chatId, text, options = {}) {
       if (this.sendDelayMs) await new Promise(resolve => setTimeout(resolve, this.sendDelayMs))
-      if (this.down) throw new Error('whatsapp not connected')
+      if (this.down) throw Object.assign(new Error('whatsapp not connected'), { notSent: true })
       const id = options.messageId ?? `SENT${++counter}`
       sent.push({ chatId, text, id, quotedRaw: options.quotedRaw })
       this.remember({ id, chatId, fromMe: true, text, timestamp: Math.floor(now() / 1000) })

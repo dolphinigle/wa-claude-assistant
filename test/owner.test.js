@@ -218,3 +218,13 @@ test('a pending draft saved by the four-category version still works with /ok an
   assert.deepEqual(sends, [['a@s.whatsapp.net', 'Baik Kak, saya cek dulu.']])
   assert.equal(store.createDraft({ chatId: 'b' }).id, 2)
 })
+
+test('/status shows the placeholder switch apart from auto-replies: disabling auto-replies does not stop it (send-path-r1-2)', async t => {
+  const store = new Store(tempDir(t))
+  const gate = { async sendToCustomer () { return { sent: true } } }
+  const status = config => createOwnerCommands({ config, store, gate }).handle('/status')
+  assert.match(await status(makeConfig({ mode: 'live', autoSend: { enabled: false } })), /\nAuto-reply: disabled in config\nEscalation placeholder: on\n/)
+  assert.match(await status(makeConfig({ mode: 'live', placeholder: { enabled: false } })), /\nAuto-reply: on\nEscalation placeholder: disabled in config\n/)
+  store.setPaused(true, Date.now())
+  assert.match(await status(makeConfig({ mode: 'live' })), /\nAuto-reply: PAUSED\nEscalation placeholder: PAUSED\n/)
+})

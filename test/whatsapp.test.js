@@ -213,7 +213,8 @@ test('stop codes: 401 and 440 stop without reconnecting', async t => {
     await sleep(10)
     assert.deepEqual(fatal.map(verdict => verdict.reason), [reason])
     assert.equal(sockets.length, 1)
-    await assert.rejects(transport.send(CUSTOMER, 'x'), /not connected/)
+    // Nothing went out, and the error says so: the send gate may let the next escalation try its placeholder again.
+    await assert.rejects(transport.send(CUSTOMER, 'x'), error => /not connected/.test(error.message) && error.notSent === true)
   }
 })
 

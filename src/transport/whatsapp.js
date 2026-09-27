@@ -279,7 +279,8 @@ export function createWhatsAppTransport ({ config, store, onMessage, onUntriaged
   }
 
   async function send (chatId, text, { quotedRaw, messageId } = {}) {
-    if (!sock || !connected) throw new Error('whatsapp not connected')
+    // Nothing went out: the send gate may try again later (`notSent`). Any later throw may come after delivery.
+    if (!sock || !connected) throw Object.assign(new Error('whatsapp not connected'), { notSent: true })
     const options = {}
     if (messageId) options.messageId = messageId
     // Quoted media replies don't render on mobile (#2739): only quote text messages.

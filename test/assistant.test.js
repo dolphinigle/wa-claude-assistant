@@ -525,7 +525,7 @@ test('blocklisted chats are never triaged, and the gate refuses to send to them'
   const { brain, deliver, assistant } = setup(t, { config: { blocklist: ['0822-2222-2222'] } })
   await deliver(incoming(ALICE, 'jam buka?'))
   assert.equal(brain.calls.length, 0)
-  assert.deepEqual(await assistant.gate.sendToCustomer(ALICE, 'hi'), { sent: false, error: 'chat is blocklisted' })
+  assert.deepEqual(await assistant.gate.sendToCustomer(ALICE, 'hi'), { sent: false, notSent: true, error: 'chat is blocklisted' })
 })
 
 test('a phone-number block also stops /ok to a LID chat, and notices show the number next to the pushName', async t => {
@@ -1292,7 +1292,7 @@ test('allowChats: the send gate refuses another chat, so /ok or /edit of a draft
     assert.deepEqual(transport.toCustomer(), [], mode)
     assert.equal(store.getDraft(1).status, 'pending', mode)
     assert.deepEqual(store.existingChat(BOB), record, `${mode}: not even lastSentAt`)
-    assert.deepEqual(await assistant.gate.sendToCustomer(BOB, 'halo'), { sent: false, error: 'chat is not in allowChats' }, mode)
+    assert.deepEqual(await assistant.gate.sendToCustomer(BOB, 'halo'), { sent: false, notSent: true, error: 'chat is not in allowChats' }, mode)
     assert.deepEqual(audit().filter(entry => entry.event === 'send_refused_not_allowed').map(entry => entry.source), ['approved', 'edited', undefined], mode)
   }
 })
@@ -1467,4 +1467,88 @@ test('placeholder: it is the session\'s AI disclosure, its echo starts no takeov
   await say(ALICE, 'makasih kak 🙏')
   assert.deepEqual(audit().filter(entry => entry.event === 'decision').map(entry => entry.action), ['escalate', 'escalate', 'auto_send', 'escalate'], 'drafted, not skipped')
   assert.deepEqual(store.pendingDrafts().map(draft => draft.excerpt), ['bisa kue custom?', 'makasih kak 🙏'])
+})
+
+test('placeholder: a draft already open when it went out carries its period on after /no or /ok of that draft (send-path-r1-1)', async t => {
+  for (const command of ['/no 2', '/ok 2']) {
+    const { owner, say, store, placeholders, withheld } = placeholderSetup(t)
+    await say(ALICE, 'Selamat pagi kak') // escalated, not waiting: a draft with no placeholder
+    await say(ALICE, 'bisa kue custom unicorn?')
+    await owner(command)
+    await say(ALICE, 'kue tart 2 tingkat juga bisa?')
+    assert.deepEqual([placeholders().length, store.pendingDrafts().map(draft => draft.id)], [1, [1, 3]], `${command}: draft #1 was open all along`)
+    assert.deepEqual(withheld(), [['customer_not_waiting'], [], ['placeholder_already_sent']], command)
+    await owner('/no 1')
+    await owner('/no 3')
+    await say(ALICE, 'kue ulang tahun lagi bisa kak?')
+    assert.equal(placeholders().length, 2, `${command}: nothing open, a new period`)
+  }
+})
+
+test('placeholder: a send that certainly failed takes the drafts that joined its period out of it (send-path-r1-4)', async t => {
+  const { transport, store, assistant, say, stamp, advance, placeholders, withheld } = placeholderSetup(t)
+  const send = transport.send.bind(transport)
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  let first = true
+  transport.send = async (chatId, text, options) => {
+    if (chatId === ALICE && first) {
+      first = false
+      await gate
+      throw Object.assign(new Error('whatsapp not connected'), { notSent: true })
+    }
+    return send(chatId, text, options)
+  }
+  advance(60_000)
+  await assistant.handleMessage(incoming(ALICE, 'bisa kue custom unicorn?', stamp()))
+  await waitFor(() => store.getDraft(1)?.placeholder?.status === 'sending')
+  advance(60_000)
+  await assistant.handleMessage(incoming(ALICE, 'kue tart 2 tingkat juga bisa?', stamp()))
+  await waitFor(() => store.getDraft(2))
+  assert.equal(store.getDraft(2).placeholderCovered, 1, 'triaged while the placeholder was in flight')
+  release()
+  await assistant.idle()
+  assert.deepEqual([store.getDraft(1).placeholder, store.getDraft(2).placeholderCovered, store.countChatAutoSends(ALICE, 3_600_000)], [undefined, undefined, 0])
+  await say(ALICE, 'kue ulang tahun juga bisa kak?')
+  assert.deepEqual(withheld(), [[], ['placeholder_already_sent'], []])
+  assert.equal(placeholders().length, 1, 'the customer got none, so the next escalation sends one')
+})
+
+test('placeholder: a send that failed in flight may have been delivered, so its period and cap slot stand (correctness-r1-1)', async t => {
+  const { transport, store, say, placeholders, withheld } = placeholderSetup(t)
+  const send = transport.send.bind(transport)
+  transport.send = async (chatId, text, options) => {
+    const sent = await send(chatId, text, options)
+    if (text === PLACEHOLDER_ID) throw new Error('Timed Out') // Baileys: the frame went out, its write callback was late
+    return sent
+  }
+  await say(ALICE, 'bisa kue custom unicorn?')
+  await say(ALICE, 'kue ulang tahun 3 tingkat juga bisa?')
+  assert.equal(placeholders().length, 1, 'delivered once, and not again while draft #1 is open')
+  assert.deepEqual(withheld(), [[], ['placeholder_already_sent']])
+  assert.deepEqual([store.getDraft(1).placeholder.status, store.countChatAutoSends(ALICE, 3_600_000), store.chat(ALICE).lastDisclosureAt ?? 0], ['unknown', 1, 0],
+    'the cap slot stands; it is no disclosure, since it may not have arrived')
+  assert.match(transport.toSelf()[0], /\n↩️ They may have got \(the send failed\): 🤖 Tunggu sebentar ya Kak 🙏\n/)
+})
+
+test('placeholder: when your reply on the phone cancels the draft while its placeholder goes out, no /ok is offered (send-path-r1-5)', async t => {
+  const { transport, store, assistant, stamp, advance } = placeholderSetup(t)
+  const send = transport.send.bind(transport)
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  transport.send = async (chatId, text, options) => {
+    if (text === PLACEHOLDER_ID) await gate
+    return send(chatId, text, options)
+  }
+  advance(60_000)
+  await assistant.handleMessage(incoming(ALICE, 'bisa kue custom unicorn?', stamp()))
+  await waitFor(() => store.getDraft(1)?.placeholder?.status === 'sending')
+  await assistant.handleMessage({ id: 'PHONE1', chatId: ALICE, fromMe: true, isSelfChat: false, text: 'bisa kak', ...stamp(), kind: 'notify' })
+  release()
+  await assistant.idle()
+  const notices = transport.toSelf()
+  assert.equal(store.getDraft(1).status, 'cancelled')
+  assert.equal(notices.length, 2)
+  assert.match(notices[0], /You replied to .+ yourself: cancelled draft #1\./)
+  assert.match(notices[1], /^🤖 📝 Draft #1 · .+ is cancelled\. ↩️ They got: 🤖 Tunggu sebentar ya Kak 🙏$/)
 })

@@ -1,7 +1,7 @@
 // Orchestrator: dedupe, loop guard, takeover, debounce, triage, policy, and the ONE send gate.
 import { detectLanguage, findPrivateDetails, guardTriage, isThanks, privateIdentifiersFor } from './guards.js'
 import { isAllowedChat, listNamesChat, phoneEntry } from './chat-lists.js'
-import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice } from './owner.js'
+import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice, placeholderLine } from './owner.js'
 import { decide } from './policy.js'
 
 const MINUTE_MS = 60 * 1000
@@ -89,9 +89,17 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const chatIds = store.linkedChatIds(chatId)
     return store.pendingDrafts().filter(draft => chatIds.includes(draft.chatId))
   }
-  // One placeholder per open-draft period: from the draft whose customer got one until the contact has no open draft,
-  // so a draft created meanwhile carries the period on after that first draft is dealt with.
-  const inPlaceholderPeriod = chatId => openDrafts(chatId).some(draft => draft.placeholder || draft.placeholderCovered)
+  // One placeholder per open-draft period: from the placeholder until the contact has no open draft. Every draft open
+  // in the period names the draft whose customer got it (`placeholderCovered`), those already open when it went out
+  // included, so any of them still open carries the period on after that draft is dealt with (send-path-r1-1).
+  // Returns that draft's id, or 0 outside a period (`true` on drafts saved before the id was kept).
+  const placeholderPeriod = chatId => {
+    for (const draft of openDrafts(chatId)) {
+      if (draft.placeholder) return draft.id
+      if (draft.placeholderCovered) return draft.placeholderCovered
+    }
+    return 0
+  }
 
   // --- the send gate: every outgoing message passes through one of these two functions ------------------------
 
@@ -137,17 +145,19 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
    * If its text is itself only a thanks-back, its message id marks the chat closed for the thanks after it (policy.js).
    * Anything else, and anything more ("Sama-sama kak! Mau sekalian pesan untuk Sabtu?"), is our side's newest word,
    * recorded as `lastSentAt` (in shadow too, as live would send it): an "iya makasih" after it may answer it.
+   * `notSent` on a failure: nothing went out (a refusal here, or the transport's own check before sending). Any other
+   * failure may still have been delivered.
    */
   async function sendToCustomer (chatId, text, { quotedRaw, source, draftId, closingReply = false } = {}) {
-    if (!chatId || !text?.trim()) return { sent: false, error: 'nothing to send' }
+    if (!chatId || !text?.trim()) return { sent: false, notSent: true, error: 'nothing to send' }
     // E.g. /ok of a draft created before allowChats was set: it stays pending, and nothing is recorded for the chat.
     if (!isAllowed(chatId)) {
       store.audit('send_refused_not_allowed', { chatId, source, draftId })
-      return { sent: false, error: 'chat is not in allowChats' }
+      return { sent: false, notSent: true, error: 'chat is not in allowChats' }
     }
     if (isBlocked(chatId)) {
       store.audit('send_refused_blocked', { chatId, source })
-      return { sent: false, error: 'chat is blocklisted' }
+      return { sent: false, notSent: true, error: 'chat is blocklisted' }
     }
     const closing = closingReply && isThanks(text)
     if (!closing) store.updateChat(chatId, { lastSentAt: sendTime(chatId) }) // before sending: one that fails only costs a draft
@@ -168,8 +178,9 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       store.audit('sent_to_customer', { chatId, source, draftId, id: sent?.id, text })
       return { sent: true, id: sent?.id }
     } catch (error) {
-      store.audit('send_failed', { chatId, source, draftId, error: error.message })
-      return { sent: false, error: error.message }
+      const notSent = error.notSent === true
+      store.audit('send_failed', { chatId, source, draftId, error: error.message, ...(notSent && { notSent }) })
+      return { sent: false, error: error.message, ...(notSent && { notSent }) }
     }
   }
 
@@ -430,7 +441,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
         lastOursAt: lastOursAt(chatId),
         lastUntriagedAt: lastUntriagedAt(chatId),
         lastOpenedAt: lastOpenedAt(chatId),
-        placeholderSent: inPlaceholderPeriod(chatId)
+        placeholderSent: Boolean(placeholderPeriod(chatId))
       },
       now: now(),
       chatAutoSendsLastHour: chatAutoSendsLastHour(chatId),
@@ -505,7 +516,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   /** Every escalation, whether Claude chose it or a gate stopped its answer, is a draft for /ok, /edit or /no. */
   async function postDraft (chatId, batch, result, decision, closing) {
     const triage = result.triage
-    const covered = inPlaceholderPeriod(chatId)
+    const period = placeholderPeriod(chatId)
     const draft = store.createDraft({
       chatId,
       contactName: contactLabel(chatId),
@@ -519,10 +530,19 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       closing,
       // Whatever held it: the owner may /ok it, and the send gate cannot match this chat against a phone number.
       ...(blocklistUnchecked(chatId) && { blocklistUnchecked: true }),
-      ...(covered && { placeholderCovered: true }),
+      ...(period && { placeholderCovered: period }),
       privateDetails: findPrivateDetails(triage?.reply ?? '', privateIdentifiersFor(config))
     })
-    if (decision.placeholder) await sendPlaceholder(chatId, batch, draft) // before the notice, which says it went out
+    if (decision.placeholder) {
+      await sendPlaceholder(chatId, batch, draft) // before the notice, which says it went out
+      // Your reply on the phone during that send cancelled the draft (startTakeover, which said so): no /ok to offer,
+      // only what the customer got (send-path-r1-5).
+      const { status, placeholder } = store.getDraft(draft.id)
+      if (status !== 'pending') {
+        if (placeholder) await sendToOwner(`${BOT_PREFIX} 📝 Draft #${draft.id} · ${draft.contactName} is ${status}. ${placeholderLine(placeholder)}`)
+        return
+      }
+    }
     const notice = await sendToOwner(formatDraftNotice(draft))
     if (!notice.sent) logger.error(`[assistant] draft #${draft.id} could not be posted to self-chat yet; queued for when WhatsApp is back`)
   }
@@ -531,18 +551,27 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
    * Owner decision (2026-09-27): a customer whose message waits for the owner is not left in silence. The text is fixed,
    * never Claude's, in the sender's language. It quotes nothing and marks nothing read, since the owner has not seen the
    * message yet. It counts toward the auto-send caps and, when it starts with the disclosure text (🤖), as the session's
-   * AI disclosure. It is recorded on the draft before the first await, so an escalation of the same contact triaged
-   * meanwhile sees it and gets none. A failed send is audited by the send gate and leaves no trace but lastSentAt.
+   * AI disclosure. It is recorded on the draft, and the contact's other open drafts join its period, before the first
+   * await, so an escalation of the same contact triaged meanwhile sees it and gets none. A send that certainly failed
+   * (`notSent`) is undone but for lastSentAt, so the next escalation may try again; one that failed in flight may have
+   * been delivered, so its period and cap slot stand (status `unknown`), since a missed retry is the safe way round.
    */
   async function sendPlaceholder (chatId, batch, draft) {
     const language = detectLanguage(batch.map(message => message.text).join('\n')) === 'en' ? 'en' : 'id'
     const text = config.placeholder.text[language]
     store.updateDraft(draft.id, { placeholder: { text, status: 'sending' } })
+    for (const open of openDrafts(chatId)) if (open.id !== draft.id) store.updateDraft(open.id, { placeholderCovered: draft.id })
     const slot = store.recordAutoSend(chatId)
     const outcome = await sendToCustomer(chatId, text, { source: 'placeholder', draftId: draft.id })
-    if (!outcome.sent && !outcome.shadow) {
+    if (outcome.notSent) {
       store.releaseAutoSend(chatId, slot)
       store.updateDraft(draft.id, { placeholder: undefined })
+      // Drafts that joined this attempt's period, before it or during the send, leave it with it (send-path-r1-4).
+      for (const open of store.pendingDrafts()) if (open.placeholderCovered === draft.id) store.updateDraft(open.id, { placeholderCovered: undefined })
+      return
+    }
+    if (!outcome.sent && !outcome.shadow) {
+      store.updateDraft(draft.id, { placeholder: { text, status: 'unknown', at: now(), error: outcome.error } }) // correctness-r1-1
       return
     }
     store.updateDraft(draft.id, { placeholder: { text, status: outcome.shadow ? 'shadow' : 'sent', at: now() } })
