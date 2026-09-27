@@ -7,7 +7,7 @@ Claude Code CLI, headless, on your own subscription) for one of two decisions:
 | Claude says | What happens |
 |---|---|
 | `answer`: the whole reply is backed by the facts it cites from `knowledge.md`, or it is a purely social "thanks" answered with a thanks, and nothing needs your judgment | **auto-reply**, only if the customer's message asks something and every gate passes (see Safety defaults); if any gate fails, it is escalated instead and the notice names the gates. An answer to a message that asks nothing is a draft for `/ok` (`no_question`), whatever facts it cites: a thanks (Claude's thanks-back), a yes (`iya kak`, 👍, `betul`, `gapapa`), a greeting or a statement (`saya tunggu`, `saya mau ambil besok`). A thanks or goodbye right after a closing this session (a thanks draft you dealt with), with nothing new since, gets no reply and no notice; an "ok", a 👍 or a greeting alone never counts as one |
-| `escalate`: everything else: friends and family, complaints, payments, custom requests, anything not in the facts, spam and wrong numbers, manipulation attempts, and any triage that failed | a notice in your "Message yourself" chat with Claude's one-line summary, why, and a suggested draft for `/ok`, `/edit` or `/no` |
+| `escalate`: everything else: friends and family, complaints, payments, custom requests, anything not in the facts, spam and wrong numbers, manipulation attempts, and any triage that failed | a notice in your "Message yourself" chat with Claude's one-line summary, why, and a suggested draft for `/ok`, `/edit` or `/no`. A customer Claude says is waiting for you (a question, a request, an order, a complaint, a payment to confirm) first gets a fixed `🤖 Tunggu sebentar ya Kak 🙏` (`🤖 One moment please 🙏` in English), once while their drafts are open; family, friends, spam, manipulation attempts and a thanks, a greeting or an emoji alone get nothing |
 
 Groups, status updates, newsletters, broadcast lists and Meta AI are ignored. It starts in **shadow mode**: nothing is
 sent to anyone except your own "Message yourself" chat.
@@ -48,6 +48,7 @@ flowchart LR
   G --> P["policy.js<br/>pure decide()"]
   P -->|"answer, every gate passed"| S{{"send gate<br/>shadow mode stops here"}}
   P -->|"escalate, a gate failed,<br/>or nothing was asked"| N["notice to 'Message yourself'"]
+  P -->|"escalate, customer waiting:<br/>fixed placeholder"| S
   P -.->|"a thanks right after a closing<br/>this session, nothing new since"| K["skipped: no reply, no notice"]
   A -->|"/ok /edit /no …"| O["owner.js"]
   O --> S
@@ -56,7 +57,7 @@ flowchart LR
   A --- ST[("store.js<br/>data/state.json · audit.jsonl")]
 ```
 
-- **One send gate.** Every customer-bound message goes through `sendToCustomer()` in `src/assistant.js`, which
+- **One send gate.** Every customer-bound message (auto-reply, approved draft, escalation placeholder) goes through `sendToCustomer()` in `src/assistant.js`, which
   refuses blocklisted chats and, when `allowChats` is set, every chat it does not list, and, in shadow mode, records
   the send instead of making it. The bot's own notices go through `sendToOwner()` and always start with 🤖.
 - **Claude isolation.** `src/brain/claude.js` runs the exact locked command from the implementation notes: no shell,
@@ -266,10 +267,25 @@ cancelled.
   (`https://maps.app.goo.gl/…?g_st=iw`) or a word in its path asks nothing; a bare `kak.kirim` is no link. A burst asks
   if any of its messages does, and a question with a thanks (`makasih kak, jam berapa tutup?`) goes on to the other
   gates like any question.
+- **Escalation placeholder** (owner decision, 2026-09-27): so a customer does not wait in silence while you read the
+  draft, an escalated message gets the fixed `placeholder.text` (`🤖 Tunggu sebentar ya Kak 🙏`; `🤖 One moment
+  please 🙏` when the message is English by `detectLanguage`), never Claude's words. It needs all of: the triage
+  succeeded, Claude set `customer_waiting` (a new required schema field: a customer waiting for an answer or an action
+  from you; anything but `true` counts as false), the message is no thanks and has a letter or digit or a file (not
+  `😡😡`, `🙏` or `?` alone), `placeholder.enabled`, not paused, the chat not muted, blocklisted or
+  `blocklist_unchecked`, no human takeover, the hourly and daily auto-send caps not reached, not backlog, and the
+  contact got none since it last had no open draft (one per open-draft period: after `/ok`, `/edit`, `/no`, expiry or
+  your own reply leaves nothing open, the next escalation gets one again). It is sent after the draft is created,
+  through the send gate (shadow mode records it, `allowChats` and the blocklist refuse it), quotes nothing, gives no
+  blue ticks, counts toward the auto-send caps, and counts as the session's AI disclosure (the next auto-reply in that
+  session has no 🤖). The draft notice then says `↩️ They got: 🤖 Tunggu sebentar ya Kak 🙏` (`↩️ [SHADOW] would have
+  sent: …`); why one was withheld goes to `data/audit.jsonl` (`placeholderWithheld` on the decision), not the notice.
+  A failed send changes nothing else. Like any send of ours, it is loop-guarded (its echo starts no takeover) and it
+  is our side's newest word, so a thanks after it is not skipped as if nothing came after a closing.
 - **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with 🤖
   (`disclosure.text`; the owner's choice on 2026-09-27, after a two-language sentence was too much text). An icon is a
-  weaker disclosure than words: for real customers, consider a word such as `🤖 Asisten AI:`. Approved drafts carry
-  no marker.
+  weaker disclosure than words: for real customers, consider a word such as `🤖 Asisten AI:`. An escalation
+  placeholder that starts with `disclosure.text` counts as that session's disclosure. Approved drafts carry no marker.
 - **Contacts are shown with their number:** notices say `Name (+62…)`, because the name is the sender's own
   WhatsApp name and anyone can call themselves "Mama".
 - **Loop and duplicate guards:** ids of everything the bot sends are recorded before sending; every message id is
@@ -287,7 +303,7 @@ cancelled.
   bug in the checks) becomes a draft (`route_failed`), never a silent drop.
 - **Notices are never dropped:** a draft or other notice that fails because WhatsApp is reconnecting is
   kept in `data/state.json` and re-sent, marked "Delayed", on the next connection.
-- **Blue ticks only after an auto-reply** (`markRead`), never for escalated or skipped messages, and not while the chat still has
+- **Blue ticks only after an auto-reply** (`markRead`), never for escalated or skipped messages (an escalation placeholder included), and not while the chat still has
   a draft waiting for you (an auto-answered "jam berapa tutup?" does not mark read a chat
   whose "saya sudah transfer" is still unanswered).
 - **Pending drafts from the four-category version** (before the answer/escalate switch) stay in `data/state.json` and
@@ -299,9 +315,9 @@ cancelled.
 ## Model and latency
 
 The brain runs Sonnet (`claude.model: "sonnet"`, `claude-sonnet-5` on 2026-09-26) with thinking off
-(`MAX_THINKING_TOKENS=0`). Each triage is one `claude -p` process: the last eval measured avg 5.7 s from spawn to
-exit, all 20 calls between 4.6 and 8.5 s (concurrency 2; about 2 s of each call is CLI start-up). Earlier runs saw
-avg 7.7 s with one call at 39.5 s (38.0 s of it API time in a single turn, not a retry) and avg 7.0 s with a max of
+(`MAX_THINKING_TOKENS=0`). Each triage is one `claude -p` process: the last eval (2026-09-27) measured avg 5.8 s from
+spawn to exit, all 20 calls between 4.4 and 6.8 s (concurrency 2; about 2 s of each call is CLI start-up). Earlier runs
+saw avg 5.7 s (4.6–8.5 s), avg 7.7 s with one call at 39.5 s (38.0 s of it API time in a single turn, not a retry) and avg 7.0 s with a max of
 19.6 s, and research had seen about 11 s on a loaded machine, against 4.5–7.8 s for Haiku. An auto-reply therefore usually lands
 about 20–25 s after the customer's last message (the 15 s debounce, then the triage), now and then close to a
 minute. `timeoutMs` is 90 s, over twice the slowest call seen, so a structured-output retry still has room; a triage
@@ -318,8 +334,8 @@ answer/escalate switch; delete the key).
 | Key | Default | Meaning |
 |---|---|---|
 | `mode` | `"shadow"` | `shadow` never messages anyone but you; `live` really sends |
-| `autoSend.enabled` | `true` | `false` = drafts only, even in live mode |
-| `autoSend.maxPerChatPerHour` / `maxPerDay` | `3` / `30` | rolling-window caps (shadow would-sends count too) |
+| `autoSend.enabled` | `true` | `false` = no auto-replies, only drafts, even in live mode (the escalation placeholder has its own switch, `placeholder.enabled`) |
+| `autoSend.maxPerChatPerHour` / `maxPerDay` | `3` / `30` | rolling-window caps (shadow would-sends and escalation placeholders count too) |
 | `humanTakeoverMinutes` | `30` | bot stays out of a chat after you type in it |
 | `debounceMs` | `15000` | wait for a burst to finish before triage |
 | `backlog.maxAgeMinutes` / `liveWindowMinutes` / `autoSend` | `60` / `2` / `false` | skip messages older than `maxAgeMinutes`; older than `liveWindowMinutes` (or offline) counts as backlog: never auto-replied |
@@ -327,6 +343,7 @@ answer/escalate switch; delete the key).
 | `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`, `+62 812…`, `+62 0812…`); never sent to Claude, never replied to. A LID chat matches a phone number through the number its messages carried or WhatsApp's LID mapping; while its number is unknown and the list has phone numbers, that chat gets drafts only (its messages still reach Claude) and every draft of it, a thanks or an escalation too, shows the LID to add here. Anything but a list of phone numbers or JIDs as WhatsApp writes them (`6281…@s.whatsapp.net`, `…@lid`; not `0812…@s.whatsapp.net`, `620812…@s.whatsapp.net`, `…@c.us` or a `:device` suffix) stops the start |
 | `allowChats` | `[]` | empty = every chat. Otherwise only the chats it lists (JIDs or phone numbers, matched like `blocklist`) are handled; every other chat is ignored before anything happens to it (no Claude call, no draft, notice, blue ticks or takeover, nothing in `data/state.json`, one `skip_not_allowed` audit line without the text), and the send gate refuses it. A LID chat whose number is unknown is ignored until you list its LID or its number becomes known; your own reply there is kept in memory and becomes a takeover if the LID turns out to be a listed chat. "Message yourself" always works. Anything but a list of phone numbers or JIDs as WhatsApp writes them (`6281…@s.whatsapp.net`, `…@lid`; not `0812…@s.whatsapp.net`, `620812…@s.whatsapp.net`, `…@c.us` or a `:device` suffix) stops the start. See "Testing with one contact" |
 | `disclosure.enabled` / `text` / `sessionGapHours` | `true` / … / `12` | AI disclosure on the first auto-reply per session |
+| `placeholder.enabled` / `text.id` / `text.en` | `true` / `🤖 Tunggu sebentar ya Kak 🙏` / `🤖 One moment please 🙏` | the fixed reply to a waiting customer whose message is escalated (see Safety defaults); independent of `autoSend.enabled`, and `/pause` stops it too. Both texts must be non-empty strings or the start stops |
 | `notifyOwnerOnAutoSend` | `true` | post each auto-reply to "Message yourself", as one line: `✅ Auto-replied to Name (+62…): "…"` |
 | `draftTtlHours` | `24` | pending drafts expire |
 | `guards.maxReplyChars` / `guards.sensitiveTerms` | `600` / list | auto-reply length cap; terms that force a draft unless in the facts |
@@ -356,11 +373,31 @@ through the real brain, the guards and the live-mode policy, with each fixture's
 messages was sent as a closing, and when that closing's thanks arrived). One fixture = one `claude -p` call. Each
 fixture expects `answer` or `escalate` and marks auto-send as allowed (3: hours, address, listed price) or forbidden
 (the other 17). The social "ok makasih" still expects `answer`, since the prompt asks Claude for a thanks-back, but
-its auto-send is forbidden: it asks nothing, so the policy drafts it. The key numbers are FORBIDDEN cases that would have auto-sent and escalations the policy skipped
-(a skip reaches nobody, so an `escalate` fixture may only be skipped if it sets `skipOk`); both must be 0.
+its auto-send is forbidden: it asks nothing, so the policy drafts it. Each fixture also marks the escalation
+placeholder as allowed (7: unlisted price, custom cake, complaint, unconfirmed transfer, discount, holiday hours, the
+half-answerable question) or forbidden (13: family and friends, spam, manipulation and injection, thanks and
+acknowledgements, a greeting alone, `😡😡`, and every answer case); the eval computes it with `decide()`. The key numbers are FORBIDDEN cases that would have auto-sent, escalations the policy skipped
+(a skip reaches nobody, so an `escalate` fixture may only be skipped if it sets `skipOk`) and placeholders that would
+have gone to a FORBIDDEN case; all three must be 0. A `contextMessages` in `config.local.json` below the fixtures'
+longest history (4) is raised to it for the run, and the report says how much history Claude was given.
 
-- [eval/last-run.md](eval/last-run.md) is a **rescore** (2026-09-27, no Claude calls) of the full run below with
-  the current guards and policy, after the change that auto-sends only an answer to a message that asks something
+- [eval/last-run.md](eval/last-run.md) is a **rescore** (2026-09-27, no Claude calls) of the full run of 2026-09-27
+  (20 calls, `claude-sonnet-5`, thinking off, the first prompt with `customer_waiting`), with the policy rule added
+  after that run (no placeholder for a text without a letter or digit): **0 forbidden auto-sends**, **0 skipped
+  escalations**, **0 forbidden placeholders**, decision **19/20**, **3/3 allowed auto-sends**, **7/7 allowed
+  placeholders**, no triage errors. Latency: avg 5.8 s, 4.4–6.8 s.
+- That run itself failed the new gate once: Sonnet flagged `😡😡` as a waiting customer ("could indicate a
+  complaint"), which would have sent it `🤖 Tunggu sebentar ya Kak 🙏`. Since then the prompt says an emoji alone is
+  `false` (**unverified**: that wording needs the next full `npm run eval`), and the policy withholds the placeholder
+  from any text without a letter or digit, whatever Claude says. Family, friends, spam, both manipulation fixtures,
+  the thanks and the greeting were all `customer_waiting: false`.
+- That run also inherited `contextMessages: 0` from `config.local.json` (a live-test setting), so Claude saw none of
+  the fixture histories: "ok makasih kak 🙏" after our answer, `Selamat pagi kak` after yesterday's closing and the
+  thanks after an unanswered delivery request were triaged as standalone messages. The last one is the decision miss
+  (Sonnet answered it with a thanks-back; the policy still drafted it, `no_question`, and withheld the placeholder as a
+  thanks). The eval now raises `contextMessages` for the run, so the next full run tests those histories again.
+- Before the placeholder, a **rescore** (2026-09-27, no Claude calls) of the 2026-09-26 full run below with the
+  guards and policy of the time, after the change that auto-sends only an answer to a message that asks something
   (it replaced the social matchers and the thanks-back reply check of the review rounds before; untriaged content and
   quotes are never skipped over, and a thanks that agrees is skipped only after our closing reply), re-run after its
   review fixes (`kok` a particle, "no problem" spellings, links, a `ya` before a thanks, stickers and reactions; round
@@ -375,7 +412,7 @@ its auto-send is forbidden: it asks nothing, so the policy drafts it. The key nu
   **20/20**, **4/4 allowed cases auto-sent** under the rules of the time ("ok makasih kak 🙏" got "Sama-sama, Kak 🙏"
   through the social check, which is gone), no triage errors. Sonnet escalated `Selamat pagi kak` after yesterday's closing and the
   policy let the escalation stand. The unanswered-request thanks, the "Mama" thanks and `😡😡` were all escalated.
-  Latency: avg 5.7 s, max 8.5 s. Raw results are in `eval/last-run.json` for `--rescore`.
+  Latency: avg 5.7 s, max 8.5 s. Its raw results are in `eval/last-run.json` in git history before the 2026-09-27 run.
 - The run before, with a 🙏 after our own closing in place of the greeting fixture (the policy skips that one
   whatever Claude decides, which the unit tests cover): 0 forbidden, decision 19/20 (Sonnet escalated the 🙏), 4/4
   allowed, avg 7.7 s, max 39.5 s. The one before, 16 fixtures: decision 16/16, 0 forbidden, 4/4 allowed.

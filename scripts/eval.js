@@ -30,6 +30,13 @@ const predatesPlaceholder = Boolean(saved?.results.some(item => item.result.tria
 if (predatesPlaceholder) console.warn(`${rescoreFile} predates customer_waiting: every placeholder counts as withheld\n`)
 
 const config = loadConfig()
+// config.local.json may cut the history for a live test (contextMessages 0); the fixtures' histories must still reach
+// Claude, or the fixtures that depend on them test nothing.
+const historyNeeded = Math.max(...fixtures.map(fixture => fixture.history?.length ?? 0))
+if (!saved && config.contextMessages < historyNeeded) {
+  console.warn(`eval: contextMessages ${config.contextMessages} (config.local.json) would hide the fixtures' histories; using ${historyNeeded}\n`)
+  config.contextMessages = historyNeeded
+}
 const knowledge = loadKnowledge(config.paths.knowledge)
 const startedAt = saved ? new Date(saved.runAt) : new Date()
 const baseName = saved ? path.basename(rescoreFile, '.json') : only ? 'last-run-partial' : 'last-run'
@@ -52,7 +59,11 @@ async function collect () {
 
 const results = saved ? saved.results : await collect()
 if (saved) console.log(`rescore: ${results.length} saved triage result(s) from ${rescoreFile}, current guards and policy, no claude calls\n`)
-else writeFileSync(path.join(outDir, `${baseName}.json`), `${JSON.stringify({ runAt: startedAt.toISOString(), results }, null, 1)}\n`)
+else writeFileSync(path.join(outDir, `${baseName}.json`), `${JSON.stringify({ runAt: startedAt.toISOString(), contextMessages: config.contextMessages, results }, null, 1)}\n`)
+// How much of each fixture's history Claude was given in the run whose results these are (unknown in older saves).
+const contextMessages = saved ? saved.contextMessages : config.contextMessages
+const historyNote = contextMessages === undefined ? 'fixture history given to Claude: not recorded'
+  : `fixture history given to Claude: up to ${contextMessages} message(s)${contextMessages < historyNeeded ? ` (**less than the ${historyNeeded} the fixtures have: those fixtures ran without their history**)` : ''}`
 
 const rows = fixtures.map(fixture => {
   const { result } = results.find(item => item.id === fixture.id)
@@ -154,7 +165,7 @@ const report = [
   `${baseName === 'last-run' ? '# Eval: last full run' : '# Eval: partial re-run'}${saved ? ', rescored' : ''}`,
   '',
   ...(saved ? [`> Rescore of the saved run: ${new Date().toISOString()}, the current guards and policy applied to the saved triage results of ${startedAt.toISOString()} (no new claude calls).`, ''] : []),
-  `Run ${startedAt.toISOString()}${baseName === 'last-run' ? '' : ` (subset: ${fixtures.map(fixture => fixture.id).join(', ')})`} · model \`${firstMeta.model ?? config.claude.model}\` (alias \`${config.claude.model}\`, thinking ${thinking}) · claude ${firstMeta.claudeCodeVersion ?? '?'} · ${total} ${saved ? 'saved' : 'real'} \`claude -p\` results from \`src/brain/claude.js\`, then \`guards.js\` and \`policy.js\` evaluated as live mode on a fresh chat (quota limit ${config.quota.maxFiveHourUtilization}).`,
+  `Run ${startedAt.toISOString()}${baseName === 'last-run' ? '' : ` (subset: ${fixtures.map(fixture => fixture.id).join(', ')})`} · model \`${firstMeta.model ?? config.claude.model}\` (alias \`${config.claude.model}\`, thinking ${thinking}) · claude ${firstMeta.claudeCodeVersion ?? '?'} · ${total} ${saved ? 'saved' : 'real'} \`claude -p\` results from \`src/brain/claude.js\`, then \`guards.js\` and \`policy.js\` evaluated as live mode on a fresh chat (quota limit ${config.quota.maxFiveHourUtilization}); ${historyNote}.`,
   '',
   '## Summary',
   '',

@@ -422,3 +422,15 @@ test('placeholder: it is our side\'s message, so a thanks after it is not skippe
     'or only on the record (lastSentAt), on the other addressing form or before a restart')
   assert.equal(decide(triageResult(THANKS), thanksContext([...THANKED, placeholder])).action, 'escalate')
 })
+
+test('placeholder: none for a text without a letter or digit, whatever Claude says, unless a file came with it', () => {
+  for (const incomingText of ['😡😡', '🙏', '?', '!!!', ' ', '', undefined]) {
+    const decision = decide(triageResult(WAITING), { ...waitingContext(), incomingText })
+    assert.equal(decision.placeholder, false, String(incomingText))
+    assert.ok(decision.placeholderWithheld.includes('no_words'), String(incomingText))
+  }
+  assert.equal(decide(triageResult(WAITING), { ...waitingContext(), incomingText: '', attachments: ['image'] }).placeholder, true, 'a payment proof without a caption')
+  for (const incomingText of ['Kak, 2 loyang?', 'ok 👍 transfer ya', 'Can you make one?']) {
+    assert.equal(decide(triageResult(WAITING), { ...waitingContext(), incomingText }).placeholder, true, incomingText)
+  }
+})

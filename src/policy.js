@@ -111,7 +111,8 @@ function chatBlockers (ctx) {
 /**
  * Why an escalation gets no placeholder; empty means it gets one. Only Claude's `customer_waiting: true` (a customer
  * waiting for the owner: not family, friends, spam, a scam or a manipulation attempt) lets one out, since a family
- * emergency must never get "tunggu sebentar". A thanks never gets one, whatever Claude says: it waits for nothing.
+ * emergency must never get "tunggu sebentar". A thanks never gets one, whatever Claude says: it waits for nothing. Nor
+ * does a text without a letter or digit (😡😡, 🙏, ?) that comes without a file: it does not say what the sender wants.
  * Backlog never does: it comes late, and the owner may have answered it on the phone meanwhile. One placeholder covers
  * every escalation while a draft whose customer got one is open (`chat.placeholderSent`); it counts toward the caps.
  */
@@ -122,6 +123,7 @@ function placeholderWithheld (result, ctx) {
   if (config.placeholder?.enabled !== true) withheld.push('placeholder_disabled')
   if (result.triage.customer_waiting !== true) withheld.push('customer_not_waiting')
   if (ctx.incomingText !== undefined && isThanks(ctx.incomingText)) withheld.push('thanks')
+  if ((ctx.attachments ?? []).length === 0 && !/[\p{L}\p{N}]/u.test(ctx.incomingText ?? '')) withheld.push('no_words')
   withheld.push(...chatBlockers(ctx))
   if (ctx.isBacklog) withheld.push('backlog')
   if (chat.placeholderSent) withheld.push('placeholder_already_sent')
