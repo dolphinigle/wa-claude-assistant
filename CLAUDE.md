@@ -20,7 +20,7 @@ draft in the owner's "Message yourself" chat.
   or `~/.claude` credentials, and never call claude.ai endpoints. Switching to an API key is an owner decision, and more than an env change: the `apiKeySource: "none"` assertion and the quota gate both fail closed under a key.
 - **No ban evasion** (anti-detection, fingerprint spoofing), no bulk or outbound messaging, no messages to new
   contacts, no groups.
-- **Real Claude calls only via `npm run selftest` (1 call) and `npm run eval` (20 calls).** They spend the owner's
+- **Real Claude calls only via `npm run selftest` (1 call) and `npm run eval` (22 calls).** They spend the owner's
   subscription quota, which is shared with their day job. Say how many calls you used.
 - Downloads and clones go to `~/copilot/research/wa-claude-assistant/`, never `/tmp` (it is RAM on this machine). Delete them when done.
 
@@ -37,6 +37,7 @@ draft in the owner's "Message yourself" chat.
 | Tone and facts | `knowledge.md`: `## Voice` for tone, `## Facts` is the only ground truth, `## Never` for hard rules |
 | WhatsApp client | Baileys `7.0.0-rc14`, exact pin. Switch triggers are in `docs/implementation-notes.md` |
 | Thanks | Never auto-answered (it asks nothing); skipped only after a closing this session, drafted otherwise (2026-09-26) |
+| Greeting reply | A waiting customer's greeting alone that opens the conversation gets the fixed `greetingReply.text` (`Halo Kak, ada yang bisa saya bantu? 🙏`) as an auto-send, once per session, through the non-Claude gates; `greetingReply.enabled: false` turns it off (2026-09-27) |
 | Trying it live | `allowChats` in `config.local.json`: only the listed chats are handled, every other chat is untouched (2026-09-27) |
 
 Ask the owner before changing **what gets auto-sent, drafted, or silently skipped**. Mechanical work needs no plan
@@ -64,7 +65,7 @@ confirmation here: just do it and report.
 | `npm test` | Unit tests; no network, fake claude binary, fake socket |
 | `npm run dev -- --fake-brain` | Offline console REPL (`alice: hi`, `me@alice: …`, `me: /ok 1`) |
 | `npm run selftest` | 1 real call: prints isolation + quota, PASS/FAIL |
-| `npm run eval` | 20 fixtures through real Claude + guards + policy → `eval/last-run.{md,json}` |
+| `npm run eval` | 22 fixtures through real Claude + guards + policy → `eval/last-run.{md,json}` |
 | `npm run eval -- --rescore=eval/last-run.json` | Re-apply current guards/policy to saved results, 0 calls |
 | `npm run eval -- --only=id1,id2` | Subset → `eval/last-run-partial.*` |
 
