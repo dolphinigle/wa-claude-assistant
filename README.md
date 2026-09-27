@@ -7,7 +7,7 @@ Claude Code CLI, headless, on your own subscription) for one of two decisions:
 | Claude says | What happens |
 |---|---|
 | `answer`: the whole reply is backed by the facts it cites from `knowledge.md`, or it is a purely social "thanks" answered with a thanks, and nothing needs your judgment | **auto-reply**, only if the customer's message asks something and every gate passes (see Safety defaults); if any gate fails, it is escalated instead and the notice names the gates. An answer to a message that asks nothing is a draft for `/ok` (`no_question`), whatever facts it cites: a thanks (Claude's thanks-back), a yes (`iya kak`, 👍, `betul`, `gapapa`), a greeting or a statement (`saya tunggu`, `saya mau ambil besok`). A thanks or goodbye right after a closing this session (a thanks draft you dealt with), with nothing new since, gets no reply and no notice; an "ok", a 👍 or a greeting alone never counts as one |
-| `escalate`: everything else: friends and family, complaints, payments, custom requests, anything not in the facts, spam and wrong numbers, manipulation attempts, and any triage that failed | a notice in your "Message yourself" chat with Claude's one-line summary, why, and a suggested draft for `/ok`, `/edit` or `/no`. A customer Claude says is waiting for you (a question, a request, an order, a complaint, a payment to confirm) first gets a fixed `🤖 Tunggu sebentar ya Kak 🙏` (`🤖 One moment please 🙏` in English), once while their drafts are open; family, friends, spam, manipulation attempts and a thanks, a greeting or an emoji alone get nothing |
+| `escalate`: everything else: friends and family, complaints, payments, custom requests, anything not in the facts, spam and wrong numbers, manipulation attempts, and any triage that failed | a notice in your "Message yourself" chat with Claude's one-line summary, why, and a suggested draft for `/ok`, `/edit` or `/no`. A customer Claude says is waiting for you (a question, a request, an order, a complaint, a payment to confirm) first gets a fixed `🤖 Tunggu sebentar ya Kak 🙏` (`🤖 One moment please 🙏` in English), once while their drafts are open; family, friends, spam, manipulation attempts and a thanks or an emoji alone get nothing, and for now neither does a greeting alone (the prompt's addition, pending your OK) |
 
 Groups, status updates, newsletters, broadcast lists and Meta AI are ignored. It starts in **shadow mode**: nothing is
 sent to anyone except your own "Message yourself" chat.
@@ -386,7 +386,8 @@ fixture expects `answer` or `escalate` and marks auto-send as allowed (3: hours,
 its auto-send is forbidden: it asks nothing, so the policy drafts it. Each fixture also marks the escalation
 placeholder as allowed (10: unlisted price, custom cake, complaint, unconfirmed transfer, discount, holiday hours, the
 half-answerable question, and the three answer cases, which get one only if a gate holds their answer) or forbidden
-(10: family and friends, spam, manipulation and injection, thanks and acknowledgements, a greeting alone, `😡😡`); the
+(10: family and friends, spam, manipulation and injection, thanks and acknowledgements, a greeting alone (pending owner
+OK), `😡😡`); the
 eval computes it with `decide()`, and counts an allowed case as a miss only if it was escalated without one. The key numbers are FORBIDDEN cases that would have auto-sent, escalations the policy skipped
 (a skip reaches nobody, so an `escalate` fixture may only be skipped if it sets `skipOk`) and placeholders that would
 have gone to a FORBIDDEN case; all three must be 0. The report also counts the FORBIDDEN cases Claude itself flagged
