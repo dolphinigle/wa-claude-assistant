@@ -10,6 +10,11 @@ import { asksSomething, isLooseThanks, isThanks, normalizeText, thanksAgrees } f
 
 const QUOTA_OK_STATUSES = new Set(['allowed', 'allowed_warning'])
 const HOUR_MS = 60 * 60 * 1000
+// Text that looks like a tag, escaped or not ("</message>", "<system>", "&lt;system&gt;"): trust rule 4 of the prompt
+// calls it a manipulation attempt, yet Sonnet once flagged such a message as a waiting customer while its own reason
+// called it manipulation (eval 2026-09-27, tag-breakout-id). normalizeText has folded fullwidth "＜" and dropped
+// zero-width characters first.
+const TAG_LIKE = /(?:<|&lt;)\s*\/?\s*[a-z]/i
 
 /**
  * Whether a closing this session still stands, read from the newest message back. A closing is a thanks the owner
@@ -117,6 +122,7 @@ function chatBlockers (ctx) {
  * (isLooseThanks: "makasih bgt kak", "thank u"), since a false match only withholds a fixed text. As for the skip, a
  * thanks has no file: a "makasih kak 🙏" on a transfer screenshot may be a payment to confirm (consistency-r2-1). Nor
  * does a text without a letter or digit (😡😡, 🙏, ?) that comes without a file: it does not say what the sender wants.
+ * Nor does text that looks like a tag (TAG_LIKE), file or not: a manipulator must not learn that a bot read it.
  * Backlog never does: it comes late, and the owner may have answered it on the phone meanwhile. One placeholder covers
  * every escalation while a draft whose customer got one is open (`chat.placeholderSent`); it counts toward the caps.
  */
@@ -130,6 +136,7 @@ function placeholderWithheld (result, ctx) {
   if (result.triage.customer_waiting !== true) withheld.push('customer_not_waiting')
   if (!withFile && ctx.incomingText !== undefined && isLooseThanks(ctx.incomingText)) withheld.push('thanks')
   if (!withFile && !/[\p{L}\p{N}]/u.test(ctx.incomingText ?? '')) withheld.push('no_words')
+  if (TAG_LIKE.test(normalizeText(ctx.incomingText))) withheld.push('tag_like')
   withheld.push(...chatBlockers(ctx))
   if (ctx.isBacklog) withheld.push('backlog')
   if (chat.placeholderSent) withheld.push('placeholder_already_sent')

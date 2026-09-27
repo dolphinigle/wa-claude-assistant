@@ -273,7 +273,7 @@ const MAX_THANKS_TOKENS = 16
  * makasih", "ok siap, thanks", "👍 makasih"), or a "ya" comes before the thanks ("ya kak, makasih"), so it may also be a
  * yes to something our side asked.
  */
-function readThanks (input) {
+function readThanks (input, lexicon = THANKS_VOCABULARY) {
   if (String(input ?? '').length > MAX_THANKS_CHARS) return undefined
   const text = normalizeText(input).toLowerCase().replace(SMILEYS, ' ')
   if (/[?¿]/.test(text) || /\p{N}/u.test(text)) return undefined
@@ -283,13 +283,13 @@ function readThanks (input) {
   if (words.length + emoji.length > MAX_THANKS_TOKENS) return undefined
   if (words.length === 0) return emoji.length > 0 && emoji.every(symbol => FRIENDLY_EMOJI.has(symbol)) ? { agrees: false } : undefined
   if (!emoji.every(symbol => FRIENDLY_EMOJI.has(symbol) || AGREEING_EMOJI.has(symbol))) return undefined
-  const { closings, acknowledgements } = THANKS_VOCABULARY.kinds
-  const splits = splitKinds(words, THANKS_VOCABULARY).filter(kinds => kinds & closings)
+  const { closings, acknowledgements } = lexicon.kinds
+  const splits = splitKinds(words, lexicon).filter(kinds => kinds & closings)
   if (splits.length === 0) return undefined
   // A "ya" before the thanks is the Indonesian yes ("ya kak, makasih", "ya deh makasih"); after it, it only softens
   // ("makasih ya kak").
-  const startsClosing = index => Array.from({ length: THANKS_VOCABULARY.longest }, (_, length) => words.slice(index, index + length + 1).join(' '))
-    .some(phrase => THANKS_VOCABULARY.phrases.get(phrase) === closings)
+  const startsClosing = index => Array.from({ length: lexicon.longest }, (_, length) => words.slice(index, index + length + 1).join(' '))
+    .some(phrase => lexicon.phrases.get(phrase) === closings)
   const yesFirst = words.slice(0, words.findIndex((_, index) => startsClosing(index))).some(word => YES_BEFORE_THANKS.has(word))
   return { agrees: yesFirst || emoji.some(symbol => AGREEING_EMOJI.has(symbol)) || splits.every(kinds => kinds & acknowledgements) }
 }
@@ -317,9 +317,23 @@ const CHAT_THANKS = new Map(Object.entries({
 const CHAT_SOFTENERS = new Set(('matur hatur bgt banget bngt bener sekali bang om dek mba bro sist bos yah ' +
   'atas untuk bantuannya bantuan informasinya responnya jawabannya').split(' '))
 const LAUGHTER = /^(?:(?:h[aeiu]){2,}h?|(?:wk){2,}w?)$/u
+// A greeting or a well-wish around a thanks only softens it too ("makasih kak, selamat siang", "pagi kak makasih",
+// "makasih ya kak, sukses selalu", "thank you, good afternoon"), and so do more ways to say kak ("kk", "kaka", "kang",
+// "teh"). They are phrases, not dropped words: "selamat" and "selalu" belong to closings ("selamat tidur", "sehat
+// selalu"), and "good evening" to "have a good evening". A greeting alone ("Selamat pagi kak") still has no closing,
+// so it is no thanks and keeps its placeholder (send-path-r1-2, correctness-r1-2).
+const GREETING_TIMES = ['pagi', 'siang', 'sore', 'malam', 'malem']
+const LOOSE_VOCABULARY = vocabulary({
+  ...THANKS_PHRASES,
+  fillers: [...THANKS_PHRASES.fillers, 'kk', 'kaka', 'kang', 'teh',
+    ...GREETING_TIMES, ...['selamat', 'slamat', 'met'].flatMap(word => [...GREETING_TIMES, 'beraktivitas', 'bekerja', 'istirahat'].map(time => `${word} ${time}`)),
+    'good morning', 'good afternoon', 'good evening', 'good day', 'hai', 'halo', 'hallo', 'helo', 'hi', 'hello', 'hey',
+    'salam', 'wassalam', 'wasalam', 'assalamualaikum', 'assalamu alaikum', 'wassalamualaikum', 'waalaikumsalam',
+    'sukses selalu', 'sukses', 'semangat', 'semangat selalu']
+})
 // Only once done: "makasih, dibalas ya" may ask for a reply.
 const DONE_FOR_US = /(?<!\p{L})(?:sudah|sudh|udah|udh|uda|sdh|dah|telah)\s+(?:di|mem|men|me)?(?:bantu|bantuin|balas|bales|jawab|respon|info|infokan|infoin|kabari|kabarin|layani)(?!\p{L})/gu
-const THANKS_WORDS = new Set([...THANKS_VOCABULARY.phrases.keys()].flatMap(phrase => phrase.split(' ')))
+const THANKS_WORDS = new Set([...LOOSE_VOCABULARY.phrases.keys()].flatMap(phrase => phrase.split(' ')))
 const FOLDED_THANKS_WORDS = new Map()
 for (const word of THANKS_WORDS) if (!FOLDED_THANKS_WORDS.has(foldRepeats(word))) FOLDED_THANKS_WORDS.set(foldRepeats(word), word)
 const chatSpelling = word => {
@@ -333,7 +347,7 @@ const chatSpelling = word => {
 /** The customer only thanks, also in a chat spelling (see above); for the placeholder only, never for the skip. */
 export const isLooseThanks = input => isThanks(input) ||
   (String(input ?? '').length <= MAX_THANKS_CHARS &&
-    isThanks(normalizeText(input).toLowerCase().replace(DONE_FOR_US, ' ').replace(/\p{L}+/gu, chatSpelling)))
+    readThanks(normalizeText(input).toLowerCase().replace(DONE_FOR_US, ' ').replace(/\p{L}+/gu, chatSpelling), LOOSE_VOCABULARY) !== undefined)
 
 // asksSomething chooses the auto-send (owner decision, 2026-09-27): only an answer to a message that asks something may
 // go out on its own. A thanks, a yes, a no, "gapapa", "saya tunggu" or "saya mau ambil besok" asks nothing, so a fact

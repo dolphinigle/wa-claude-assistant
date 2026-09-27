@@ -461,7 +461,23 @@ test('isLooseThanks: a thanks in a chat spelling too, for the placeholder; nothi
     assert.equal(isLooseThanks(text), true, text)
   }
   for (const text of ['Terima kasih kak, sudah saya transfer', 'makasih kak, bisa kirim besok?', 'thank u, mau pesan 2 loyang', 'oke kak', 'siap kak',
-    'matur kak', 'bgt', 'u', 'Selamat pagi kak', 'makasih kak, selamat siang', '😡😡', `${'makasih bgt '.repeat(30)}`]) {
+    'matur kak', 'bgt', 'u', 'Selamat pagi kak', '😡😡', `${'makasih bgt '.repeat(30)}`]) {
+    assert.equal(isLooseThanks(text), false, text)
+  }
+})
+
+test('isLooseThanks: a greeting or a well-wish around a thanks, and kk, kaka, kang or teh, still only thank; a greeting alone does not (send-path-r1-2, correctness-r1-2)', () => {
+  for (const text of ['makasih kak, selamat siang', 'makasih kak, selamat siang 🙏', 'terima kasih kak, selamat malam 🙏', 'siang kak, makasih ya',
+    'pagi kak makasih', 'makasih kak, met siang', 'makasih kak, salam', 'makasih kak, wassalam', 'makasih ya kak, sukses selalu',
+    'makasih kak, selamat beraktivitas', 'Halo kak, makasih ya', 'Thank you, good afternoon', 'makasih bgt, have a good day',
+    'makasih kk 🙏', 'makasih kaka', 'hatur nuhun kang', 'nuhun teh']) {
+    assert.equal(isThanks(text), false, `${text}: the skip stays narrow`)
+    assert.equal(isLooseThanks(text), true, text)
+  }
+  assert.equal(isLooseThanks('thanks, have a good evening'), true, '"good evening" as a greeting does not break up "have a good evening"')
+  // The owner's decision (2026-09-27): a customer's greeting alone waits for a reply, so it must not read as a thanks.
+  for (const text of ['Selamat pagi kak', 'Selamat siang', 'Pagi kak', 'Halo kak', 'Hai', 'Hi!', 'good morning', 'selamat', 'makasih kak, selamat',
+    'semangat kak', 'sukses selalu kak', 'salam kenal kak, mau tanya', 'kk', 'makasih kak, selamat pagi, mau pesan 2 ya']) {
     assert.equal(isLooseThanks(text), false, text)
   }
 })
