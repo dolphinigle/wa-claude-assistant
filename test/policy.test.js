@@ -388,6 +388,8 @@ test('placeholder: none unless customer_waiting is exactly true, and none on a f
 // Each row breaks exactly one condition; a waiting customer's escalation then gets no placeholder, and the audit says why.
 const withholders = [
   ['placeholder_disabled', ctx => { ctx.config = makeConfig({ placeholder: { enabled: false } }) }],
+  // "Drafts only" (owner decision 2026-09-27): with auto-replies off, nothing automated reaches a customer.
+  ['auto_send_disabled', ctx => { ctx.config = makeConfig({ autoSend: { enabled: false } }) }],
   ['thanks', ctx => { ctx.incomingText = 'makasih kak 🙏' }],
   ['paused', ctx => { ctx.paused = true }],
   ['muted', ctx => { ctx.chat.muted = true }],
@@ -410,13 +412,46 @@ for (const [reason, mutate] of withholders) {
   })
 }
 
+test('placeholder: a customer\'s greeting alone gets one when Claude says they wait; family\'s (not waiting) none (owner decision 2026-09-27)', () => {
+  for (const incomingText of ['Hai', 'Halo kak', 'Pagi kak', 'Selamat siang', 'Selamat pagi kak', 'Hi!']) {
+    // Claude may escalate it or answer it with a hello; a hello asks nothing, so the answer is held (no_question).
+    for (const triage of [WAITING, { decision: 'answer', reply: 'Halo Kak, ada yang bisa dibantu?', facts_used: [], customer_waiting: true }]) {
+      const decision = decide(triageResult(triage), { ...waitingContext(), incomingText })
+      assert.deepEqual([decision.action, decision.placeholder, decision.placeholderWithheld], ['escalate', true, []], `${incomingText} (${triage.decision})`)
+    }
+    const family = decide(triageResult({ ...WAITING, customer_waiting: false }), { ...waitingContext(), incomingText })
+    assert.deepEqual([family.action, family.placeholder, family.placeholderWithheld], ['escalate', false, ['customer_not_waiting']], `${incomingText} from family`)
+  }
+  // After a closing, this session or the day before, a greeting opens a new conversation: escalated with a
+  // placeholder, never skipped.
+  for (const lastClosingAt of [CLOSED_AT, NOW - 20 * HOUR_MS]) {
+    const greeting = decide(triageResult(WAITING), thanksContext(THANKED, { lastClosingAt }, { incomingText: 'Selamat pagi kak' }))
+    assert.deepEqual([greeting.action, greeting.placeholder], ['escalate', true], String(lastClosingAt))
+  }
+})
+
+// The eval scores decide() with config.local.json merged in, which holds live-test settings; none of them may change
+// a verdict there (only the switches the eval forces on, and the real gates' own settings, may).
+test('decide() reads none of the live-test settings: allowChats, humanTakeoverMinutes, mode, contextMessages, debounceMs, ownerIdentifiers', () => {
+  const liveTest = makeConfig({ mode: 'live', allowChats: ['081293850000', '+628112223448'], humanTakeoverMinutes: 2, contextMessages: 0, debounceMs: 1, guards: { ownerIdentifiers: ['owner@example.com'] } })
+  const cases = [
+    [triageResult(ANSWER_HOURS), baseContext()],
+    [triageResult(WAITING), waitingContext()],
+    [triageResult(WAITING), { ...waitingContext(), incomingText: 'Halo kak' }],
+    [triageResult(THANKS), thanksContext(THANKED)],
+    [triageResult(THANKS), thanksContext(ANSWERED, { lastClosingAt: 0 }, { incomingText: 'ok makasih kak 🙏' })],
+    [{ ok: false, error: 'timeout' }, waitingContext()]
+  ]
+  for (const [result, ctx] of cases) assert.deepEqual(decide(result, { ...ctx, config: liveTest }), decide(result, ctx), ctx.incomingText)
+})
+
 test('placeholder: a skip never gets one, whatever Claude says', () => {
   const decision = decide(triageResult(WAITING), thanksContext(THANKED))
   assert.deepEqual([decision.action, decision.placeholder], ['skip', false])
 })
 
 test('placeholder: it is our side\'s message, so a thanks after it is not skipped as if nothing came after the closing', () => {
-  const placeholder = ours('🤖 Tunggu sebentar ya Kak 🙏', 20)
+  const placeholder = ours('🤖 Halo Kak, tunggu sebentar ya 🙏', 20)
   assert.equal(closed([...THANKED, placeholder]), false, 'in the history')
   assert.equal(closedThisSession([...THANKED], { lastClosingAt: CLOSED_AT, sessionStart: SESSION_START, lastOursAt: at(20) * 1000, agrees: false }), false,
     'or only on the record (lastSentAt), on the other addressing form or before a restart')

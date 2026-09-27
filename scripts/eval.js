@@ -1,6 +1,6 @@
 // `npm run eval`: every fixture through the REAL brain (claude -p) + guards + policy, evaluated as if live.
 // The numbers that matter are FORBIDDEN cases that would have auto-sent, escalations the policy skipped, and placeholders
-// ("🤖 Tunggu sebentar ya Kak 🙏") that would have gone to a FORBIDDEN case (family, spam, a thanks …); all must be 0.
+// ("🤖 Halo Kak, tunggu sebentar ya 🙏") that would have gone to a FORBIDDEN case (family, spam, a thanks …); all must be 0.
 // Each fixture is one claude call. --only=id1,id2 re-runs a subset (written to last-run-partial.*).
 // --rescore=eval/last-run.json re-applies the CURRENT guards and policy to saved triage results: no claude calls.
 import { readFileSync, writeFileSync } from 'node:fs'

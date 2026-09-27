@@ -66,9 +66,9 @@ test('a JID entry must be in a form a chat has, or it would silently match nothi
 })
 
 test('placeholder: on by default with both texts; a malformed setting stops the start instead of reaching customers', t => {
-  assert.deepEqual(loadConfig({ rootDir: rootWith(t) }).placeholder, { enabled: true, text: { id: '🤖 Tunggu sebentar ya Kak 🙏', en: '🤖 One moment please 🙏' } })
+  assert.deepEqual(loadConfig({ rootDir: rootWith(t) }).placeholder, { enabled: true, text: { id: '🤖 Halo Kak, tunggu sebentar ya 🙏', en: '🤖 Hi! One moment please 🙏' } })
   assert.equal(loadConfig({ rootDir: rootWith(t, { placeholder: { enabled: false } }) }).placeholder.enabled, false)
-  assert.equal(loadConfig({ rootDir: rootWith(t, { placeholder: { text: { en: '🤖 Just a moment 🙏' } } }) }).placeholder.text.id, '🤖 Tunggu sebentar ya Kak 🙏', 'deep-merged')
+  assert.equal(loadConfig({ rootDir: rootWith(t, { placeholder: { text: { en: '🤖 Just a moment 🙏' } } }) }).placeholder.text.id, '🤖 Halo Kak, tunggu sebentar ya 🙏', 'deep-merged')
   for (const placeholder of [null, false, 'on', { enabled: 'yes' }, { text: null }, { text: { id: '' } }, { text: { en: '   ' } }, { text: { id: 5 } }]) {
     assert.throws(() => loadConfig({ rootDir: rootWith(t, { placeholder }) }), /config\.placeholder must be/, JSON.stringify(placeholder))
   }

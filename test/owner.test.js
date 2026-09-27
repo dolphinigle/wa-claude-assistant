@@ -195,8 +195,8 @@ test('one notice format: id, name, excerpt, summary, draft, reason, held gates a
   assert.doesNotMatch(formatDraftNotice({ id: 9, chatId: '1@lid', contactName: '1@lid', excerpt: 'e', draft: 'd', reason: 'r', policyReasons: ['decision:escalate'] }), /Number unknown/)
   // The placeholder the customer got, one line under what they wrote; nothing while it is still being sent.
   const base = { id: 10, contactName: 'Sari', excerpt: 'bisa kue custom?', draft: 'Baik Kak', reason: 'r', policyReasons: ['decision:escalate'] }
-  assert.equal(formatDraftNotice({ ...base, placeholder: { text: '🤖 Tunggu sebentar ya Kak 🙏', status: 'sent' } }).split('\n')[2], '↩️ They got: 🤖 Tunggu sebentar ya Kak 🙏')
-  assert.equal(formatDraftNotice({ ...base, placeholder: { text: '🤖 One moment please 🙏', status: 'shadow' } }).split('\n')[2], '↩️ [SHADOW] would have sent: 🤖 One moment please 🙏')
+  assert.equal(formatDraftNotice({ ...base, placeholder: { text: '🤖 Halo Kak, tunggu sebentar ya 🙏', status: 'sent' } }).split('\n')[2], '↩️ They got: 🤖 Halo Kak, tunggu sebentar ya 🙏')
+  assert.equal(formatDraftNotice({ ...base, placeholder: { text: '🤖 Hi! One moment please 🙏', status: 'shadow' } }).split('\n')[2], '↩️ [SHADOW] would have sent: 🤖 Hi! One moment please 🙏')
   for (const placeholder of [undefined, { text: 'x', status: 'sending' }]) assert.doesNotMatch(formatDraftNotice({ ...base, placeholder }), /↩️/)
 })
 
@@ -219,11 +219,11 @@ test('a pending draft saved by the four-category version still works with /ok an
   assert.equal(store.createDraft({ chatId: 'b' }).id, 2)
 })
 
-test('/status shows the placeholder switch apart from auto-replies: disabling auto-replies does not stop it (send-path-r1-2)', async t => {
+test('/status shows the placeholder switch next to auto-replies; auto-replies off is drafts only, the placeholder off too (send-path-r1-2)', async t => {
   const store = new Store(tempDir(t))
   const gate = { async sendToCustomer () { return { sent: true } } }
   const status = config => createOwnerCommands({ config, store, gate }).handle('/status')
-  assert.match(await status(makeConfig({ mode: 'live', autoSend: { enabled: false } })), /\nAuto-reply: disabled in config\nEscalation placeholder: on\n/)
+  assert.match(await status(makeConfig({ mode: 'live', autoSend: { enabled: false } })), /\nAuto-reply: drafts only \(disabled in config\)\nEscalation placeholder: off \(drafts only\)\n/)
   assert.match(await status(makeConfig({ mode: 'live', placeholder: { enabled: false } })), /\nAuto-reply: on\nEscalation placeholder: disabled in config\n/)
   store.setPaused(true, Date.now())
   assert.match(await status(makeConfig({ mode: 'live' })), /\nAuto-reply: PAUSED\nEscalation placeholder: PAUSED\n/)

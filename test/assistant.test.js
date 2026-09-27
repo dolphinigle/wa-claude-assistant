@@ -1314,8 +1314,8 @@ test('allowChats: messages of another chat left in the inbox before a restart ar
 
 // --- the escalation placeholder (owner decision 2026-09-27) ---------------------------------------------------------
 
-const PLACEHOLDER_ID = '🤖 Tunggu sebentar ya Kak 🙏'
-const PLACEHOLDER_EN = '🤖 One moment please 🙏'
+const PLACEHOLDER_ID = '🤖 Halo Kak, tunggu sebentar ya 🙏'
+const PLACEHOLDER_EN = '🤖 Hi! One moment please 🙏'
 // A custom cake or a complaint is a waiting customer; the rest as byKeyword (whose escalations say nothing about it).
 const waiting = input => {
   const text = input.messages.map(message => message.text).join(' ')
@@ -1347,11 +1347,45 @@ test('placeholder: a waiting customer\'s escalation gets one after its draft, in
   assert.deepEqual([store.countChatAutoSends(ALICE, 3_600_000), store.countAutoSends(24 * 3_600_000)], [1, 2])
   assert.ok(placeholders().every(item => store.isSentByBot(item.id)), 'loop-guarded')
   const notices = transport.toSelf()
-  assert.match(notices[0], /^🤖 📝 DRAFT #1 .*\nThey wrote: "Kak bisa pesan kue custom unicorn untuk Sabtu\?"\n↩️ They got: 🤖 Tunggu sebentar ya Kak 🙏\nSummary:/)
-  assert.match(notices[1], /\n↩️ They got: 🤖 One moment please 🙏\n/)
+  assert.match(notices[0], /^🤖 📝 DRAFT #1 .*\nThey wrote: "Kak bisa pesan kue custom unicorn untuk Sabtu\?"\n↩️ They got: 🤖 Halo Kak, tunggu sebentar ya 🙏\nSummary:/)
+  assert.match(notices[1], /\n↩️ They got: 🤖 Hi! One moment please 🙏\n/)
   assert.deepEqual(store.getDraft(1).placeholder, { text: PLACEHOLDER_ID, status: 'sent', at: store.getDraft(1).placeholder.at })
   assert.deepEqual(audit().filter(entry => entry.event === 'sent_to_customer').map(entry => [entry.source, entry.draftId]), [['placeholder', 1], ['placeholder', 2]])
   assert.ok(!notices.join('\n').includes('customer_not_waiting'), 'why one was withheld goes to the audit, not the notice')
+})
+
+// Owner decision (2026-09-27, live test: a customer's "Hai" met silence while its draft waited): a customer's greeting
+// alone waits for the owner. Family's greeting does not: Claude flags it not waiting.
+test('placeholder: a customer\'s greeting gets exactly one, the new text; a family greeting none', async t => {
+  const respond = input => {
+    if (input.chat.name === 'Mama') return triageResult({ decision: 'escalate', reply: 'Pagi juga, Ma', summary: 'greeting from mom', customer_waiting: false })
+    return triageResult({ decision: 'escalate', reply: 'Halo Kak, ada yang bisa dibantu?', summary: 'customer greeting', customer_waiting: true })
+  }
+  const { transport, store, say, placeholders, withheld } = placeholderSetup(t, { respond })
+  const MAMA = '6284444444444@s.whatsapp.net'
+  store.updateChat(MAMA, { name: 'Mama' })
+  await say(ALICE, 'Hai')
+  await say(ALICE, 'Halo kak')
+  await say(MAMA, 'Pagi kak', { senderName: 'Mama' })
+  assert.deepEqual(placeholders().map(item => [item.chatId, item.text]), [[ALICE, '🤖 Halo Kak, tunggu sebentar ya 🙏']], 'one per open-draft period, none for Mama')
+  assert.deepEqual(transport.toCustomer().map(item => item.chatId), [ALICE], 'nothing else reached anyone')
+  assert.deepEqual(withheld(), [[], ['placeholder_already_sent'], ['customer_not_waiting']])
+  assert.match(transport.toSelf()[0], /^🤖 📝 DRAFT #1 .*\nThey wrote: "Hai"\n↩️ They got: 🤖 Halo Kak, tunggu sebentar ya 🙏\n/)
+  assert.doesNotMatch(transport.toSelf()[2], /↩️/, 'the notice for Mama says nothing went out')
+})
+
+test('placeholder: drafts only (autoSend.enabled false) sends a customer nothing automated; /ok still sends the draft', async t => {
+  // Both customers wait: only the switch holds the placeholder, and the answer too.
+  const respond = input => (/jam/.test(input.messages[0].text) ? triageResult({ ...ANSWER_HOURS, customer_waiting: true }) : waiting(input))
+  const { transport, owner, say, placeholders, withheld, audit } = placeholderSetup(t, { respond, config: { autoSend: { enabled: false } } })
+  await say(ALICE, 'Kak bisa pesan kue custom unicorn untuk Sabtu?')
+  await say(BOB, 'jam berapa buka kak?')
+  assert.deepEqual([placeholders(), transport.toCustomer()], [[], []])
+  assert.deepEqual(withheld(), [['auto_send_disabled'], ['auto_send_disabled']])
+  assert.deepEqual(audit().filter(entry => entry.event === 'decision').map(entry => entry.reasons), [['decision:escalate'], ['decision:answer', 'auto_send_disabled']])
+  assert.ok(transport.toSelf().every(text => !text.includes('↩️')))
+  await owner('/ok 1')
+  assert.deepEqual(transport.toCustomer().map(item => [item.chatId, item.text]), [[ALICE, 'Baik Kak, saya cek dulu ya.']], 'the owner\'s approved draft, no marker')
 })
 
 test('placeholder: one per open draft; after /ok or /no a new escalation gets one again', async t => {
@@ -1445,7 +1479,7 @@ test('placeholder: shadow mode records it and sends nothing; the notice says it 
   const { transport, store, say, audit } = placeholderSetup(t, { config: { mode: 'shadow' } })
   await say(ALICE, 'bisa kue custom?')
   assert.deepEqual(transport.toCustomer(), [])
-  assert.match(transport.toSelf()[0], /\n↩️ \[SHADOW\] would have sent: 🤖 Tunggu sebentar ya Kak 🙏\n/)
+  assert.match(transport.toSelf()[0], /\n↩️ \[SHADOW\] would have sent: 🤖 Halo Kak, tunggu sebentar ya 🙏\n/)
   assert.equal(store.getDraft(1).placeholder.status, 'shadow')
   assert.deepEqual(audit().filter(entry => entry.event === 'shadow_send_suppressed').map(entry => [entry.source, entry.text]), [['placeholder', PLACEHOLDER_ID]])
   assert.equal(store.countChatAutoSends(ALICE, 3_600_000), 1, 'counted, as shadow auto-replies are')
@@ -1472,7 +1506,7 @@ test('placeholder: it is the session\'s AI disclosure, its echo starts no takeov
 test('placeholder: a draft already open when it went out carries its period on after /no or /ok of that draft (send-path-r1-1)', async t => {
   for (const command of ['/no 2', '/ok 2']) {
     const { owner, say, store, placeholders, withheld } = placeholderSetup(t)
-    await say(ALICE, 'Selamat pagi kak') // escalated, not waiting: a draft with no placeholder
+    await say(ALICE, 'ok kak, nanti saya kabari lagi') // escalated, waits for nothing: a draft with no placeholder
     await say(ALICE, 'bisa kue custom unicorn?')
     await owner(command)
     await say(ALICE, 'kue tart 2 tingkat juga bisa?')
@@ -1528,7 +1562,7 @@ test('placeholder: a send that failed in flight may have been delivered, so its 
   assert.deepEqual(withheld(), [[], ['placeholder_already_sent']])
   assert.deepEqual([store.getDraft(1).placeholder.status, store.countChatAutoSends(ALICE, 3_600_000), store.chat(ALICE).lastDisclosureAt ?? 0], ['unknown', 1, 0],
     'the cap slot stands; it is no disclosure, since it may not have arrived')
-  assert.match(transport.toSelf()[0], /\n↩️ They may have got \(the send failed\): 🤖 Tunggu sebentar ya Kak 🙏\n/)
+  assert.match(transport.toSelf()[0], /\n↩️ They may have got \(the send failed\): 🤖 Halo Kak, tunggu sebentar ya 🙏\n/)
 })
 
 test('placeholder: when your reply on the phone cancels the draft while its placeholder goes out, no /ok is offered (send-path-r1-5)', async t => {
@@ -1550,5 +1584,5 @@ test('placeholder: when your reply on the phone cancels the draft while its plac
   assert.equal(store.getDraft(1).status, 'cancelled')
   assert.equal(notices.length, 2)
   assert.match(notices[0], /You replied to .+ yourself: cancelled draft #1\./)
-  assert.match(notices[1], /^🤖 📝 Draft #1 · .+ is cancelled\. ↩️ They got: 🤖 Tunggu sebentar ya Kak 🙏$/)
+  assert.match(notices[1], /^🤖 📝 Draft #1 · .+ is cancelled\. ↩️ They got: 🤖 Halo Kak, tunggu sebentar ya 🙏$/)
 })

@@ -23,8 +23,8 @@
   "placeholder": {
     "enabled": true,
     "text": {
-      "id": "🤖 Tunggu sebentar ya Kak 🙏",
-      "en": "🤖 One moment please 🙏"
+      "id": "🤖 Halo Kak, tunggu sebentar ya 🙏",
+      "en": "🤖 Hi! One moment please 🙏"
     }
   },
   "notifyOwnerOnAutoSend": true,

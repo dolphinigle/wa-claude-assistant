@@ -178,13 +178,14 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
     const muted = chats.filter(([, chat]) => chat.muted).map(([id]) => chatName(id))
     const quota = store.lastRateLimit
     const switched = enabled => (!enabled ? 'disabled in config' : store.paused ? 'PAUSED' : 'on')
+    // autoSend.enabled false is "drafts only": nothing automated reaches a customer, the placeholder included (policy.js).
+    const draftsOnly = !config.autoSend.enabled
     return [
       `${BOT_PREFIX} Status`,
       `Mode: ${config.mode === 'live' ? 'live' : 'shadow (nothing is sent to customers)'}`,
       ...(config.allowChats?.length > 0 ? [`Only these chats (allowChats): ${config.allowChats.join(', ')}`] : []),
-      `Auto-reply: ${switched(config.autoSend.enabled)}`,
-      // Its own switch: with auto-replies disabled in config, a waiting customer's escalation still gets it.
-      `Escalation placeholder: ${switched(config.placeholder?.enabled === true)}`,
+      `Auto-reply: ${draftsOnly ? 'drafts only (disabled in config)' : switched(true)}`,
+      `Escalation placeholder: ${draftsOnly ? 'off (drafts only)' : switched(config.placeholder?.enabled === true)}`,
       `Pending drafts: ${pending.length === 0 ? 'none' : pending.map(draft => `#${draft.id} ${draft.contactName}`).join(', ')}`,
       `Auto-replies and placeholders in the last 24 h: ${store.countAutoSends(24 * HOUR_MS)}/${config.autoSend.maxPerDay}`,
       `Claude quota: 5 h ${percent(quota?.fiveHourUtilization)}, 7 d ${percent(quota?.sevenDayUtilization)} (${quota?.status ?? 'not seen yet'})`,

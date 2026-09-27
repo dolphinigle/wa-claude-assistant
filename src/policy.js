@@ -4,8 +4,8 @@
 // "everything reaches the owner" is a thanks right after a closing this session: it is skipped, since another
 // "sama-sama" or another draft only adds volume. Shadow mode is not decided here: the send gate in assistant.js turns
 // an approved send into a notice.
-// An escalation also says whether the customer gets a short fixed placeholder ("🤖 Tunggu sebentar ya Kak 🙏", owner
-// decision 2026-09-27), so a waiting customer does not wait in silence; see placeholderWithheld.
+// An escalation also says whether the customer gets a short fixed placeholder ("🤖 Halo Kak, tunggu sebentar ya 🙏",
+// owner decisions 2026-09-27), so a waiting customer does not wait in silence; see placeholderWithheld.
 import { asksSomething, isLooseThanks, isThanks, normalizeText, thanksAgrees } from './guards.js'
 
 const QUOTA_OK_STATUSES = new Set(['allowed', 'allowed_warning'])
@@ -110,12 +110,13 @@ function chatBlockers (ctx) {
 
 /**
  * Why an escalation gets no placeholder; empty means it gets one. Only Claude's `customer_waiting: true` (a customer
- * waiting for the owner: not family, friends, spam, a scam or a manipulation attempt) lets one out, since a family
- * emergency must never get "tunggu sebentar". A thanks never gets one, whatever Claude says: it waits for nothing. It
- * is read loosely here (isLooseThanks: "makasih bgt kak", "thank u"), since a false match only withholds a fixed text.
- * As for the skip, a thanks has no file: a "makasih kak 🙏" on a transfer screenshot may be a payment to confirm
- * (consistency-r2-1). Nor does a text without a letter or digit (😡😡, 🙏, ?) that comes without a file: it does not
- * say what the sender wants.
+ * waiting for the owner, a customer's greeting alone included: not family, friends, spam, a scam or a manipulation
+ * attempt) lets one out, since a family emergency must never get "tunggu sebentar". With auto-replies off
+ * (`autoSend.enabled` false, "drafts only") nothing automated reaches a customer, so neither does this (owner decision
+ * 2026-09-27). A thanks never gets one, whatever Claude says: it waits for nothing. It is read loosely here
+ * (isLooseThanks: "makasih bgt kak", "thank u"), since a false match only withholds a fixed text. As for the skip, a
+ * thanks has no file: a "makasih kak 🙏" on a transfer screenshot may be a payment to confirm (consistency-r2-1). Nor
+ * does a text without a letter or digit (😡😡, 🙏, ?) that comes without a file: it does not say what the sender wants.
  * Backlog never does: it comes late, and the owner may have answered it on the phone meanwhile. One placeholder covers
  * every escalation while a draft whose customer got one is open (`chat.placeholderSent`); it counts toward the caps.
  */
@@ -125,6 +126,7 @@ function placeholderWithheld (result, ctx) {
   const withFile = (ctx.attachments ?? []).length > 0
   const withheld = []
   if (config.placeholder?.enabled !== true) withheld.push('placeholder_disabled')
+  if (!config.autoSend?.enabled) withheld.push('auto_send_disabled') // read as route() reads it
   if (result.triage.customer_waiting !== true) withheld.push('customer_not_waiting')
   if (!withFile && ctx.incomingText !== undefined && isLooseThanks(ctx.incomingText)) withheld.push('thanks')
   if (!withFile && !/[\p{L}\p{N}]/u.test(ctx.incomingText ?? '')) withheld.push('no_words')

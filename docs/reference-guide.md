@@ -173,7 +173,8 @@ false`); most were added or tightened after a review or the live run found the f
 
 - Claude returns `{decision: answer|escalate, reply, facts_used, reason, summary, customer_waiting}`
   (`prompts/triage-schema.json`); `customer_waiting` (since 2026-09-27) only decides whether an escalated customer gets
-  a fixed "one moment please" placeholder, and anything but `true` counts as false.
+  a fixed "hello, one moment please" placeholder (a customer's greeting alone counts as waiting; family's never does),
+  and anything but `true` counts as false.
   Four categories plus a self-rated confidence were tried first and dropped by the owner's choice; the guards and
   gates, not the model's own confidence, decide whether an answer may go out.
 - `knowledge.md`: `## Facts` with stable ids (`[F1]` …) is the **only ground truth**; `## Voice` for tone; `## Never`
@@ -219,10 +220,11 @@ prompt holds it back (an open owner decision). The first auto-reply per chat per
 that starts with it counts); drafts the owner approves carry none.
 
 **Escalation placeholder** (owner decision 2026-09-27): an escalation whose customer Claude flags `customer_waiting`
-gets a fixed text (`🤖 Tunggu sebentar ya Kak 🙏`, `🤖 One moment please 🙏` in English) through the same send gate,
+gets a fixed text (`🤖 Halo Kak, tunggu sebentar ya 🙏`, `🤖 Hi! One moment please 🙏` in English) through the same send gate,
 never Claude's words, so a waiting customer does not wait in silence. Its gates in `decide()`: the triage succeeded,
 the flag is exactly `true`, the message is no thanks (read more loosely than for the skip, chat spellings included,
-since a false match only withholds a fixed text), it has a letter or digit or a file, `placeholder.enabled`, the chat
+since a false match only withholds a fixed text), it has a letter or digit or a file, `placeholder.enabled` and
+`autoSend.enabled` (auto-replies off is drafts only: nothing automated reaches a customer), the chat
 gates and caps above, not backlog, and one per open-draft period (every draft of the contact open when it goes out
 joins that period). It counts toward the caps. A send that certainly failed (refused, or not connected) is undone; one
 that failed in flight may have been delivered, so its period stands. **[eval]** Sonnet flagged `😡😡` as waiting

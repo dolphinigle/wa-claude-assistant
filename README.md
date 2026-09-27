@@ -7,7 +7,7 @@ Claude Code CLI, headless, on your own subscription) for one of two decisions:
 | Claude says | What happens |
 |---|---|
 | `answer`: the whole reply is backed by the facts it cites from `knowledge.md`, or it is a purely social "thanks" answered with a thanks, and nothing needs your judgment | **auto-reply**, only if the customer's message asks something and every gate passes (see Safety defaults); if any gate fails, it is escalated instead and the notice names the gates. An answer to a message that asks nothing is a draft for `/ok` (`no_question`), whatever facts it cites: a thanks (Claude's thanks-back), a yes (`iya kak`, 👍, `betul`, `gapapa`), a greeting or a statement (`saya tunggu`, `saya mau ambil besok`). A thanks or goodbye right after a closing this session (a thanks draft you dealt with), with nothing new since, gets no reply and no notice; an "ok", a 👍 or a greeting alone never counts as one |
-| `escalate`: everything else: friends and family, complaints, payments, custom requests, anything not in the facts, spam and wrong numbers, manipulation attempts, and any triage that failed | a notice in your "Message yourself" chat with Claude's one-line summary, why, and a suggested draft for `/ok`, `/edit` or `/no`. A customer Claude says is waiting for you (a question, a request, an order, a complaint, a payment to confirm) first gets a fixed `🤖 Tunggu sebentar ya Kak 🙏` (`🤖 One moment please 🙏` in English), once while their drafts are open; family, friends, spam, manipulation attempts and a thanks or an emoji alone get nothing, and for now neither does a greeting alone (the prompt's addition, pending your OK) |
+| `escalate`: everything else: friends and family, complaints, payments, custom requests, anything not in the facts, spam and wrong numbers, manipulation attempts, and any triage that failed | a notice in your "Message yourself" chat with Claude's one-line summary, why, and a suggested draft for `/ok`, `/edit` or `/no`. A customer Claude says is waiting for you (a question, a request, an order, a complaint, a payment to confirm, or a greeting alone such as `Hai` or `Halo kak`) first gets a fixed `🤖 Halo Kak, tunggu sebentar ya 🙏` (`🤖 Hi! One moment please 🙏` in English), once while their drafts are open, unless auto-replies are off (drafts only); family, friends (their greetings too), spam, manipulation attempts and a thanks, a goodbye or an emoji alone get nothing |
 
 Groups, status updates, newsletters, broadcast lists and Meta AI are ignored. It starts in **shadow mode**: nothing is
 sent to anyone except your own "Message yourself" chat.
@@ -110,8 +110,9 @@ npm start                 # run on WhatsApp in shadow mode
    { "mode": "live" }
    ```
 
-   Restart. Set `"autoSend": { "enabled": false }` to go live without auto-replies. The escalation placeholder has its
-   own switch: for drafts only, also set `"placeholder": { "enabled": false }` (`/status` shows both).
+   Restart. Set `"autoSend": { "enabled": false }` to go live with drafts only: no auto-replies and no escalation
+   placeholders, so nothing automated reaches a customer (`/status` says `drafts only`). `"placeholder": { "enabled":
+   false }` alone turns off only the placeholder.
 
 `npm run dev` is a REPL: `alice: jam berapa buka?` is a message from contact alice, `me@alice: bentar ya kak` is
 you typing in alice's chat (human takeover), `me: /ok 1` is you in "Message yourself". Without `--fake-brain` it
@@ -269,23 +270,26 @@ cancelled.
   (`https://maps.app.goo.gl/…?g_st=iw`) or a word in its path asks nothing; a bare `kak.kirim` is no link. A burst asks
   if any of its messages does, and a question with a thanks (`makasih kak, jam berapa tutup?`) goes on to the other
   gates like any question.
-- **Escalation placeholder** (owner decision, 2026-09-27): so a customer does not wait in silence while you read the
-  draft, an escalated message gets the fixed `placeholder.text` (`🤖 Tunggu sebentar ya Kak 🙏`; `🤖 One moment
-  please 🙏` when the message is English by `detectLanguage`), never Claude's words. It needs all of: the triage
-  succeeded, Claude set `customer_waiting` (a new required schema field: a customer waiting for an answer or an action
-  from you; anything but `true` counts as false), the message is no thanks and has a letter or digit or a file (not
-  `😡😡`, `🙏` or `?` alone; a thanks is read more loosely here than for the skip, chat spellings, what it is for, a
+- **Escalation placeholder** (owner decisions, 2026-09-27): so a customer does not wait in silence while you read the
+  draft, an escalated message gets the fixed `placeholder.text` (`🤖 Halo Kak, tunggu sebentar ya 🙏`; `🤖 Hi! One
+  moment please 🙏` when the message is English by `detectLanguage`; a greeting too short to tell, such as `Hi!`, gets
+  the Indonesian one), never Claude's words. It needs all of: the triage succeeded, Claude set `customer_waiting` (a
+  required schema field: a customer waiting for an answer or an action from you, and a customer's greeting alone
+  such as `Hai`, `Halo kak`, `Pagi kak` or `Selamat siang`, which waits for your reply; never family or friends,
+  whose greeting gets nothing; anything but `true` counts as false), the message is no thanks and has a letter or
+  digit or a file (not `😡😡`, `🙏` or `?` alone; a thanks is read more loosely here than for the skip, chat spellings, what it is for, a
   laugh and a done `dibantu` included: `makasih bgt kak`, `trimakasih`, `thank u`, `matur nuwun`, `hehe makasih kak`,
   `terima kasih atas bantuannya`, `makasih kak udah dibantu`; as for the skip, a thanks has no file, so a `makasih kak 🙏`
-  on a transfer screenshot may get one), `placeholder.enabled`, not paused, the chat not muted, blocklisted or
+  on a transfer screenshot may get one), `placeholder.enabled` and `autoSend.enabled` (auto-replies off is drafts
+  only: nothing automated reaches a customer), not paused, the chat not muted, blocklisted or
   `blocklist_unchecked`, no human takeover, the hourly and daily auto-send caps not reached, not backlog, and the
   contact got none since it last had no open draft (one per open-draft period, drafts already open when it went out
   included: after `/ok`, `/edit`, `/no`, expiry or your own reply leaves nothing open, the next escalation gets one
   again). It is sent after the draft is created,
   through the send gate (shadow mode records it, `allowChats` and the blocklist refuse it), quotes nothing, gives no
   blue ticks, counts toward the auto-send caps, and counts as the session's AI disclosure (the next auto-reply in that
-  session has no 🤖). The draft notice then says `↩️ They got: 🤖 Tunggu sebentar ya Kak 🙏` (`↩️ [SHADOW] would have
-  sent: …`); why one was withheld goes to `data/audit.jsonl` (`placeholderWithheld` on the decision), not the notice.
+  session has no 🤖). The draft notice then says `↩️ They got: 🤖 Halo Kak, tunggu sebentar ya 🙏` (`↩️ [SHADOW] would
+  have sent: …`); why one was withheld goes to `data/audit.jsonl` (`placeholderWithheld` on the decision), not the notice.
   A send that certainly failed (refused by the send gate, or WhatsApp not connected) is undone, so the next escalation
   may try again; it still counts as our side's newest word for the thanks skip. One that failed in flight may have
   been delivered, so its period and its cap slot stand and the notice says `↩️ They may have got (the send failed): …`.
@@ -344,7 +348,7 @@ answer/escalate switch; delete the key).
 | Key | Default | Meaning |
 |---|---|---|
 | `mode` | `"shadow"` | `shadow` never messages anyone but you; `live` really sends |
-| `autoSend.enabled` | `true` | `false` = no auto-replies, even in live mode; escalations are drafts, but a waiting customer still gets the escalation placeholder unless `placeholder.enabled` is `false` too |
+| `autoSend.enabled` | `true` | `false` = drafts only, even in live mode: no auto-replies and no escalation placeholders |
 | `autoSend.maxPerChatPerHour` / `maxPerDay` | `3` / `30` | rolling-window caps (shadow would-sends and escalation placeholders count too) |
 | `humanTakeoverMinutes` | `30` | bot stays out of a chat after you type in it |
 | `debounceMs` | `15000` | wait for a burst to finish before triage |
@@ -353,7 +357,7 @@ answer/escalate switch; delete the key).
 | `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`, `+62 812…`, `+62 0812…`); never sent to Claude, never replied to. A LID chat matches a phone number through the number its messages carried or WhatsApp's LID mapping; while its number is unknown and the list has phone numbers, that chat gets drafts only (its messages still reach Claude) and every draft of it, a thanks or an escalation too, shows the LID to add here. Anything but a list of phone numbers or JIDs as WhatsApp writes them (`6281…@s.whatsapp.net`, `…@lid`; not `0812…@s.whatsapp.net`, `620812…@s.whatsapp.net`, `…@c.us` or a `:device` suffix) stops the start |
 | `allowChats` | `[]` | empty = every chat. Otherwise only the chats it lists (JIDs or phone numbers, matched like `blocklist`) are handled; every other chat is ignored before anything happens to it (no Claude call, no draft, notice, blue ticks or takeover, nothing in `data/state.json`, one `skip_not_allowed` audit line without the text), and the send gate refuses it. A LID chat whose number is unknown is ignored until you list its LID or its number becomes known; your own reply there is kept in memory and becomes a takeover if the LID turns out to be a listed chat. "Message yourself" always works. Anything but a list of phone numbers or JIDs as WhatsApp writes them (`6281…@s.whatsapp.net`, `…@lid`; not `0812…@s.whatsapp.net`, `620812…@s.whatsapp.net`, `…@c.us` or a `:device` suffix) stops the start. See "Testing with one contact" |
 | `disclosure.enabled` / `text` / `sessionGapHours` | `true` / … / `12` | AI disclosure on the first auto-reply per session |
-| `placeholder.enabled` / `text.id` / `text.en` | `true` / `🤖 Tunggu sebentar ya Kak 🙏` / `🤖 One moment please 🙏` | the fixed reply to a waiting customer whose message is escalated (see Safety defaults); independent of `autoSend.enabled`, and `/pause` stops it too. Both texts must be non-empty strings or the start stops |
+| `placeholder.enabled` / `text.id` / `text.en` | `true` / `🤖 Halo Kak, tunggu sebentar ya 🙏` / `🤖 Hi! One moment please 🙏` | the fixed reply to a waiting customer whose message is escalated (see Safety defaults); sent only while `autoSend.enabled` is on too, and `/pause` stops it. Both texts must be non-empty strings or the start stops |
 | `notifyOwnerOnAutoSend` | `true` | post each auto-reply to "Message yourself", as one line: `✅ Auto-replied to Name (+62…): "…"` |
 | `draftTtlHours` | `24` | pending drafts expire |
 | `guards.maxReplyChars` / `guards.sensitiveTerms` | `600` / list | auto-reply length cap; terms that force a draft unless in the facts |

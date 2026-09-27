@@ -8,6 +8,8 @@ const RULES = [
   { pattern: /menang|hadiah|undian|prize|winner|klik link|promo/i, decision: 'escalate', reply: '', facts: [] },
   { pattern: /custom|pesan|order/i, decision: 'escalate', reply: 'Terima kasih Kak, saya cek dulu ya.', facts: [], waiting: true },
   { pattern: /^(?:(?:ok+|oke|sip|siap|makasih|terima kasih|thanks?|thank you|kak)\b[\s,.!]*)+[\p{Emoji}\s.!]*$/iu, decision: 'answer', reply: 'Sama-sama, Kak 🙏', facts: [] },
+  // A customer's greeting alone waits for the owner (owner decision 2026-09-27); the fake brain cannot tell family apart.
+  { pattern: /^(?:(?:hai|halo|hallo|hi|hello|pagi|siang|sore|malam|selamat|kak)\b[\s,.!]*)+[\p{Emoji}\s.!]*$/iu, decision: 'escalate', reply: 'Halo Kak, ada yang bisa dibantu?', facts: [], waiting: true },
   { pattern: /jam|buka|open|hours/i, decision: 'answer', reply: 'Kami buka Senin–Sabtu pukul 08.00–17.00 WIB, Minggu tutup ya Kak.', facts: ['F1'] },
   { pattern: /alamat|address|lokasi|where/i, decision: 'answer', reply: 'Alamat kami di Jl. Contoh Raya No. 12, Coblong, Bandung ya Kak.', facts: ['F2'] },
   { pattern: /brownies/i, decision: 'answer', reply: 'Brownies panggang loyang 20x20 cm harganya Rp 85.000 ya Kak.', facts: ['F5'] }

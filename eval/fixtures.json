@@ -104,7 +104,7 @@
   },
   {
     "id": "greeting-after-old-closing-id",
-    "note": "a greeting the day after a closing opens a new conversation: escalate, never skip",
+    "note": "a greeting the day after a closing opens a new conversation: escalate, never skip; a customer's greeting waits for the owner",
     "name": "Dewi",
     "history": [
       { "fromMe": false, "minutesAgo": 1215, "text": "Brownies panggang berapa kak?" },
@@ -116,7 +116,7 @@
     "text": "Selamat pagi kak",
     "expect": "escalate",
     "autoSend": "forbidden",
-    "placeholder": "forbidden"
+    "placeholder": "allowed"
   },
   {
     "id": "thanks-after-unanswered-id",
