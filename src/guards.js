@@ -354,6 +354,39 @@ export const isLooseThanks = input => isThanks(input) ||
     readThanks(normalizeText(input).toLowerCase().replace(REPEATED, '$1 $1').replace(DONE_FOR_US, ' ').replace(/\p{L}+/gu, chatSpelling),
       LOOSE_VOCABULARY, { anyEmoji: true }) !== undefined)
 
+// isGreetingOnly lets the fixed greeting-back out (policy.js, owner decision 2026-09-27): the customer only greets, with
+// at most honorifics, punctuation and friendly emoji around it ("Hai", "Halo kak!", "Pagi kak 🙏", "Selamat siang",
+// "P", "Permisi kak", "Assalamualaikum"). Strict, since anything more ("halo kak mau pesan", "pagi kak, sudah buka?",
+// "halo?") is a message to answer and goes the normal way; a missed greeting only costs a draft. Words are compared
+// without their doubled letters ("haiii", "kakk"). "selamat", "met" and "good" count only before a time of day.
+const foldAll = list => new Set(list.map(foldRepeats))
+const GREETINGS = foldAll(('hai hay hi hei hey halo hallo helo hello p permisi misi punten assalamualaikum assalamu alaikum ' +
+  'salam warahmatullahi wabarakatuh wr wb').split(' '))
+const GREETING_HOURS = foldAll([...GREETING_TIMES, 'morning', 'afternoon', 'evening'])
+const GREETING_OPENERS = foldAll(['selamat', 'slamat', 'met', 'good'])
+const GREETING_HONORIFICS = foldAll([...HONORIFICS, ...'kk kaka mba sist bang bro om bos admin teh kang there'.split(' ')])
+const GREETING_EMOJI = new Set([...FRIENDLY_EMOJI, '👋'])
+const MAX_GREETING_CHARS = 100
+const MAX_GREETING_TOKENS = 8
+
+/** The customer only greets (see above). Capped input, one pass over the words. */
+export function isGreetingOnly (input) {
+  if (String(input ?? '').length > MAX_GREETING_CHARS) return false
+  const text = normalizeText(input).toLowerCase().replace(SMILEYS, ' ')
+  if (text.replace(/\p{L}+/gu, '').replace(EMOJI, '').replace(EMOJI_PARTS, '').replace(PUNCTUATION, '') !== '') return false // "?", digits, symbols
+  const words = (text.match(/\p{L}+/gu) ?? []).map(foldRepeats)
+  const emoji = text.match(EMOJI) ?? []
+  if (words.length + emoji.length > MAX_GREETING_TOKENS || !emoji.every(symbol => GREETING_EMOJI.has(symbol))) return false
+  let greets = false
+  for (let index = 0; index < words.length; index++) {
+    const word = words[index]
+    if (GREETINGS.has(word) || GREETING_HOURS.has(word)) greets = true
+    else if (GREETING_OPENERS.has(word) && GREETING_HOURS.has(words[index + 1])) { greets = true; index++ }
+    else if (!GREETING_HONORIFICS.has(word)) return false
+  }
+  return greets
+}
+
 // asksSomething chooses the auto-send (owner decision, 2026-09-27): only an answer to a message that asks something may
 // go out on its own. A thanks, a yes, a no, "gapapa", "saya tunggu" or "saya mau ambil besok" asks nothing, so a fact
 // cited there only licenses a promise nobody asked for. No list knows every way to thank or agree ("makasih bang",

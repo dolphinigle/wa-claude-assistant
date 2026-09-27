@@ -82,3 +82,11 @@ test('placeholder: on by default with both texts; a malformed setting stops the 
     assert.throws(() => loadConfig({ rootDir: rootWith(t, { placeholder }) }), /config\.placeholder must be/, JSON.stringify(placeholder))
   }
 })
+
+test('greetingReply: on by default with both texts; a malformed setting stops the start instead of reaching customers', t => {
+  assert.deepEqual(loadConfig({ rootDir: rootWith(t) }).greetingReply, { enabled: true, text: { id: 'Halo Kak, ada yang bisa saya bantu? 🙏', en: 'Hi! How can I help you? 🙏' } })
+  assert.equal(loadConfig({ rootDir: rootWith(t, { greetingReply: { enabled: false } }) }).greetingReply.enabled, false)
+  for (const greetingReply of [null, 'on', { enabled: 'false' }, { text: { id: '' } }, { text: { en: 5 } }]) {
+    assert.throws(() => loadConfig({ rootDir: rootWith(t, { greetingReply }) }), /config\.greetingReply must be/, JSON.stringify(greetingReply))
+  }
+})

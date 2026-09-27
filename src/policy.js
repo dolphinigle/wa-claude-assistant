@@ -5,8 +5,9 @@
 // "sama-sama" or another draft only adds volume. Shadow mode is not decided here: the send gate in assistant.js turns
 // an approved send into a notice.
 // An escalation also says whether the customer gets a short fixed placeholder ("🤖 Halo Kak, tunggu sebentar ya 🙏",
-// owner decisions 2026-09-27), so a waiting customer does not wait in silence; see placeholderWithheld.
-import { asksSomething, isLooseThanks, isThanks, normalizeText, thanksAgrees } from './guards.js'
+// owner decisions 2026-09-27), so a waiting customer does not wait in silence; see placeholderWithheld. A waiting
+// customer's greeting alone gets a fixed greeting-back instead, as an auto-send (see greetingHeld).
+import { asksSomething, isGreetingOnly, isLooseThanks, isThanks, normalizeText, thanksAgrees } from './guards.js'
 
 const QUOTA_OK_STATUSES = new Set(['allowed', 'allowed_warning'])
 const HOUR_MS = 60 * 60 * 1000
@@ -81,17 +82,18 @@ const flatText = text => normalizeText(text).replace(/\s+/g, ' ').trim()
  *   quotes): their ids where known, and their texts ('' for a photo, a voice note or a pin)
  * @param {object[]} [ctx.history]  earlier messages of the chat, oldest first (see closedThisSession)
  * @param {boolean} ctx.paused
- * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, lastClosingAt?: number, lastOursAt?: number, lastUntriagedAt?: number, lastOpenedAt?: number, placeholderSent?: boolean}} ctx.chat
+ * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, lastClosingAt?: number, lastOursAt?: number, lastUntriagedAt?: number, lastOpenedAt?: number, placeholderSent?: boolean, draftOpen?: boolean, lastGreetingReplyAt?: number}} ctx.chat
  *   `lastClosingAt`: when the last thanks the owner dealt with arrived; `lastOursAt`, `lastUntriagedAt`, `lastOpenedAt`:
- *   see closedThisSession; `placeholderSent`: the contact got a placeholder and has had an open draft ever since
+ *   see closedThisSession; `placeholderSent`: the contact got a placeholder and has had an open draft ever since;
+ *   `draftOpen`: the contact has a draft waiting for the owner; `lastGreetingReplyAt`: when it last got the greeting-back
  * @param {number} ctx.now  epoch ms
  * @param {number} ctx.chatAutoSendsLastHour
  * @param {number} ctx.autoSendsLastDay
  * @param {{status?: string, fiveHourUtilization?: number, sevenDayUtilization?: number}} [ctx.rateLimit]
  * @param {boolean} ctx.isBacklog
- * @returns {{action: 'auto_send'|'escalate'|'skip', reasons: string[], placeholder: boolean, placeholderWithheld: string[]}}
- *   `placeholder`: send the customer the fixed placeholder (escalations only); `placeholderWithheld`: why an escalation
- *   gets none, for the audit
+ * @returns {{action: 'auto_send'|'escalate'|'skip', reasons: string[], greeting?: true, placeholder: boolean, placeholderWithheld: string[]}}
+ *   `greeting`: the auto-send is the fixed greeting-back, not Claude's reply; `placeholder`: send the customer the fixed
+ *   placeholder (escalations only); `placeholderWithheld`: why an escalation gets none, for the audit
  */
 export function decide (result, ctx) {
   const routed = route(result, ctx)
@@ -112,6 +114,42 @@ function chatBlockers (ctx) {
   if (ctx.chatAutoSendsLastHour >= config.autoSend.maxPerChatPerHour) blockers.push('chat_rate_limit')
   if (ctx.autoSendsLastDay >= config.autoSend.maxPerDay) blockers.push('daily_rate_limit')
   return blockers
+}
+
+/** Unknown quota counts as exhausted: the bot shares the owner's subscription windows. */
+function quotaBlockers ({ config, rateLimit }) {
+  const quota = config.quota ?? {}
+  if (!rateLimit) return ['quota_unknown']
+  const blockers = []
+  if (!QUOTA_OK_STATUSES.has(rateLimit.status)) blockers.push(`quota_status:${rateLimit.status}`)
+  if (!(rateLimit.fiveHourUtilization < (quota.maxFiveHourUtilization ?? 0.8))) blockers.push(`quota_five_hour:${rateLimit.fiveHourUtilization}`)
+  if (quota.maxSevenDayUtilization !== undefined && !(rateLimit.sevenDayUtilization < quota.maxSevenDayUtilization)) blockers.push(`quota_seven_day:${rateLimit.sevenDayUtilization}`)
+  return blockers
+}
+
+/**
+ * Owner decision (2026-09-27, live test): like customer service, a waiting customer's greeting alone ("Hai", "Pagi
+ * kak") gets the fixed `greetingReply.text` at once, instead of a draft and "tunggu sebentar"; their next message goes
+ * the normal way. Claude's `customer_waiting` decides who is a customer (never family, friends, spam or a manipulator,
+ * as for the placeholder); the words are ours, never Claude's. Held, so the message goes the way it would have, by
+ * what holds any auto-send but the guards (which check Claude's reply, not ours), always by backlog (it comes late, as
+ * for the placeholder), by a file or a quote, and unless the greeting opens the conversation: once per session, and
+ * not after anything of ours this session, a draft still open or an earlier message in the history this session (a
+ * "Pagi kak" may answer our "mau diambil kapan?"). Empty: send it.
+ */
+function greetingHeld (result, ctx) {
+  const { config, chat = {} } = ctx
+  const sessionStart = ctx.now - (config.disclosure?.sessionGapHours ?? 12) * HOUR_MS
+  const held = []
+  if (config.greetingReply?.enabled !== true) held.push('greeting_reply_disabled')
+  if (!config.autoSend?.enabled) held.push('auto_send_disabled')
+  if (result.triage.customer_waiting !== true) held.push('customer_not_waiting')
+  if ((ctx.attachments ?? []).length > 0) held.push('attachment')
+  if ((ctx.quoted ?? []).length > 0) held.push('quote')
+  if (chat.lastGreetingReplyAt > sessionStart) held.push('greeted_this_session')
+  if (chat.lastOursAt > sessionStart || chat.draftOpen || (ctx.history ?? []).some(item => !(item.timestamp * 1000 <= sessionStart))) held.push('conversation_open')
+  if (ctx.isBacklog) held.push('backlog')
+  return [...held, ...chatBlockers(ctx), ...quotaBlockers(ctx)]
 }
 
 /**
@@ -148,7 +186,7 @@ function placeholderWithheld (result, ctx) {
 
 /** answer → auto_send or escalate, escalate, or skip (see the top of this file). */
 function route (result, ctx) {
-  const { config, chat = {}, rateLimit } = ctx
+  const { config, chat = {} } = ctx
   const history = ctx.history ?? []
   const attachments = ctx.attachments ?? []
   const sessionMs = (config.disclosure?.sessionGapHours ?? 12) * HOUR_MS
@@ -175,6 +213,9 @@ function route (result, ctx) {
     })) {
     return { action: 'skip', reasons: [`decision:${decision}`, 'closing_already_sent'] }
   }
+  if (isGreetingOnly(ctx.incomingText) && greetingHeld(result, ctx).length === 0) {
+    return { action: 'auto_send', reasons: ['greeting_reply', `decision:${decision}`], greeting: true }
+  }
   if (decision !== 'answer') return { action: 'escalate', reasons: [`decision:${decision}`] }
 
   const held = attachments.map(kind => `attachment:${kind}`) // Claude cannot see it: a payment proof?
@@ -188,15 +229,7 @@ function route (result, ctx) {
   else if (!ctx.guard.ok) blockers.push(...ctx.guard.reasons.map(reason => `guard:${reason}`))
   blockers.push(...chatBlockers(ctx))
   if (ctx.isBacklog && !config.backlog?.autoSend) blockers.push('backlog')
-
-  // Unknown quota counts as exhausted: the bot shares the owner's subscription windows.
-  const quota = config.quota ?? {}
-  if (!rateLimit) blockers.push('quota_unknown')
-  else {
-    if (!QUOTA_OK_STATUSES.has(rateLimit.status)) blockers.push(`quota_status:${rateLimit.status}`)
-    if (!(rateLimit.fiveHourUtilization < (quota.maxFiveHourUtilization ?? 0.8))) blockers.push(`quota_five_hour:${rateLimit.fiveHourUtilization}`)
-    if (quota.maxSevenDayUtilization !== undefined && !(rateLimit.sevenDayUtilization < quota.maxSevenDayUtilization)) blockers.push(`quota_seven_day:${rateLimit.sevenDayUtilization}`)
-  }
+  blockers.push(...quotaBlockers(ctx))
 
   if (blockers.length > 0) return { action: 'escalate', reasons: ['decision:answer', ...blockers] }
   return { action: 'auto_send', reasons: ['decision:answer', 'all_gates_passed'] }

@@ -27,6 +27,13 @@
       "en": "🤖 Hi! One moment please 🙏"
     }
   },
+  "greetingReply": {
+    "enabled": true,
+    "text": {
+      "id": "Halo Kak, ada yang bisa saya bantu? 🙏",
+      "en": "Hi! How can I help you? 🙏"
+    }
+  },
   "notifyOwnerOnAutoSend": true,
   "draftTtlHours": 24,
   "guards": {

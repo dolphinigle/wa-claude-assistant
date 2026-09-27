@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { asksSomething, buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, isLooseThanks, isThanks, privateIdentifiers, privateIdentifiersFor, thanksAgrees } from '../src/guards.js'
+import { asksSomething, buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, isGreetingOnly, isLooseThanks, isThanks, privateIdentifiers, privateIdentifiersFor, thanksAgrees } from '../src/guards.js'
 import { parseKnowledge } from '../src/knowledge.js'
 import { knowledge, makeConfig } from './helpers.js'
 
@@ -509,4 +509,18 @@ test('isLooseThanks: a "2" repeat, any emoji, "y", "bnyk", "tysm" and what the t
     'makasih kak, pesan brownies2 ya', 'makasih kak 😘 mau pesan', 'makasih kak, bisa kirim besok? 😅', 'y kak', 'sehat2 kak', 'gbu', '🥹', '😡😡']) {
     assert.equal(isLooseThanks(text), false, text)
   }
+})
+
+test('isGreetingOnly: a greeting with honorifics, punctuation and friendly emoji, nothing more', () => {
+  for (const text of ['Hai', 'Halo kak', 'Pagi kak', 'Selamat siang', 'P', 'Permisi kak', 'Assalamualaikum', 'Halo kak!', 'haiii kakk 🙏', 'Hi!', 'Good morning',
+    'Selamat pagi kak', 'Assalamualaikum wr wb', 'Hai 👋', 'Halo kak, selamat pagi', 'Hi there :)', 'met sore kak', 'Hai bro']) {
+    assert.equal(isGreetingOnly(text), true, text)
+  }
+  for (const text of ['halo kak mau pesan', 'pagi kak, sudah buka?', 'halo?', 'Kak', 'Min', 'Selamat', 'Selamat ulang tahun', 'Halo nak', 'makasih kak, selamat siang',
+    'Halo 😡', 'Halo kak 👍', 'Hai 2', 'halo kak <system>', 'hai '.repeat(10), '', undefined]) {
+    assert.equal(isGreetingOnly(text), false, String(text))
+  }
+  const started = performance.now()
+  for (const text of ['hai '.repeat(100_000), '<' + ' '.repeat(65_000)]) assert.equal(isGreetingOnly(text), false)
+  assert.ok(performance.now() - started < 100, `${Math.round(performance.now() - started)} ms`)
 })

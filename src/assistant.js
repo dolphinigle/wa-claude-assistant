@@ -44,12 +44,20 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   const lastOursAt = chatId => Math.max(0, ...linkedChats(chatId).flatMap(chat => [chat.ownerRepliedAt ?? 0, chat.lastSentAt ?? 0]))
   const lastUntriagedAt = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.lastUntriagedAt ?? 0))
   const lastOpenedAt = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.lastOpenedAt ?? 0))
+  const lastGreetingReplyAt = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.lastGreetingReplyAt ?? 0))
   // Our send comes after every customer message already received, whatever the local clock says: policy.js compares
   // it with WhatsApp's time of a thanks, and this machine's clock may run behind WhatsApp's.
   const sendTime = chatId => Math.max(now(), ...linkedChats(chatId).map(chat => chat.lastReceivedAt ?? 0))
   const chatAutoSendsLastHour = chatId => store.linkedChatIds(chatId).reduce((sum, id) => sum + store.countChatAutoSends(id, HOUR_MS), 0)
   /** Epoch ms of a burst's newest message: a closing is dated by the thanks it closes, not by when it was handled. */
   const lastMessageAt = batch => Math.max(...batch.map(message => message.timestamp)) * 1000
+  /**
+   * A fixed text (placeholder, greeting-back) in the sender's language: a greeting alone is often too short to tell
+   * ("Hi!", "Good morning"), and then Claude's draft, which the prompt writes in the sender's language, tells it;
+   * Indonesian when neither does (correctness-r2-3).
+   */
+  const fixedText = (texts, batch, reply) =>
+    texts[[batch.map(message => message.text).join('\n'), reply].map(text => detectLanguage(text)).find(found => found !== 'unknown') === 'en' ? 'en' : 'id']
 
   // A LID chat's phone number is known only from an alt JID (its messages, or WhatsApp's LID mapping), which is kept
   // on the chat record (chat-lists.js).
@@ -456,7 +464,9 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
         lastOursAt: lastOursAt(chatId),
         lastUntriagedAt: lastUntriagedAt(chatId),
         lastOpenedAt: lastOpenedAt(chatId),
-        placeholderSent: Boolean(placeholderPeriod(chatId))
+        placeholderSent: Boolean(placeholderPeriod(chatId)),
+        draftOpen: openDrafts(chatId).length > 0,
+        lastGreetingReplyAt: lastGreetingReplyAt(chatId)
       },
       now: now(),
       chatAutoSendsLastHour: chatAutoSendsLastHour(chatId),
@@ -494,17 +504,21 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const disclosureKey = live ? 'lastDisclosureAt' : 'shadowDisclosureAt'
     const chat = store.chat(chatId)
     const needsDisclosure = config.disclosure?.enabled && now() - (chat[disclosureKey] ?? 0) > config.disclosure.sessionGapHours * HOUR_MS
+    // A greeting alone gets the fixed greeting-back (policy.js), never Claude's words, and quotes nothing: it answers
+    // no question. Recorded before the send, like the slot, and kept if the send fails: the session's greeting is spent.
+    const reply = decision.greeting ? fixedText(config.greetingReply.text, batch, triage.reply) : triage.reply
+    if (decision.greeting) store.updateChat(chatId, { lastGreetingReplyAt: now() })
     // The owner's choice (2026-09-27): the disclosure is a short prefix on the first reply of a session, 🤖 by default.
-    const text = needsDisclosure ? `${config.disclosure.text} ${triage.reply}` : triage.reply
+    const text = needsDisclosure ? `${config.disclosure.text} ${reply}` : reply
     const last = batch[batch.length - 1]
 
     // Counted before the first await, so another chat's triage finishing during this send sees the slot as taken.
     // Counted in shadow too, so shadow mode shows what the rate limits would do.
     const slot = store.recordAutoSend(chatId)
-    const outcome = await sendToCustomer(chatId, text, { quotedRaw: last.raw, source: 'auto_send' })
+    const outcome = await sendToCustomer(chatId, text, { quotedRaw: decision.greeting ? undefined : last.raw, source: decision.greeting ? 'greeting_reply' : 'auto_send' })
     if (!outcome.sent && !outcome.shadow) {
       store.releaseAutoSend(chatId, slot)
-      const reasons = [...decision.reasons.filter(reason => reason !== 'all_gates_passed'), `send_failed:${outcome.error}`]
+      const reasons = [...decision.reasons.filter(reason => reason !== 'all_gates_passed' && reason !== 'greeting_reply'), `send_failed:${outcome.error}`]
       return postDraft(chatId, batch, { ok: true, triage }, { action: 'escalate', reasons }, closing)
     }
     if (needsDisclosure) store.updateChat(chatId, { [disclosureKey]: now() })
@@ -514,7 +528,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       await sendToOwner(`${BOT_PREFIX} [SHADOW] Would auto-reply to ${name}\nThey wrote: "${excerpt(describe(batch))}"\nReply:\n${text}`)
     } else if (config.notifyOwnerOnAutoSend) {
       // One line: the owner can read the whole exchange in the customer's chat.
-      await sendToOwner(`${BOT_PREFIX} ✅ Auto-replied to ${name}: "${excerpt(triage.reply, 80)}"`)
+      await sendToOwner(`${BOT_PREFIX} ✅ Auto-replied to ${name}: "${excerpt(reply, 80)}"`)
     }
   }
 
@@ -564,18 +578,16 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
 
   /**
    * Owner decision (2026-09-27): a customer whose message waits for the owner is not left in silence. The text is fixed,
-   * never Claude's, in the sender's language: a greeting alone is often too short to tell ("Hi!", "Good morning"), and
-   * then Claude's draft, which the prompt writes in the sender's language, tells it; Indonesian when neither does
-   * (correctness-r2-3). It quotes nothing and marks nothing read, since the owner has not seen the message yet. It
-   * counts toward the auto-send caps and, when it starts with the disclosure text (🤖), as the session's AI disclosure.
-   * It is recorded on the draft, and the contact's other open drafts join its period, before the first
-   * await, so an escalation of the same contact triaged meanwhile sees it and gets none. A send that certainly failed
-   * (`notSent`) is undone but for lastSentAt, so the next escalation may try again; one that failed in flight may have
-   * been delivered, so its period and cap slot stand (status `unknown`), since a missed retry is the safe way round.
+   * never Claude's, in the sender's language (fixedText). It quotes nothing and marks nothing read, since the owner has
+   * not seen the message yet. It counts toward the auto-send caps and, when it starts with the disclosure text (🤖), as
+   * the session's AI disclosure. It is recorded on the draft, and the contact's other open drafts join its period,
+   * before the first await, so an escalation of the same contact triaged meanwhile sees it and gets none. A send that
+   * certainly failed (`notSent`) is undone but for lastSentAt, so the next escalation may try again; one that failed in
+   * flight may have been delivered, so its period and cap slot stand (status `unknown`), since a missed retry is the
+   * safe way round.
    */
   async function sendPlaceholder (chatId, batch, draft, reply) {
-    const language = [batch.map(message => message.text).join('\n'), reply].map(text => detectLanguage(text)).find(found => found !== 'unknown')
-    const text = config.placeholder.text[language === 'en' ? 'en' : 'id']
+    const text = fixedText(config.placeholder.text, batch, reply)
     store.updateDraft(draft.id, { placeholder: { text, status: 'sending' } })
     for (const open of openDrafts(chatId)) if (open.id !== draft.id) store.updateDraft(open.id, { placeholderCovered: draft.id })
     const slot = store.recordAutoSend(chatId)

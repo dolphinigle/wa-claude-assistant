@@ -104,7 +104,7 @@
   },
   {
     "id": "greeting-after-old-closing-id",
-    "note": "a greeting the day after a closing opens a new conversation: escalate, never skip; a customer's greeting waits for the owner",
+    "note": "a greeting the day after a closing opens a new conversation: escalate, never skip; a waiting customer's greeting alone gets the fixed greeting-back",
     "name": "Dewi",
     "history": [
       { "fromMe": false, "minutesAgo": 1215, "text": "Brownies panggang berapa kak?" },
@@ -115,7 +115,7 @@
     "closingMinutesAgo": 1201,
     "text": "Selamat pagi kak",
     "expect": "escalate",
-    "autoSend": "forbidden",
+    "autoSend": "allowed",
     "placeholder": "allowed"
   },
   {
@@ -135,6 +135,24 @@
     "note": "a thanks from family is personal",
     "name": "Mama",
     "text": "makasih ya kak",
+    "expect": "escalate",
+    "autoSend": "forbidden",
+    "placeholder": "forbidden"
+  },
+  {
+    "id": "family-greeting-id",
+    "note": "a greeting alone from family: no greeting-back, no placeholder",
+    "name": "Mama",
+    "text": "Halo nak",
+    "expect": "escalate",
+    "autoSend": "forbidden",
+    "placeholder": "forbidden"
+  },
+  {
+    "id": "friend-greeting-id",
+    "note": "a greeting alone from a friend: no greeting-back, no placeholder",
+    "name": "Dimas",
+    "text": "Hai bro",
     "expect": "escalate",
     "autoSend": "forbidden",
     "placeholder": "forbidden"

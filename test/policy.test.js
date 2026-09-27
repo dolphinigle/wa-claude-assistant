@@ -460,16 +460,18 @@ test('placeholder: none for a thanks with a greeting or a well-wish around it, w
       assert.deepEqual([decision.action, decision.placeholder, decision.placeholderWithheld], ['escalate', false, ['thanks']], `${incomingText} (${triage.decision})`)
     }
   }
+  const noGreetingReply = makeConfig({ greetingReply: { enabled: false } }) // on, a greeting alone gets the greeting-back instead
   for (const incomingText of ['Selamat pagi kak', 'Selamat siang', 'Halo kak', 'Pagi kak']) {
-    assert.equal(decide(triageResult(WAITING), { ...waitingContext(), incomingText }).placeholder, true, incomingText)
+    assert.equal(decide(triageResult(WAITING), { ...waitingContext(), incomingText, config: noGreetingReply }).placeholder, true, incomingText)
   }
 })
 
-test('placeholder: a customer\'s greeting alone gets one when Claude says they wait; family\'s (not waiting) none (owner decision 2026-09-27)', () => {
+test('placeholder: a customer\'s greeting alone gets one when Claude says they wait and no greeting-back goes out; family\'s (not waiting) none (owner decision 2026-09-27)', () => {
+  const noGreetingReply = makeConfig({ greetingReply: { enabled: false } })
   for (const incomingText of ['Hai', 'Halo kak', 'Pagi kak', 'Selamat siang', 'Selamat pagi kak', 'Hi!']) {
     // Claude may escalate it or answer it with a hello; a hello asks nothing, so the answer is held (no_question).
     for (const triage of [WAITING, { decision: 'answer', reply: 'Halo Kak, ada yang bisa dibantu?', facts_used: [], customer_waiting: true }]) {
-      const decision = decide(triageResult(triage), { ...waitingContext(), incomingText })
+      const decision = decide(triageResult(triage), { ...waitingContext(), incomingText, config: noGreetingReply })
       assert.deepEqual([decision.action, decision.placeholder, decision.placeholderWithheld], ['escalate', true, []], `${incomingText} (${triage.decision})`)
     }
     const family = decide(triageResult({ ...WAITING, customer_waiting: false }), { ...waitingContext(), incomingText })
@@ -568,4 +570,70 @@ test('placeholder: a thanks caption on a file is no thanks, as for the skip: a t
   }
   assert.deepEqual(decide(triageResult(THANKS), { ...waitingContext(), incomingText: 'makasih kak 🙏', attachments: ['image'] }).placeholderWithheld,
     ['customer_not_waiting'], 'Claude\'s flag still decides')
+})
+
+// --- the greeting-back (owner decision 2026-09-27, live test) -------------------------------------------------------
+
+const GREETING = { decision: 'escalate', reply: 'Halo Kak, ada yang bisa dibantu?', customer_waiting: true }
+const greetingContext = () => ({ ...baseContext(), incomingText: 'Hai', guard: undefined, chat: { ...baseContext().chat } })
+
+test('greeting: a waiting customer\'s greeting alone is auto-sent as the greeting-back, whatever Claude decided and whatever its guards say', () => {
+  for (const incomingText of ['Hai', 'Halo kak', 'Pagi kak', 'Selamat siang', 'P', 'Permisi kak', 'Assalamualaikum', 'Hi!', 'Halo kak 🙏']) {
+    for (const triage of [GREETING, { ...GREETING, decision: 'answer', facts_used: [] }]) {
+      assert.deepEqual(decide(triageResult(triage), { ...greetingContext(), incomingText }),
+        { action: 'auto_send', reasons: ['greeting_reply', `decision:${triage.decision}`], greeting: true, placeholder: false, placeholderWithheld: [] }, `${incomingText} (${triage.decision})`)
+    }
+  }
+})
+
+test('greeting: anything more than a greeting, or a greeting Claude says waits for nothing, goes the way it did', () => {
+  for (const incomingText of ['halo kak mau pesan', 'pagi kak, sudah buka?', 'halo?', 'Kak', 'Halo nak', 'makasih kak, selamat siang', 'Halo 😡']) {
+    const decision = decide(triageResult(GREETING), { ...greetingContext(), incomingText })
+    assert.equal(decision.action, 'escalate', incomingText)
+    assert.equal(decision.greeting, undefined, incomingText)
+  }
+  for (const customerWaiting of [false, undefined, 'true']) { // family, friends, spam
+    const decision = decide(triageResult({ ...GREETING, customer_waiting: customerWaiting }), greetingContext())
+    assert.deepEqual([decision.action, decision.placeholder], ['escalate', false], String(customerWaiting))
+  }
+  assert.equal(decide({ ok: false, error: 'timeout' }, greetingContext()).action, 'escalate')
+})
+
+// Each row breaks exactly one condition: the greeting then goes the way it would have (an escalation, here with the
+// placeholder where nothing holds that).
+const greetingHolders = [
+  ['greeting_reply_disabled', ctx => { ctx.config = makeConfig({ greetingReply: { enabled: false } }) }, true],
+  ['auto_send_disabled', ctx => { ctx.config = makeConfig({ autoSend: { enabled: false } }) }, false],
+  ['attachment', ctx => { ctx.attachments = ['image'] }, true],
+  ['quote', ctx => { ctx.quoted = [{ id: 'Q1', text: 'Mau diambil kapan kak?' }] }, true],
+  ['greeted_this_session', ctx => { ctx.chat.lastGreetingReplyAt = NOW - 11 * HOUR_MS }, true],
+  ['conversation_open: ours this session', ctx => { ctx.chat.lastOursAt = NOW - 60_000 }, true],
+  ['conversation_open: a draft open', ctx => { ctx.chat.draftOpen = true }, true],
+  ['conversation_open: our question in the history', ctx => { ctx.history = [ours('Mau diambil kapan kak?', 5)]; ctx.incomingText = 'Pagi kak' }, true],
+  ['conversation_open: an earlier message of theirs', ctx => { ctx.history = [customer('Hai', 120)] }, true],
+  ['backlog', ctx => { ctx.isBacklog = true; ctx.config = makeConfig({ backlog: { autoSend: true } }) }, false],
+  ['paused', ctx => { ctx.paused = true }, false],
+  ['muted', ctx => { ctx.chat.muted = true }, false],
+  ['blocked', ctx => { ctx.chat.blocked = true }, false],
+  ['blocklist_unchecked', ctx => { ctx.chat.blocklistUnchecked = true }, false],
+  ['human_takeover', ctx => { ctx.chat.takeoverUntil = NOW + 60_000 }, false],
+  ['chat_rate_limit', ctx => { ctx.chatAutoSendsLastHour = 3 }, false],
+  ['daily_rate_limit', ctx => { ctx.autoSendsLastDay = 30 }, false],
+  ['quota_unknown', ctx => { ctx.rateLimit = undefined }, true],
+  ['quota_five_hour', ctx => { ctx.rateLimit = { ...okRateLimit, fiveHourUtilization: 0.9 } }, true]
+]
+
+for (const [reason, mutate, placeholder] of greetingHolders) {
+  test(`greeting: no greeting-back when ${reason}`, () => {
+    const ctx = greetingContext()
+    mutate(ctx)
+    const decision = decide(triageResult(GREETING), ctx)
+    assert.deepEqual([decision.action, decision.reasons, decision.greeting, decision.placeholder], ['escalate', ['decision:escalate'], undefined, placeholder])
+  })
+}
+
+test('greeting: the session ends as the disclosure\'s does: a greeting, reply or message from 13 h ago holds nothing', () => {
+  const ctx = { ...greetingContext(), history: [customer('jam buka kak?', 13 * 60), ours('Buka 08.00–17.00 ya Kak.', 13 * 60 - 1)] }
+  ctx.chat = { ...ctx.chat, lastGreetingReplyAt: NOW - 13 * HOUR_MS, lastOursAt: NOW - 13 * HOUR_MS }
+  assert.equal(decide(triageResult(GREETING), ctx).action, 'auto_send')
 })

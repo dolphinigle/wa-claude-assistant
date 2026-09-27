@@ -48,11 +48,13 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
       throw new Error(`config.${key} must be a list of JIDs or phone numbers (e.g. ["081234567890"]; a JID as WhatsApp writes it: "6281234567890@s.whatsapp.net" or "123456789012345@lid"), got ${JSON.stringify(config[key])}`)
     }
   }
-  // Sent to customers as it is: a typo must stop the start, not reach them, and a missing text must not go out empty.
-  const placeholder = config.placeholder
-  if (!isPlainObject(placeholder) || typeof placeholder.enabled !== 'boolean' || !isPlainObject(placeholder.text) ||
-    !['id', 'en'].every(language => typeof placeholder.text[language] === 'string' && placeholder.text[language].trim())) {
-    throw new Error(`config.placeholder must be {"enabled": true or false, "text": {"id": "…", "en": "…"}} with both texts set, got ${JSON.stringify(placeholder)}`)
+  // Sent to customers as they are: a typo must stop the start, not reach them, and a missing text must not go out empty.
+  for (const key of ['placeholder', 'greetingReply']) {
+    const section = config[key]
+    if (!isPlainObject(section) || typeof section.enabled !== 'boolean' || !isPlainObject(section.text) ||
+      !['id', 'en'].every(language => typeof section.text[language] === 'string' && section.text[language].trim())) {
+      throw new Error(`config.${key} must be {"enabled": true or false, "text": {"id": "…", "en": "…"}} with both texts set, got ${JSON.stringify(section)}`)
+    }
   }
   // The switches for what reaches customers on its own are read as truthy: a quoted "false" would leave them on, and
   // `autoSend.enabled` false is the owner's "drafts only" switch (correctness-r1-4).

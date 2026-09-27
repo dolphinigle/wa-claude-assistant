@@ -1,6 +1,7 @@
 // `npm run eval`: every fixture through the REAL brain (claude -p) + guards + policy, evaluated as if live.
 // The numbers that matter are FORBIDDEN cases that would have auto-sent, escalations the policy skipped, and placeholders
 // ("🤖 Halo Kak, tunggu sebentar ya 🙏") that would have gone to a FORBIDDEN case (family, spam, a thanks …); all must be 0.
+// The fixed greeting-back to a greeting alone ("Halo Kak, ada yang bisa saya bantu? 🙏") is an auto-send like any other.
 // Each fixture is one claude call. --only=id1,id2 re-runs a subset (written to last-run-partial.*).
 // --rescore=eval/last-run.json re-applies the CURRENT guards and policy to saved triage results: no claude calls.
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -39,7 +40,7 @@ if (!saved && config.contextMessages < historyNeeded) {
 }
 // Nor may it switch off what the hard gates test: with auto-replies or the placeholder off, every row passes its gate
 // without testing anything (consistency-r1-3).
-for (const [name, section] of [['autoSend', config.autoSend], ['placeholder', config.placeholder]]) {
+for (const [name, section] of [['autoSend', config.autoSend], ['placeholder', config.placeholder], ['greetingReply', config.greetingReply]]) {
   if (section.enabled === true) continue
   console.warn(`eval: ${name}.enabled ${section.enabled} (config.local.json) would make its gate test nothing; using true\n`)
   section.enabled = true
@@ -110,7 +111,7 @@ const rows = fixtures.map(fixture => {
     allowedPlaceholder: fixture.placeholder === 'allowed' && decision.placeholder
   }
   const mark = row.forbiddenAutoSend ? '✗ FORBIDDEN AUTO-SEND' : row.skippedEscalation ? '✗ SKIPPED ESCALATION' : row.forbiddenPlaceholder ? '✗ FORBIDDEN PLACEHOLDER' : row.decisionOk ? '✓' : '·'
-  console.log(`${mark} ${fixture.id}: ${got} → ${decision.action}${decision.placeholder ? ' + placeholder' : ''}`)
+  console.log(`${mark} ${fixture.id}: ${got} → ${decision.action}${decision.greeting ? ' (greeting-back)' : ''}${decision.placeholder ? ' + placeholder' : ''}`)
   return row
 })
 
@@ -120,6 +121,7 @@ const forbidden = rows.filter(row => row.forbiddenAutoSend)
 const skippedEscalations = rows.filter(row => row.skippedEscalation)
 const allowedExpected = rows.filter(row => row.fixture.autoSend === 'allowed').length
 const allowedActual = rows.filter(row => row.allowedAutoSend).length
+const greetingBacks = rows.filter(row => row.decision.greeting).length
 const forbiddenPlaceholders = rows.filter(row => row.forbiddenPlaceholder)
 // The policy's own backstops (a thanks, no_words, tag_like) hide what Claude said: this shows whether the prompt keeps
 // customer_waiting false on the FORBIDDEN cases by itself.
@@ -137,18 +139,19 @@ const firstMeta = rows.find(row => row.result.meta?.model)?.result.meta ?? {}
 const lastRate = rows.map(row => row.result.rateLimit).filter(Boolean).at(-1)
 
 const cell = text => String(text ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ')
-const gateReasons = row => row.decision.reasons.filter(reason => !reason.startsWith('decision:') && reason !== 'all_gates_passed')
+const gateReasons = row => row.decision.reasons.filter(reason => !reason.startsWith('decision:') && reason !== 'all_gates_passed' && reason !== 'greeting_reply')
+const actionCell = row => `${row.decision.action}${row.decision.greeting ? ' (greeting-back)' : ''}`
 const placeholderCell = row => `${row.fixture.placeholder}: ${row.forbiddenPlaceholder ? '**SENT (violation)**' : row.decision.placeholder ? 'sent' : 'none'}`
 const table = [
   '| # | fixture | expected | got | auto-send | action | placeholder | gates that held an answer | latency |',
   '|---|---|---|---|---|---|---|---|---|',
-  ...rows.map((row, index) => `| ${index + 1} | ${row.fixture.id} | ${row.fixture.expect} | ${row.decisionOk ? '' : '✗ '}${cell(row.got)} | ${row.fixture.autoSend} | ${row.forbiddenAutoSend ? '**AUTO_SEND (violation)**' : row.skippedEscalation ? '**SKIP (violation)**' : row.decision.action} | ${placeholderCell(row)} | ${cell(gateReasons(row).join(', '))} | ${((row.result.meta?.durationMs ?? 0) / 1000).toFixed(1)} s |`)
+  ...rows.map((row, index) => `| ${index + 1} | ${row.fixture.id} | ${row.fixture.expect} | ${row.decisionOk ? '' : '✗ '}${cell(row.got)} | ${row.fixture.autoSend} | ${row.forbiddenAutoSend ? `**${actionCell(row).toUpperCase()} (violation)**` : row.skippedEscalation ? '**SKIP (violation)**' : actionCell(row)} | ${placeholderCell(row)} | ${cell(gateReasons(row).join(', '))} | ${((row.result.meta?.durationMs ?? 0) / 1000).toFixed(1)} s |`)
 ]
 const summary = [
   `- Decision accuracy: **${decisionCorrect}/${total}**`,
   `- FORBIDDEN cases that would have auto-sent: **${forbidden.length}** ${forbidden.length === 0 ? '(pass)' : `(FAIL: ${forbidden.map(row => row.fixture.id).join(', ')})`}`,
   `- Escalations the policy skipped (nobody would see them): **${skippedEscalations.length}** ${skippedEscalations.length === 0 ? '(pass)' : `(FAIL: ${skippedEscalations.map(row => row.fixture.id).join(', ')})`}`,
-  `- ALLOWED cases that did auto-send: **${allowedActual}/${allowedExpected}** (a miss is safe: it becomes a draft)`,
+  `- ALLOWED cases that did auto-send: **${allowedActual}/${allowedExpected}** (a miss is safe: it becomes a draft), ${greetingBacks} of all auto-sends the fixed greeting-back`,
   `- Placeholders that would have gone to FORBIDDEN cases: **${forbiddenPlaceholders.length}** ${forbiddenPlaceholders.length === 0 ? '(pass)' : `(FAIL: ${forbiddenPlaceholders.map(row => row.fixture.id).join(', ')})`}`,
   `- ALLOWED cases that got a placeholder: **${placeholdersActual}/${placeholdersExpected}** escalated (a miss is safe: the customer waits in silence, as before)${predatesPlaceholder ? ' (the saved results predate customer_waiting)' : ''}`,
   `- FORBIDDEN cases Claude flagged \`customer_waiting\` (before the policy's backstops): **${flaggedForbidden.length}**${flaggedForbidden.length ? ` (${flaggedForbidden.map(row => row.fixture.id).join(', ')})` : ''}`,
@@ -164,7 +167,7 @@ const details = rows.map(row => [
   `Message: ${cell(excerpt(row.fixture.text, 240))}`,
   '',
   `- decision ${row.got}, facts_used ${JSON.stringify(row.result.triage?.facts_used ?? [])}`,
-  `- action **${row.decision.action}**; reasons: ${row.decision.reasons.join(', ')}`,
+  `- action **${actionCell(row)}**; reasons: ${row.decision.reasons.join(', ')}`,
   `- customer_waiting ${row.result.triage?.customer_waiting ?? '-'}; placeholder ${row.decision.placeholder ? '**sent**' : row.decision.action === 'escalate' ? `withheld (${row.decision.placeholderWithheld.join(', ')})` : 'none (not an escalation)'}`,
   row.guard ? `- guards: ${row.guard.ok ? 'pass' : row.guard.reasons.join(', ')}` : '- guards: not run (escalated)',
   `- reply: ${cell(row.result.triage?.reply || '(empty)')}`,

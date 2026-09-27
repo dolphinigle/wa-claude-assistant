@@ -1362,7 +1362,8 @@ test('placeholder: a customer\'s greeting gets exactly one, the new text; a gree
     if (input.chat.name === 'Mama') return triageResult({ decision: 'escalate', reply: 'Pagi juga, Ma', summary: 'greeting from mom', customer_waiting: false })
     return triageResult({ decision: 'escalate', reply: 'Halo Kak, ada yang bisa dibantu?', summary: 'customer greeting', customer_waiting: true })
   }
-  const { transport, store, say, placeholders, withheld } = placeholderSetup(t, { respond })
+  // With the greeting-back on, a customer's greeting alone gets that instead (tested below).
+  const { transport, store, say, placeholders, withheld } = placeholderSetup(t, { respond, config: { greetingReply: { enabled: false } } })
   const MAMA = '6284444444444@s.whatsapp.net'
   store.updateChat(MAMA, { name: 'Mama' })
   await say(ALICE, 'Hai')
@@ -1378,7 +1379,7 @@ test('placeholder: a customer\'s greeting gets exactly one, the new text; a gree
 test('placeholder: a greeting too short to tell its language gets the language of Claude\'s draft, Indonesian when neither tells (correctness-r2-3)', async t => {
   const replies = { 'Hi!': 'Hi! How can I help you?', 'Good morning': 'Good morning! What can I do for you?', Hai: 'Halo Kak, ada yang bisa dibantu?', Hello: '' }
   const respond = input => triageResult({ decision: 'escalate', reply: replies[input.messages[0].text], summary: 'customer greeting', customer_waiting: true })
-  const { owner, say, placeholders, advance } = placeholderSetup(t, { respond })
+  const { owner, say, placeholders, advance } = placeholderSetup(t, { respond, config: { greetingReply: { enabled: false } } })
   for (const [index, text] of Object.keys(replies).entries()) {
     await say(ALICE, text)
     await owner(`/no ${index + 1}`) // ends the open-draft period, so the next greeting gets one again
@@ -1691,4 +1692,71 @@ test('placeholder: when your reply on the phone cancels the draft while its plac
   assert.equal(notices.length, 2)
   assert.match(notices[0], /You replied to .+ yourself: cancelled draft #1\./)
   assert.match(notices[1], /^🤖 📝 Draft #1 · .+ is cancelled\. ↩️ They got: 🤖 Halo Kak, tunggu sebentar ya 🙏$/)
+})
+
+// --- the greeting-back (owner decision 2026-09-27, live test) -------------------------------------------------------
+
+const GREETING_ID = 'Halo Kak, ada yang bisa saya bantu? 🙏'
+const GREETING_EN = 'Hi! How can I help you? 🙏'
+// Claude escalates a greeting with a hello of its own; family (Mama, Dimas) waits for nothing.
+const greets = input => {
+  const text = input.messages.map(message => message.text).join(' ')
+  const personal = ['Mama', 'Dimas'].includes(input.chat.name)
+  if (/^(hai|halo|hi|pagi)\b/i.test(text) && !/mau|pesan/i.test(text)) {
+    return triageResult({ decision: 'escalate', reply: /^hi\b/i.test(text) ? 'Hi! How can I help you?' : 'Halo Kak, ada yang bisa dibantu?', summary: 'greeting', customer_waiting: !personal })
+  }
+  return waiting(input)
+}
+
+test('greeting: a customer\'s "Hai" gets the fixed greeting-back at once, 🤖 first, unquoted, read, counted, no draft; the next message goes the normal way', async t => {
+  const { transport, store, say, audit, placeholders } = placeholderSetup(t, { respond: greets })
+  const hai = incoming(ALICE, 'Hai', { raw: { key: { id: 'raw' } } })
+  await say(ALICE, hai.text, { id: hai.id, raw: hai.raw })
+  assert.deepEqual(transport.toCustomer().map(item => [item.chatId, item.text, item.quotedRaw]), [[ALICE, `🤖 ${GREETING_ID}`, undefined]])
+  assert.deepEqual(store.pendingDrafts(), [])
+  assert.deepEqual(transport.read, [hai.id])
+  assert.deepEqual(transport.toSelf(), [`🤖 ✅ Auto-replied to ${transport.toSelf()[0].match(/to (.+): "/)[1]}: "${GREETING_ID}"`])
+  assert.equal(store.countChatAutoSends(ALICE, 3_600_000), 1)
+  assert.ok(store.isSentByBot(transport.toCustomer()[0].id), 'loop-guarded')
+  assert.deepEqual(audit().filter(entry => entry.event === 'sent_to_customer').map(entry => entry.source), ['greeting_reply'])
+  assert.ok(store.chat(ALICE).lastGreetingReplyAt > 0)
+
+  await say(ALICE, 'bisa pesan kue custom unicorn?')
+  assert.deepEqual(store.pendingDrafts().map(draft => draft.excerpt), ['bisa pesan kue custom unicorn?'], 'drafted as before')
+  assert.equal(placeholders().length, 1, 'with the placeholder, as before')
+
+  await say(BOB, 'Hi!')
+  assert.equal(transport.toCustomer().at(-1).text, `🤖 ${GREETING_EN}`, 'in the language of Claude\'s draft when the greeting is too short to tell')
+})
+
+test('greeting: a second greeting in the session, family, a friend, or a greeting with more in it go the normal way', async t => {
+  const { transport, store, say, placeholders } = placeholderSetup(t, { respond: greets })
+  const MAMA = '6284444444444@s.whatsapp.net'
+  const DIMAS = '6285555555555@s.whatsapp.net'
+  store.updateChat(MAMA, { name: 'Mama' })
+  store.updateChat(DIMAS, { name: 'Dimas' })
+  await say(ALICE, 'Hai')
+  await say(ALICE, 'Halo kak')
+  await say(MAMA, 'Halo nak', { senderName: 'Mama' })
+  await say(DIMAS, 'Hai bro', { senderName: 'Dimas' })
+  await say(BOB, 'halo kak mau pesan kue')
+  assert.deepEqual(transport.toCustomer().map(item => [item.chatId, item.text]), [[ALICE, `🤖 ${GREETING_ID}`], [ALICE, PLACEHOLDER_ID], [BOB, PLACEHOLDER_ID]])
+  assert.deepEqual(store.pendingDrafts().map(draft => [draft.chatId, draft.excerpt]), [[ALICE, 'Halo kak'], [MAMA, 'Halo nak'], [DIMAS, 'Hai bro'], [BOB, 'halo kak mau pesan kue']])
+  assert.equal(placeholders().length, 2)
+})
+
+test('greeting: paused, backlog, shadow', async t => {
+  const paused = placeholderSetup(t, { respond: greets })
+  await paused.owner('/pause')
+  await paused.say(ALICE, 'Hai')
+  assert.deepEqual([paused.transport.toCustomer(), paused.store.pendingDrafts().map(draft => draft.policyReasons)], [[], [['decision:escalate']]])
+
+  const late = placeholderSetup(t, { respond: greets })
+  await late.say(ALICE, 'Hai', { timestamp: Math.floor(late.now() / 1000) - 5 * 60 })
+  assert.deepEqual([late.transport.toCustomer(), late.store.pendingDrafts().length], [[], 1], 'backlog: drafted, nothing sent')
+
+  const shadow = placeholderSetup(t, { respond: greets, config: { mode: 'shadow' } })
+  await shadow.say(ALICE, 'Hai')
+  assert.deepEqual([shadow.transport.toCustomer(), shadow.store.pendingDrafts()], [[], []])
+  assert.match(shadow.transport.toSelf()[0], /^🤖 \[SHADOW\] Would auto-reply to .+\nThey wrote: "Hai"\nReply:\n🤖 Halo Kak, ada yang bisa saya bantu\? 🙏$/)
 })
