@@ -1603,6 +1603,62 @@ test('placeholder: a send cut off by a forced exit is announced after the restar
   assert.deepEqual([transport.toCustomer(), second.store.getDraft(2).placeholderCovered], [[], 1])
 })
 
+test('placeholder: a draft notice cut off by a forced exit after the placeholder went out is announced after the restart, and not drafted again (correctness-r2-4)', async t => {
+  const dir = tempDir(t)
+  let clock = Date.now()
+  const now = () => clock
+  const start = transport => {
+    const store = new Store(dir, { now, logger: silent })
+    const brain = createFakeBrain(waiting)
+    const assistant = createAssistant({ config: makeConfig({ mode: 'live', debounceMs: 10 }, dir), store, brain, transport, knowledge, now, logger: silent })
+    return { store, brain, assistant }
+  }
+  const hung = createFakeTransport({ now })
+  hung.sendToSelf = () => new Promise(() => {})
+  const first = start(hung)
+  await first.assistant.handleMessage(incoming(ALICE, 'bisa kue custom unicorn?', { timestamp: Math.floor(clock / 1000) }))
+  await waitFor(() => first.store.getDraft(1)?.placeholder?.status === 'sent')
+  assert.deepEqual([hung.toCustomer().map(item => item.text), first.store.inboxMessages().length], [[PLACEHOLDER_ID], 1], 'the customer got it; the message is still in the inbox')
+
+  const transport = createFakeTransport({ now })
+  const second = start(transport)
+  t.after(() => second.assistant.stop())
+  second.assistant.recoverInbox()
+  await second.assistant.idle()
+  assert.equal(second.brain.calls.length, 0, 'its draft is complete: not triaged again')
+  assert.deepEqual(second.store.inboxMessages(), [])
+  assert.deepEqual([second.store.pendingDrafts().map(draft => draft.id), second.store.getDraft(1).placeholder.status], [[1], 'sent'])
+  const notices = transport.toSelf()
+  assert.equal(notices.length, 1)
+  assert.match(notices[0], /^🤖 📝 DRAFT #1 .*\nThey wrote: "bisa kue custom unicorn\?"\n↩️ They got: 🤖 Halo Kak, tunggu sebentar ya 🙏\n[\s\S]*\nReply: \/ok 1 /)
+  assert.deepEqual(transport.toCustomer(), [])
+})
+
+test('restart: a draft without a placeholder whose notice was cut off is announced, not drafted again', async t => {
+  const dir = tempDir(t)
+  const now = () => 1_800_000_000_000
+  const start = transport => {
+    const store = new Store(dir, { now, logger: silent })
+    const brain = createFakeBrain(byKeyword)
+    const assistant = createAssistant({ config: makeConfig({ mode: 'live', debounceMs: 10 }, dir), store, brain, transport, knowledge, now, logger: silent })
+    return { store, brain, assistant }
+  }
+  const hung = createFakeTransport({ now })
+  hung.sendToSelf = () => new Promise(() => {})
+  const first = start(hung)
+  await first.assistant.handleMessage(incoming(ALICE, 'bisa kue custom unicorn?', { timestamp: Math.floor(now() / 1000) }))
+  await waitFor(() => first.store.pendingDrafts().length === 1)
+  assert.equal(first.store.inboxMessages().length, 1)
+
+  const transport = createFakeTransport({ now })
+  const second = start(transport)
+  t.after(() => second.assistant.stop())
+  second.assistant.recoverInbox()
+  await second.assistant.idle()
+  assert.deepEqual([second.brain.calls.length, second.store.inboxMessages(), second.store.pendingDrafts().map(draft => draft.id)], [0, [], [1]])
+  assert.deepEqual(transport.toSelf().map(text => text.split('\n')[0]), [`🤖 📝 DRAFT #1 · ${second.store.getDraft(1).contactName}`])
+})
+
 test('placeholder: when your reply on the phone cancels the draft while its placeholder goes out, no /ok is offered (send-path-r1-5)', async t => {
   const { transport, store, assistant, stamp, advance } = placeholderSetup(t)
   const send = transport.send.bind(transport)

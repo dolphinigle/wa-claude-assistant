@@ -393,16 +393,19 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
    * not deliver them again): triage them again as backlog (drafts only), or list them for the owner if too old.
    */
   function recoverInbox () {
-    // A placeholder send still `sending` never finished: the process was killed or crashed during it. The customer may
-    // have got it, and the draft's notice, posted only after the send, never went out. The draft is complete but for
-    // that notice, so it goes out now, saying what the customer may have got, and the draft's messages are not triaged
-    // again into a second draft that would hide it (correctness-r1-5). A chat the lists dropped since stays silent, as
-    // below.
+    // A pending draft whose messages are still in the inbox was never announced: triageChat clears the inbox only after
+    // the placeholder send and the draft notice, so the process was killed or crashed during one of them. The draft is
+    // complete but for its notice, so that goes out now, with what the customer got (`↩️`), and its messages are not
+    // triaged again into a second draft that would hide it and cost a call (correctness-r1-5, correctness-r2-4). A
+    // placeholder still `sending` may have reached the customer: `unknown`. A notice cut off in flight may have arrived,
+    // so the owner may see it twice. A chat the lists dropped since stays silent, as below.
+    const inbox = new Set(store.inboxMessages().map(message => message.id))
     for (const draft of store.pendingDrafts()) {
-      if (draft.placeholder?.status !== 'sending') continue
-      store.updateDraft(draft.id, { placeholder: { ...draft.placeholder, status: 'unknown', error: 'the assistant stopped during the send' } })
+      const interrupted = draft.placeholder?.status === 'sending'
+      if (!interrupted && !(draft.messageIds ?? []).some(id => inbox.has(id))) continue
+      if (interrupted) store.updateDraft(draft.id, { placeholder: { ...draft.placeholder, status: 'unknown', error: 'the assistant stopped during the send' } })
       store.removeFromInbox(draft.messageIds ?? [])
-      store.audit('placeholder_interrupted', { chatId: draft.chatId, draftId: draft.id })
+      store.audit(interrupted ? 'placeholder_interrupted' : 'draft_notice_interrupted', { chatId: draft.chatId, draftId: draft.id })
       if (isAllowed(draft.chatId) && !isBlocked(draft.chatId)) track(sendToOwner(formatDraftNotice(store.getDraft(draft.id))))
     }
     const unfinished = store.inboxMessages()
