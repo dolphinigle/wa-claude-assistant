@@ -494,3 +494,19 @@ test('isLooseThanks: a thanks with what it is for, a laugh or a done "dibantu" i
     assert.equal(isLooseThanks(text), false, text)
   }
 })
+
+test('isLooseThanks: a "2" repeat, any emoji, "y", "bnyk", "tysm" and what the thanks is for still only thank (send-path-r2-4, correctness-r2-2)', () => {
+  for (const text of ['sama2', 'sama2 kak', 'makasih kak, sehat2 selalu 🙏', 'makasih kak sehat2 ya', 'makasih kak 🙏 sukses2 ya', 'makasih kak sukses terus',
+    'makasih kak 😘', 'makasih kak 😅🙏', 'makasih kak 🥲', 'makasih kak 🤭', 'makasih kak 🫶', 'makasih kak 🙇‍♀️', 'makasih kak 😆',
+    'makasih y kak', 'mksh y kak', 'Ok kak makasih y', 'makasih bnyk kak', 'makasih byk', 'tysm', 'makasih kak, gbu',
+    'terima kasih atas pelayanannya kak', 'thanks for your time']) {
+    assert.equal(isThanks(text), false, `${text}: the skip stays narrow`)
+    assert.equal(isLooseThanks(text), true, text)
+  }
+  // Other digits, a repeat that is no thanks word, and anything to do or ask are still more than a thanks; an emoji or
+  // a well-wish alone is none (an emoji alone has its own backstop, no_words).
+  for (const text of ['makasih 2 kak', 'makasih kak, 2 loyang ya', 'thank u, mau pesan 2 loyang', 'makasih kak x2', 'makasih kak, hati2 ya',
+    'makasih kak, pesan brownies2 ya', 'makasih kak 😘 mau pesan', 'makasih kak, bisa kirim besok? 😅', 'y kak', 'sehat2 kak', 'gbu', '🥹', '😡😡']) {
+    assert.equal(isLooseThanks(text), false, text)
+  }
+})

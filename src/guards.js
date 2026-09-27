@@ -271,9 +271,9 @@ const MAX_THANKS_TOKENS = 16
  * no digits, no symbol but punctuation, friendly or agreeing emoji and friendly smileys, at most 16 words and emoji in
  * at most 300 characters. `agrees`: it reads as a thanks only with an acknowledgement or an agreeing emoji in it ("iya
  * makasih", "ok siap, thanks", "👍 makasih"), or a "ya" comes before the thanks ("ya kak, makasih"), so it may also be a
- * yes to something our side asked.
+ * yes to something our side asked. `anyEmoji`: any emoji may go with the words (the loose read below).
  */
-function readThanks (input, lexicon = THANKS_VOCABULARY) {
+function readThanks (input, lexicon = THANKS_VOCABULARY, { anyEmoji = false } = {}) {
   if (String(input ?? '').length > MAX_THANKS_CHARS) return undefined
   const text = normalizeText(input).toLowerCase().replace(SMILEYS, ' ')
   if (/[?¿]/.test(text) || /\p{N}/u.test(text)) return undefined
@@ -282,7 +282,7 @@ function readThanks (input, lexicon = THANKS_VOCABULARY) {
   const emoji = text.match(EMOJI) ?? []
   if (words.length + emoji.length > MAX_THANKS_TOKENS) return undefined
   if (words.length === 0) return emoji.length > 0 && emoji.every(symbol => FRIENDLY_EMOJI.has(symbol)) ? { agrees: false } : undefined
-  if (!emoji.every(symbol => FRIENDLY_EMOJI.has(symbol) || AGREEING_EMOJI.has(symbol))) return undefined
+  if (!anyEmoji && !emoji.every(symbol => FRIENDLY_EMOJI.has(symbol) || AGREEING_EMOJI.has(symbol))) return undefined
   const { closings, acknowledgements } = lexicon.kinds
   const splits = splitKinds(words, lexicon).filter(kinds => kinds & closings)
   if (splits.length === 0) return undefined
@@ -306,16 +306,18 @@ export const thanksAgrees = input => readThanks(input)?.agrees === true
 // a word the vocabulary does not know is read without its doubled letters, then as its usual spelling or dropped as a
 // softener, and what is left must still be a thanks for readThanks. The skip keeps the narrow isThanks.
 // What the thanks is for is dropped too, as whole words ("atas bantuannya", "untuk infonya": "atas nama Dewi" keeps
-// "nama Dewi"), and so is laughter ("hehe", "wkwk") and a done "(sudah) dibantu" (send-path-r2-1).
+// "nama Dewi"), and so is laughter ("hehe", "wkwk") and a done "(sudah) dibantu" (send-path-r2-1). A "2" after a word
+// repeats it ("sama2", "sehat2", "sukses2"), any emoji may go with the words ("makasih kak 😅", "🥲", "🙇‍♀️"), and a
+// "y" is "ya" (send-path-r2-4, correctness-r2-2). Other digits still make it no thanks: "makasih, pesan 2 ya".
 const CHAT_THANKS = new Map(Object.entries({
   trimakasih: 'terimakasih', trimakasi: 'terimakasih', terimakasi: 'terimakasih', trmksh: 'terimakasih', trmkasih: 'terimakasih',
   makacih: 'makasih', macih: 'makasih', maci: 'makasih', mksi: 'makasih', mks: 'makasih', mkasih: 'makasih', mkasi: 'makasih',
   mksih: 'makasih', maksih: 'makasih', makaseh: 'makasih', nuwun: 'makasih', suwun: 'makasih', nuhun: 'makasih',
   tks: 'thanks', thanx: 'thanks', thnx: 'thanks', tqvm: 'thanks', tqsm: 'thanks', thanku: 'thank you', thankyu: 'thank you',
-  tenkyu: 'tengkyu', tengkiu: 'tengkyu', u: 'you'
+  tenkyu: 'tengkyu', tengkiu: 'tengkyu', u: 'you', tysm: 'thanks', thks: 'thanks', bnyk: 'banyak', byk: 'banyak', bnyak: 'banyak'
 }))
-const CHAT_SOFTENERS = new Set(('matur hatur bgt banget bngt bener sekali bang om dek mba bro sist bos yah ' +
-  'atas untuk bantuannya bantuan informasinya responnya jawabannya').split(' '))
+const CHAT_SOFTENERS = new Set(('matur hatur bgt banget bngt bener sekali bang om dek mba bro sist bos yah y yh gbu ' +
+  'atas untuk bantuannya bantuan informasinya responnya jawabannya balasannya pelayanannya pelayanan waktunya').split(' '))
 const LAUGHTER = /^(?:(?:h[aeiu]){2,}h?|(?:wk){2,}w?)$/u
 // A greeting or a well-wish around a thanks only softens it too ("makasih kak, selamat siang", "pagi kak makasih",
 // "makasih ya kak, sukses selalu", "thank you, good afternoon"), and so do more ways to say kak ("kk", "kaka", "kang",
@@ -329,7 +331,8 @@ const LOOSE_VOCABULARY = vocabulary({
     ...GREETING_TIMES, ...['selamat', 'slamat', 'met'].flatMap(word => [...GREETING_TIMES, 'beraktivitas', 'bekerja', 'istirahat'].map(time => `${word} ${time}`)),
     'good morning', 'good afternoon', 'good evening', 'good day', 'hai', 'halo', 'hallo', 'helo', 'hi', 'hello', 'hey',
     'salam', 'wassalam', 'wasalam', 'assalamualaikum', 'assalamu alaikum', 'wassalamualaikum', 'waalaikumsalam',
-    'sukses selalu', 'sukses', 'semangat', 'semangat selalu']
+    'sukses selalu', 'sukses', 'sukses terus', 'semangat', 'semangat selalu', 'semangat terus', 'sehat', 'god bless', 'god bless you',
+    'for your time']
 })
 // Only once done: "makasih, dibalas ya" may ask for a reply.
 const DONE_FOR_US = /(?<!\p{L})(?:sudah|sudh|udah|udh|uda|sdh|dah|telah)\s+(?:di|mem|men|me)?(?:bantu|bantuin|balas|bales|jawab|respon|info|infokan|infoin|kabari|kabarin|layani)(?!\p{L})/gu
@@ -345,9 +348,11 @@ const chatSpelling = word => {
 }
 
 /** The customer only thanks, also in a chat spelling (see above); for the placeholder only, never for the skip. */
+const REPEATED = /(?<![\p{L}\p{N}])(\p{L}+)2(?![\p{L}\p{N}])/gu // "sama2" is "sama sama"
 export const isLooseThanks = input => isThanks(input) ||
   (String(input ?? '').length <= MAX_THANKS_CHARS &&
-    readThanks(normalizeText(input).toLowerCase().replace(DONE_FOR_US, ' ').replace(/\p{L}+/gu, chatSpelling), LOOSE_VOCABULARY) !== undefined)
+    readThanks(normalizeText(input).toLowerCase().replace(REPEATED, '$1 $1').replace(DONE_FOR_US, ' ').replace(/\p{L}+/gu, chatSpelling),
+      LOOSE_VOCABULARY, { anyEmoji: true }) !== undefined)
 
 // asksSomething chooses the auto-send (owner decision, 2026-09-27): only an answer to a message that asks something may
 // go out on its own. A thanks, a yes, a no, "gapapa", "saya tunggu" or "saya mau ambil besok" asks nothing, so a fact

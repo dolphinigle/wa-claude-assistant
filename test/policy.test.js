@@ -546,6 +546,19 @@ test('placeholder: none for a thanks with what it is for, a laugh or a done "dib
   assert.equal(decide(triageResult(WAITING), { ...waitingContext(), incomingText: 'makasih kak, atas nama Dewi ya' }).placeholder, true, 'a name for the order')
 })
 
+test('placeholder: none for a thanks with a "2" repeat, any emoji, "y" or "bnyk", whatever Claude says (send-path-r2-4, correctness-r2-2)', () => {
+  // Sonnet flagged 'makasih kak 🙏' after an unanswered request as waiting (eval 2026-09-27 06:51 UTC): these forms of
+  // the same thanks must not rest on that flag.
+  for (const incomingText of ['makasih y kak', 'makasih kak 🥲', 'makasih bnyk kak', 'makasih kak sehat2 ya', 'tysm', 'makasih kak 😅🙏', 'makasih kak 😘',
+    'makasih kak, sehat2 selalu 🙏', 'terima kasih atas pelayanannya kak', 'sama2 kak']) {
+    for (const triage of [WAITING, { ...THANKS, customer_waiting: true }]) {
+      const decision = decide(triageResult(triage), { ...waitingContext(), incomingText })
+      assert.deepEqual([decision.action, decision.placeholder, decision.placeholderWithheld], ['escalate', false, ['thanks']], `${incomingText} (${triage.decision})`)
+    }
+  }
+  assert.equal(decide(triageResult(WAITING), { ...waitingContext(), incomingText: 'makasih kak, 2 loyang ya' }).placeholder, true, 'an order')
+})
+
 test('placeholder: a thanks caption on a file is no thanks, as for the skip: a transfer proof may wait (consistency-r2-1)', () => {
   for (const [incomingText, attachments] of [['makasih kak 🙏', ['image']], ['terima kasih', ['document']]]) {
     for (const triage of [WAITING, { ...THANKS, customer_waiting: true }]) {
