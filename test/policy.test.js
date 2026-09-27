@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { guardTriage } from '../src/guards.js'
+import { guardTriage, isThanks } from '../src/guards.js'
 import { closedThisSession, decide } from '../src/policy.js'
 import { ANSWER_HOURS, knowledge, makeConfig, okRateLimit, triageResult } from './helpers.js'
 
@@ -432,5 +432,18 @@ test('placeholder: none for a text without a letter or digit, whatever Claude sa
   assert.equal(decide(triageResult(WAITING), { ...waitingContext(), incomingText: '', attachments: ['image'] }).placeholder, true, 'a payment proof without a caption')
   for (const incomingText of ['Kak, 2 loyang?', 'ok 👍 transfer ya', 'Can you make one?']) {
     assert.equal(decide(triageResult(WAITING), { ...waitingContext(), incomingText }).placeholder, true, incomingText)
+  }
+})
+
+test('placeholder: none for a thanks in a chat spelling the skip does not take, whatever Claude says (send-path-r1-3)', () => {
+  for (const incomingText of ['makasih bgt kak 🙏', 'makasiih kak', 'trimakasih kak', 'thank u kak', 'okee makasiii kak', 'matur nuwun kak', 'suwun kak', 'hatur nuhun']) {
+    assert.equal(isThanks(incomingText), false, `${incomingText}: the skip stays narrow`)
+    for (const triage of [WAITING, { ...THANKS, customer_waiting: true }]) {
+      const decision = decide(triageResult(triage), { ...waitingContext(), incomingText })
+      assert.deepEqual([decision.action, decision.placeholder, decision.placeholderWithheld], ['escalate', false, ['thanks']], `${incomingText} (${triage.decision})`)
+    }
+  }
+  for (const incomingText of ['Terima kasih kak, sudah saya transfer', 'makasih kak, bisa kirim besok?', 'thank u, mau pesan 2 loyang']) {
+    assert.equal(decide(triageResult(WAITING), { ...waitingContext(), incomingText }).placeholder, true, `${incomingText}: more than a thanks`)
   }
 })

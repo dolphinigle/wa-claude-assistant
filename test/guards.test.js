@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { asksSomething, buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, isThanks, privateIdentifiers, privateIdentifiersFor, thanksAgrees } from '../src/guards.js'
+import { asksSomething, buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, isLooseThanks, isThanks, privateIdentifiers, privateIdentifiersFor, thanksAgrees } from '../src/guards.js'
 import { parseKnowledge } from '../src/knowledge.js'
 import { knowledge, makeConfig } from './helpers.js'
 
@@ -453,4 +453,15 @@ test('replies that carry the owner\'s account or machine details are held; draft
   assert.deepEqual(held('Halo Kak Jane, kami buka pukul 08.00–17.00 WIB, shop kecil ya.'), [], 'parts of the identifiers are not identifiers')
   assert.deepEqual(findPrivateDetails('Kirim ke jane.doe@example-shop.co.id', identifiers), ['janedoe', 'exampleshop'])
   assert.ok(privateIdentifiersFor(config).paths.includes('/home/janed/app/data'), 'guardTriage builds them from the config')
+})
+
+test('isLooseThanks: a thanks in a chat spelling too, for the placeholder; nothing more than a thanks', () => {
+  for (const text of [...THANKS_EXAMPLES, 'makasih bgt kak 🙏', 'makasiih kak', 'trimakasih kak', 'thank u', 'okee makasiii kak', 'matur nuwun kak',
+    'suwun kak', 'hatur nuhun', 'makasih bang', 'thankss a lot', 'mks ya kak']) {
+    assert.equal(isLooseThanks(text), true, text)
+  }
+  for (const text of ['Terima kasih kak, sudah saya transfer', 'makasih kak, bisa kirim besok?', 'thank u, mau pesan 2 loyang', 'oke kak', 'siap kak',
+    'matur kak', 'bgt', 'u', 'Selamat pagi kak', 'makasih kak, selamat siang', '😡😡', `${'makasih bgt '.repeat(30)}`]) {
+    assert.equal(isLooseThanks(text), false, text)
+  }
 })

@@ -6,7 +6,7 @@
 // an approved send into a notice.
 // An escalation also says whether the customer gets a short fixed placeholder ("🤖 Tunggu sebentar ya Kak 🙏", owner
 // decision 2026-09-27), so a waiting customer does not wait in silence; see placeholderWithheld.
-import { asksSomething, isThanks, normalizeText, thanksAgrees } from './guards.js'
+import { asksSomething, isLooseThanks, isThanks, normalizeText, thanksAgrees } from './guards.js'
 
 const QUOTA_OK_STATUSES = new Set(['allowed', 'allowed_warning'])
 const HOUR_MS = 60 * 60 * 1000
@@ -111,8 +111,9 @@ function chatBlockers (ctx) {
 /**
  * Why an escalation gets no placeholder; empty means it gets one. Only Claude's `customer_waiting: true` (a customer
  * waiting for the owner: not family, friends, spam, a scam or a manipulation attempt) lets one out, since a family
- * emergency must never get "tunggu sebentar". A thanks never gets one, whatever Claude says: it waits for nothing. Nor
- * does a text without a letter or digit (😡😡, 🙏, ?) that comes without a file: it does not say what the sender wants.
+ * emergency must never get "tunggu sebentar". A thanks never gets one, whatever Claude says: it waits for nothing. It
+ * is read loosely here (isLooseThanks: "makasih bgt kak", "thank u"), since a false match only withholds a fixed text.
+ * Nor does a text without a letter or digit (😡😡, 🙏, ?) that comes without a file: it does not say what the sender wants.
  * Backlog never does: it comes late, and the owner may have answered it on the phone meanwhile. One placeholder covers
  * every escalation while a draft whose customer got one is open (`chat.placeholderSent`); it counts toward the caps.
  */
@@ -122,7 +123,7 @@ function placeholderWithheld (result, ctx) {
   const withheld = []
   if (config.placeholder?.enabled !== true) withheld.push('placeholder_disabled')
   if (result.triage.customer_waiting !== true) withheld.push('customer_not_waiting')
-  if (ctx.incomingText !== undefined && isThanks(ctx.incomingText)) withheld.push('thanks')
+  if (ctx.incomingText !== undefined && isLooseThanks(ctx.incomingText)) withheld.push('thanks')
   if ((ctx.attachments ?? []).length === 0 && !/[\p{L}\p{N}]/u.test(ctx.incomingText ?? '')) withheld.push('no_words')
   withheld.push(...chatBlockers(ctx))
   if (ctx.isBacklog) withheld.push('backlog')

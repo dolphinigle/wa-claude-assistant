@@ -199,6 +199,7 @@ export function detectLanguage (text) {
 // conversation, and "makasih kak, selamat siang" is a draft too. Neither is anything that can agree to, arrange or ask
 // for something: "no problem", "anytime", "see you", "sampai jumpa", "hati-hati" (a warning too), "lagi" (more),
 // "dong", or a bare "welcome".
+const foldRepeats = word => String(word ?? '').replace(/(\p{L})\1+/gu, '$1') // chat doubles letters: "bangett", "gakk"
 const HONORIFICS = 'kak ka kakak mas mbak bu ibu pak bapak sis gan dear min'.split(' ')
 const HAVE_A_NICE = ['nice', 'great', 'good', 'lovely'].flatMap(adjective => ['day', 'weekend', 'evening', 'night'].map(time => `have a ${adjective} ${time}`))
 const THANKS_PHRASES = {
@@ -299,13 +300,38 @@ export const isThanks = input => readThanks(input) !== undefined
 /** A thanks that also agrees to something ("iya makasih", "👍 thanks"): see readThanks. */
 export const thanksAgrees = input => readThanks(input)?.agrees === true
 
+// The escalation placeholder is withheld from a thanks (policy.js), where the error runs the other way: a missed thanks
+// tells someone who waits for nothing to wait, and a false match only withholds a fixed text. So there a thanks may
+// also be spelled the chat way ("makasiii", "trimakasih", "thank u", "matur nuwun", "makasih bgt kak", send-path-r1-3):
+// a word the vocabulary does not know is read without its doubled letters, then as its usual spelling or dropped as a
+// softener, and what is left must still be a thanks for readThanks. The skip keeps the narrow isThanks.
+const CHAT_THANKS = new Map(Object.entries({
+  trimakasih: 'terimakasih', trimakasi: 'terimakasih', terimakasi: 'terimakasih', trmksh: 'terimakasih', makacih: 'makasih',
+  macih: 'makasih', maci: 'makasih', mksi: 'makasih', mks: 'makasih', nuwun: 'makasih', suwun: 'makasih', nuhun: 'makasih',
+  tks: 'thanks', thanx: 'thanks', thnx: 'thanks', tqvm: 'thanks', tqsm: 'thanks', u: 'you'
+}))
+const CHAT_SOFTENERS = new Set('matur hatur bgt banget bngt bener sekali bang om dek mba bro sist bos yah'.split(' '))
+const THANKS_WORDS = new Set([...THANKS_VOCABULARY.phrases.keys()].flatMap(phrase => phrase.split(' ')))
+const FOLDED_THANKS_WORDS = new Map()
+for (const word of THANKS_WORDS) if (!FOLDED_THANKS_WORDS.has(foldRepeats(word))) FOLDED_THANKS_WORDS.set(foldRepeats(word), word)
+const chatSpelling = word => {
+  if (THANKS_WORDS.has(word)) return word
+  const folded = foldRepeats(word)
+  const known = FOLDED_THANKS_WORDS.get(folded) ?? CHAT_THANKS.get(word) ?? CHAT_THANKS.get(folded)
+  if (known) return known
+  return CHAT_SOFTENERS.has(word) || CHAT_SOFTENERS.has(folded) ? '' : word
+}
+
+/** The customer only thanks, also in a chat spelling (see above); for the placeholder only, never for the skip. */
+export const isLooseThanks = input => isThanks(input) ||
+  (String(input ?? '').length <= MAX_THANKS_CHARS && isThanks(normalizeText(input).toLowerCase().replace(/\p{L}+/gu, chatSpelling)))
+
 // asksSomething chooses the auto-send (owner decision, 2026-09-27): only an answer to a message that asks something may
 // go out on its own. A thanks, a yes, a no, "gapapa", "saya tunggu" or "saya mau ambil besok" asks nothing, so a fact
 // cited there only licenses a promise nobody asked for. No list knows every way to thank or agree ("makasih bang",
 // "sama2", "betul"), so this one lists what asks instead: a missed question only costs a draft, and a false one only
 // puts the answer back on the other gates.
 const wordsOf = list => list.split(' ')
-const foldRepeats = word => String(word ?? '').replace(/(\p{L})\1+/gu, '$1') // chat doubles letters: "bangett", "gakk"
 // Ask wherever they stand, but see plainFrom and plainQuestion below. Chat questions often have no question mark
 // ("buka jam berapa kak"). Not "kok": in chat it mostly stresses a statement ("bisa kok kak", "udah sampai kok,
 // makasih"), so it is a particle.
