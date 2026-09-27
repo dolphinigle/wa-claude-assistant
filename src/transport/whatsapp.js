@@ -285,7 +285,10 @@ export function createWhatsAppTransport ({ config, store, onMessage, onUntriaged
     if (messageId) options.messageId = messageId
     // Quoted media replies don't render on mobile (#2739): only quote text messages.
     if (quotedRaw && (quotedRaw.message?.conversation || quotedRaw.message?.extendedTextMessage)) options.quoted = quotedRaw
-    const sent = await sock.sendMessage(chatId, { text }, options)
+    // No link preview, ever: with `linkPreview` unset, Baileys fetches any URL in the text from this machine to build
+    // one (rc14 lib/Utils/messages.js, generateWAMessageContent; null skips it). Notices quote customers' and spammers'
+    // links, and that fetch would give away the machine's IP and that the bot is running.
+    const sent = await sock.sendMessage(chatId, { text, linkPreview: null }, options)
     if (sent) remember(sent)
     return { id: sent?.key?.id ?? messageId }
   }

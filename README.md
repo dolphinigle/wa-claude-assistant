@@ -296,6 +296,9 @@ cancelled.
   If your own reply on the phone cancels the draft while the placeholder goes out, the notice is one line naming what
   they got, with no `/ok`. Like any send of ours, it is loop-guarded (its echo starts no takeover) and it
   is our side's newest word, so a thanks after it is not skipped as if nothing came after a closing.
+- **No link previews:** every message, to a customer or to you, is sent with `linkPreview: null`. Without it Baileys
+  fetches any URL in the text from this machine to build a preview; notices quote customers' and spammers' links, and
+  that fetch would reveal your IP address and that the bot is running.
 - **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with 🤖
   (`disclosure.text`; the owner's choice on 2026-09-27, after a two-language sentence was too much text). An icon is a
   weaker disclosure than words: for real customers, consider a word such as `🤖 Asisten AI:`. An escalation

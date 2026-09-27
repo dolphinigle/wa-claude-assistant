@@ -124,6 +124,9 @@ false`); most were added or tightened after a review or the live run found the f
   to whichever JID the owner's own `/command` arrives on. Whether a notice sent by the linked device notifies the
   phone, and whether `readMessages` clears the phone's unread badge: TBD (live test).
 - **Quoting:** quote only text messages; quoted media replies do not render on mobile (#2739).
+- **Link previews:** send `{text, linkPreview: null}`. With `linkPreview` unset, rc14 fetches the first URL in any
+  outgoing text from your machine to build a preview; a notice that quotes a spammer's link would reveal your IP and
+  that the bot is live. It only failed in the live test because the optional `link-preview-js` is not installed.
 
 ## 5. Secrets: what leaked and how it is kept out
 

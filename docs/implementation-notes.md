@@ -93,6 +93,7 @@ SELF-CHAT
 
 SEND
 - `const sent = await sock.sendMessage(remoteJid, {text}, {quoted: m}); sentByBot.add(sent.key.id)`. Quote only text messages; quoted media replies do not render on mobile (#2739).
+- 2026-09-27 (checked in the installed rc14, `lib/Utils/messages.js` `generateWAMessageContent`, ~line 278): when the content's `linkPreview` is `undefined`, Baileys calls `generateLinkPreviewIfRequired`, which fetches the first URL in the text from this machine (`getUrlInfo`, 3 s timeout) to build a preview; `null` skips it, and no other code reads the key. It only failed in the live test because the optional `link-preview-js` package is not installed, which a future `npm install` could change. The transport always sends `{text, linkPreview: null}`: notices quote customers' and spammers' links, and the fetch would reveal the machine's IP and that the bot is running.
 - Typing: sock.sendPresenceUpdate('composing', jid) expires after ~10 s, so repeat it while Claude runs, then send 'paused'.
 - sock.readMessages([m.key]) sends blue ticks when the privacy setting is 'all'. Call it only after an auto-reply; never for drafted or escalated chats. There is no whole-chat mark-read.
 - Never call chatModify with guessed lastMessages; the docs say it can log out all devices.

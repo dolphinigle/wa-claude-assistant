@@ -137,6 +137,54 @@ test('send: pre-generated message id, quotes text only, history and markRead', a
   assert.equal(typeof transport.generateId(), 'string')
 })
 
+// Baileys fetches any URL in outgoing text to build a preview unless linkPreview is set (rc14 generateWAMessageContent):
+// that fetch would reveal this machine's IP to the owner of a customer's or spammer's link that a notice quotes.
+test('every send carries linkPreview: null, so Baileys never fetches a link: replies, quotes, notices, placeholders, auto-replies', async t => {
+  const { transport, sockets, emit } = setup(t)
+  await transport.start()
+  open(emit)
+  const question = raw(CUSTOMER, { conversation: 'lokasinya di https://maps.app.goo.gl/abc?g_st=iw ya?' })
+  emit('messages.upsert', { type: 'notify', messages: [question] })
+  await sleep(5)
+  await transport.send(CUSTOMER, 'Cek https://example.com ya Kak', { quotedRaw: question, messageId: 'Q1' })
+  await transport.send(CUSTOMER, 'www.example.com')
+  await transport.sendToSelf('🤖 📝 DRAFT #1\nThey wrote: "klik bit.ly/klaim-hadiah"', { messageId: 'N1' })
+  assert.deepEqual(sockets[0].sent.map(item => item.content), [
+    { text: 'Cek https://example.com ya Kak', linkPreview: null },
+    { text: 'www.example.com', linkPreview: null },
+    { text: '🤖 📝 DRAFT #1\nThey wrote: "klik bit.ly/klaim-hadiah"', linkPreview: null }
+  ])
+
+  // Wired as src/main.js wires them: the placeholder, an auto-reply and every notice go through the same send().
+  const dir = tempDir(t)
+  const config = makeConfig({ mode: 'live', debounceMs: 5, whatsapp: { caughtUpWatchdogMs: 60_000 } }, dir)
+  const store = new Store(dir, { logger: silent })
+  const { sockets: wired, createSocket } = fakeSockets()
+  const brain = createFakeBrain(({ messages }) => (/jam/.test(messages[0].text)
+    ? { ok: true, triage: { decision: 'answer', reply: 'Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya Kak.', facts_used: ['F1'], reason: 'hours', summary: 'hours', customer_waiting: true }, rateLimit: { status: 'allowed', fiveHourUtilization: 0.1, sevenDayUtilization: 0.1 }, meta: {} }
+    : { ok: true, triage: { decision: 'escalate', reply: 'Baik Kak, saya cek dulu ya.', facts_used: [], reason: 'custom', summary: 'custom cake, see https://example.com/ref', customer_waiting: true }, meta: {} }))
+  let assistant
+  const whatsapp = createWhatsAppTransport({ config, store, logger: silent, createSocket, onMessage: message => assistant.handleMessage(message) })
+  assistant = createAssistant({ config, store, brain, transport: whatsapp, knowledge, logger: silent })
+  t.after(async () => { await assistant.stop(); await whatsapp.stop() })
+  await whatsapp.start()
+  wired[0].ev.emit('connection.update', { connection: 'open' })
+  wired[0].ev.emit('messages.upsert', { type: 'notify', messages: [raw(CUSTOMER, { conversation: 'bisa kue custom kayak https://example.com/ref?' })] })
+  await sleep(20)
+  await assistant.idle()
+  wired[0].ev.emit('messages.upsert', { type: 'notify', messages: [raw('6283333333333@s.whatsapp.net', { conversation: 'jam berapa buka kak?' })] })
+  await sleep(20)
+  await assistant.idle()
+  const sent = wired[0].sent.map(item => [item.jid, item.content.text.split('\n')[0]])
+  assert.deepEqual(sent, [
+    [CUSTOMER, '🤖 Halo Kak, tunggu sebentar ya 🙏'],
+    [OWNER_PN, '🤖 📝 DRAFT #1 · Sari (+6282222222222)'],
+    ['6283333333333@s.whatsapp.net', '🤖 Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya Kak.'],
+    [OWNER_PN, '🤖 ✅ Auto-replied to Sari (+6283333333333): "Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya Kak."']
+  ], 'the placeholder, its notice, an auto-reply and its notice')
+  assert.ok(wired[0].sent.every(item => Object.keys(item.content).join() === 'text,linkPreview' && item.content.linkPreview === null))
+})
+
 test('self-chat target: own PN first, then the JID the owner actually types on', async t => {
   const { transport, sockets, emit } = setup(t)
   await transport.start()
