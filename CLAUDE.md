@@ -38,6 +38,7 @@ draft in the owner's "Message yourself" chat.
 | WhatsApp client | Baileys `7.0.0-rc14`, exact pin. Switch triggers are in `docs/implementation-notes.md` |
 | Thanks | Never auto-answered (it asks nothing); skipped only after a closing this session, drafted otherwise (2026-09-26) |
 | Greeting reply | A waiting customer's greeting alone that opens the conversation gets the fixed `greetingReply.text` (`Halo Kak, ada yang bisa saya bantu? 🙏`) as an auto-send, once per session, through the non-Claude gates; `greetingReply.enabled: false` turns it off (2026-09-27) |
+| Demo mode | Opt-in `"demo": {"enabled": true}` in `config.local.json`, only with a non-empty `allowChats`: Claude answers like CS and may invent what the facts don't give (`prompts/triage-demo.md`); guards skip the facts checks but `demo_payment_detail` holds bank, account and transfer details; no `no_question` hold; per-chat cap `demo.maxPerChatPerHour`. The eval forces it off (2026-09-27) |
 | Trying it live | `allowChats` in `config.local.json`: only the listed chats are handled, every other chat is untouched (2026-09-27) |
 
 Ask the owner before changing **what gets auto-sent, drafted, or silently skipped**. Mechanical work needs no plan
