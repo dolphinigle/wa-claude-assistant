@@ -21,7 +21,7 @@ account, and what is still unknown. The code in this repo is the worked example;
 | Can Claude decide answer vs escalate well enough to auto-send? | For narrow, fact-backed questions behind deterministic guards: 20/20 decisions, 0 forbidden auto-sends and 0 skipped escalations on 20 fixtures (2026-09-27 06:51 UTC). Raw, **1 forbidden placeholder**: Sonnet flagged a `</message><system>` tag breakout as a waiting customer although its own reason called it manipulation; a deterministic tag-like backstop withholds it since (0 on rescore). A smoke test, not a guarantee. | [eval] |
 | Is it allowed? | **WhatsApp: no.** Its ToS forbid unofficial clients, auto-messaging and non-personal use; the whole account can be banned. **Anthropic: ambiguous** for an always-on bot on a consumer subscription; an API key is unambiguous. | [doc] |
 | What is the sanctioned route? | WhatsApp Business app + coexistence Cloud API (via a Tech Provider or BSP), and Claude through an API key. | [doc] |
-| Post-pairing unknowns | Self-chat notices, phone notifications and read receipts: see section 4 (live test in progress). | |
+| Does it work end to end on a live account? | Yes, with two testers (section 13): auto-replies, drafts, `/ok` sends, takeover, reconnects. Phone notifications for self-chat notices and the unread badge after `readMessages` were not reported. | [live] |
 
 **If this is ever more than a personal experiment, take the sanctioned route.** Triage, guards, the pure policy, the
 eval and the review method carry over. The owner loop does not: drafts in "Message yourself", takeover from the
@@ -120,9 +120,9 @@ false`); most were added or tightened after a review or the live run found the f
 - **Addressing [live]:** chats arrive as LIDs, with the phone-number alt in `remoteJidAlt` when known. Key state by the
   JID as received, link the forms (alt and Baileys' LID mapping), and read per-person state (takeover, mute, caps,
   closings, lists) across both. Contacts with usernames can arrive as LID with no number (#2742): fail closed.
-- **Self-chat [live]:** the socket reports both own JIDs (PN and LID). Notices go to the own PN by default and switch
-  to whichever JID the owner's own `/command` arrives on. Whether a notice sent by the linked device notifies the
-  phone, and whether `readMessages` clears the phone's unread badge: TBD (live test).
+- **Self-chat [live]:** the socket reports both own JIDs (PN and LID). Notices sent to the own PN land in "Message
+  yourself", and the owner's `/commands` typed there come back and run. Whether such a notice buzzes the phone, and
+  whether `readMessages` clears the phone's unread badge, was not reported.
 - **Quoting:** quote only text messages; quoted media replies do not render on mobile (#2739).
 - **Link previews:** send `{text, linkPreview: null}`. With `linkPreview` unset, rc14 fetches the first URL in any
   outgoing text from your machine to build a preview; a notice that quotes a spammer's link would reveal your IP and
@@ -244,7 +244,7 @@ outside the thanks vocabulary (`sampai jumpa`, `see you`), spam and other manipu
 ## 9. Lessons from the social path
 
 Auto-answering "ok makasih kak" with "Sama-sama, Kak 🙏" looked like the easiest win and was the costliest part of the
-build. Every review round after it was added (9 of 11) found bugs around it:
+build. Every review round of it (9 of the first 11) found bugs around it:
 - "ok" or 👍 agreeing to something the owner asked or offered, auto-closed as a thanks;
 - a thanks while a customer message or a file (a transfer proof) was still unanswered;
 - words matched out of context ("no good", "oh no" as a thanks; 😡 or `ok :(` as friendly; a greeting as a closing);
@@ -322,10 +322,10 @@ matcher so its misses land on the safe side, and stop reviewing when the finding
   current WhatsApp Web (`MsgKey._serialized` renamed), 7–13 s to QR and ~0.5 GB PSS with Chrome, vs ~1 s and ~130 MiB.
 - **Build:** one builder, then adversarial rounds: lenses find, one skeptic per finding tries to refute it (defaults
   to refuted), one fixer fixes with a regression test, rescore. The first five were orchestrated by hand, the last
-  six with the saved `.claude/workflows/review-fix.js`. 11 rounds:
-  108 confirmed findings, all fixed or explicitly deferred to the owner (61 in the first five; 23 and 24 in the two
-  runs on 2026-09-26/27, which never ran dry: 8/9/6 and 9/8/7). The last round's fixes (`4515127`..`2ee44fe`) and
-  the key-redaction fixes are unreviewed, and no human has reviewed the code.
+  ten with the saved `.claude/workflows/review-fix.js`. 15 rounds: 147 confirmed findings, all fixed or explicitly
+  deferred to the owner (61 in the first five; then 23, 24, 16 and 23 in four runs on 2026-09-26/27, which never ran
+  dry: 8/9/6, 9/8/7, 12/4 and 12/11). The last round's fixes (`dd9361b`..`c2aade9`) and the key-redaction fixes are
+  unreviewed, and no human has reviewed the code.
 - **What the reviews kept finding** (a checklist for your own build):
   - loops and authority: own notices read as commands, forwarded text run as commands, self-chat misdetected via the alt JID;
   - message loss: restart between accept and route, notices failing during reconnect, messages arriving during shutdown, pairing consuming the offline queue;
@@ -337,12 +337,37 @@ matcher so its misses land on the safe side, and stop reviewing when the finding
   - guards: details matched across kinds, numbers without digits, affixed sensitive terms, private identifiers;
   - word matching on customer text (section 9);
   - config: list entries that can never match (`+62 0812…`, `@c.us`) passing validation.
-- **Found only on the live account:** key material in stdout; stale backlog skipped without a word.
+- **Found only on the live account:** key material in stdout; stale backlog skipped without a word; Baileys trying to
+  fetch a link preview for a spammer's URL quoted in a notice; a customer's "Hai" left in silence; the owner's own
+  chatting pausing the bot (section 13).
 
-## 13. Still unknown
+## 13. Live test (2026-09-27)
 
-- Self-chat notification on the phone, `readMessages` and the unread badge, end-to-end latency on WhatsApp, memory
-  after history sync: TBD (live test).
+About three hours live on the owner's account, `"mode": "live"` with `allowChats` limited to two testers who knew it was
+a bot, the fictional bakery as `knowledge.md`, and the Claude account email in `guards.ownerIdentifiers`. 9 real
+triage calls plus the selftest.
+
+| What | Result |
+|---|---|
+| Allow list | Messages from at least 3 other chats were ignored before triage: no call, no draft, no state |
+| Addressing | Both testers' chats arrived as LIDs with the phone number known; the allow list matched through it |
+| Owner loop | Draft notices reached "Message yourself"; `/ok 1` and `/ok 2` typed on the phone sent within 0.4 s; a mistyped command got the usage line |
+| Auto-replies | 2: opening hours (with the disclosure) and a full price list citing 4 facts; guards passed; 4.5 and 6.7 s of Claude time, about 20 s after the last message with the 15 s debounce |
+| Friends | With the chat's personal history visible, Claude escalated even an opening-hours question ("a personal/friend chat … addressing the owner as 'van'"). With `contextMessages: 0` the same question auto-sent. History is what tells friends from customers: hide it only for a test with friends |
+| Takeover | The owner chatting with a tester in the same chat paused the bot again and again, and messages sent during a takeover are never triaged later. Coordinate a test out of band; a 2 min window (`humanTakeoverMinutes`) helped |
+| Spam link | Escalated with an empty draft. Quoting it in the notice made Baileys try to fetch a link preview → `linkPreview: null` |
+| "Hai" | Escalated and left in silence until the tester wrote "Kok ga ada yg bales" (why is nobody answering) → the escalation placeholder, with a customer's greeting counted as waiting |
+| Owner feedback | A two-language disclosure line and a full "They wrote / Reply" notice per auto-reply were too much text → a 🤖 prefix and a one-line notice |
+| Reconnects | WhatsApp closed the socket twice (428, a timeout); it reconnected by itself and a notice queued during the drop was re-sent |
+| Found and fixed | Signal session keys in stdout (section 5); stale backlog skipped silently (section 10, open) |
+
+Not answered: whether the phone buzzes for self-chat notices, and whether `readMessages` clears the unread badge. The
+placeholder shipped after the test and has not been seen live yet.
+
+## 14. Still unknown
+
+- Whether a self-chat notice buzzes the phone, and whether `readMessages` clears the unread badge (not reported in the
+  live test); memory after history sync; the placeholder on a live chat.
 - What `claude -p` returns at an exhausted subscription limit; the share of the window one triage uses.
 - Whether Anthropic considers an always-on personal auto-responder on a subscription acceptable.
 - Whether a long-lived `--input-format stream-json` process could remove the ~2 s spawn cost and keep isolation.
@@ -352,7 +377,7 @@ matcher so its misses land on the safe side, and stop reviewing when the finding
 - Whether `ENABLE_CLAUDEAI_MCP_SERVERS=false` and `--disallowedTools "mcp__*"` work on their own (only tested together).
 - Whether Baileys merges #2765 / #2825 and cuts an rc15 before v8's auth-format change.
 
-## 14. What to copy
+## 15. What to copy
 
 | Take | From |
 |---|---|
