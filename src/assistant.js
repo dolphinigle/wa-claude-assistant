@@ -393,6 +393,18 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
    * not deliver them again): triage them again as backlog (drafts only), or list them for the owner if too old.
    */
   function recoverInbox () {
+    // A placeholder send still `sending` never finished: the process was killed or crashed during it. The customer may
+    // have got it, and the draft's notice, posted only after the send, never went out. The draft is complete but for
+    // that notice, so it goes out now, saying what the customer may have got, and the draft's messages are not triaged
+    // again into a second draft that would hide it (correctness-r1-5). A chat the lists dropped since stays silent, as
+    // below.
+    for (const draft of store.pendingDrafts()) {
+      if (draft.placeholder?.status !== 'sending') continue
+      store.updateDraft(draft.id, { placeholder: { ...draft.placeholder, status: 'unknown', error: 'the assistant stopped during the send' } })
+      store.removeFromInbox(draft.messageIds ?? [])
+      store.audit('placeholder_interrupted', { chatId: draft.chatId, draftId: draft.id })
+      if (isAllowed(draft.chatId) && !isBlocked(draft.chatId)) track(sendToOwner(formatDraftNotice(store.getDraft(draft.id))))
+    }
     const unfinished = store.inboxMessages()
     if (unfinished.length === 0) return
     const maxAgeMs = config.backlog.maxAgeMinutes * MINUTE_MS

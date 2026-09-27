@@ -1355,8 +1355,9 @@ test('placeholder: a waiting customer\'s escalation gets one after its draft, in
 })
 
 // Owner decision (2026-09-27, live test: a customer's "Hai" met silence while its draft waited): a customer's greeting
-// alone waits for the owner. Family's greeting does not: Claude flags it not waiting.
-test('placeholder: a customer\'s greeting gets exactly one, the new text; a family greeting none', async t => {
+// alone waits for the owner. Family's greeting should not, but only the prompt keeps Claude's flag off for it: this fake
+// brain sets the flag by name, and no eval fixture has a family greeting yet (consistency-r1-4).
+test('placeholder: a customer\'s greeting gets exactly one, the new text; a greeting Claude flags not waiting gets none and its notice shows none', async t => {
   const respond = input => {
     if (input.chat.name === 'Mama') return triageResult({ decision: 'escalate', reply: 'Pagi juga, Ma', summary: 'greeting from mom', customer_waiting: false })
     return triageResult({ decision: 'escalate', reply: 'Halo Kak, ada yang bisa dibantu?', summary: 'customer greeting', customer_waiting: true })
@@ -1563,6 +1564,43 @@ test('placeholder: a send that failed in flight may have been delivered, so its 
   assert.deepEqual([store.getDraft(1).placeholder.status, store.countChatAutoSends(ALICE, 3_600_000), store.chat(ALICE).lastDisclosureAt ?? 0], ['unknown', 1, 0],
     'the cap slot stands; it is no disclosure, since it may not have arrived')
   assert.match(transport.toSelf()[0], /\n↩️ They may have got \(the send failed\): 🤖 Halo Kak, tunggu sebentar ya 🙏\n/)
+})
+
+test('placeholder: a send cut off by a forced exit is announced after the restart as possibly received, and not drafted again (correctness-r1-5)', async t => {
+  const dir = tempDir(t)
+  let clock = Date.now()
+  const now = () => clock
+  const start = transport => {
+    const store = new Store(dir, { now, logger: silent })
+    const brain = createFakeBrain(waiting)
+    const assistant = createAssistant({ config: makeConfig({ mode: 'live', debounceMs: 10 }, dir), store, brain, transport, knowledge, now, logger: silent })
+    return { store, brain, assistant }
+  }
+  const hung = createFakeTransport({ now })
+  const send = hung.send.bind(hung)
+  hung.send = async (chatId, text, options) => (text === PLACEHOLDER_ID ? new Promise(() => {}) : send(chatId, text, options))
+  const first = start(hung)
+  await first.assistant.handleMessage(incoming(ALICE, 'bisa kue custom unicorn?', { timestamp: Math.floor(clock / 1000) }))
+  await waitFor(() => first.store.getDraft(1)?.placeholder?.status === 'sending')
+  // A second Ctrl-C exits at once (main.js): the first instance is left as it is, its state.json as last saved.
+  assert.deepEqual([hung.toSelf(), first.store.inboxMessages().length], [[], 1], 'no notice yet, the message still in the inbox')
+
+  const transport = createFakeTransport({ now })
+  const second = start(transport)
+  t.after(() => second.assistant.stop())
+  second.assistant.recoverInbox()
+  await second.assistant.idle()
+  assert.equal(second.brain.calls.length, 0, 'its draft is complete: not triaged again')
+  assert.deepEqual(second.store.inboxMessages(), [])
+  assert.deepEqual([second.store.pendingDrafts().map(draft => draft.id), second.store.getDraft(1).placeholder.status], [[1], 'unknown'])
+  const notices = transport.toSelf()
+  assert.equal(notices.length, 1)
+  assert.match(notices[0], /^🤖 📝 DRAFT #1 .*\nThey wrote: "bisa kue custom unicorn\?"\n↩️ They may have got \(the send failed\): 🤖 Halo Kak, tunggu sebentar ya 🙏\n[\s\S]*\nReply: \/ok 1 /)
+  // Its period stands, as for any send that failed in flight: the next escalation gets none.
+  clock += 60_000
+  await second.assistant.handleMessage(incoming(ALICE, 'kue ulang tahun 3 tingkat juga bisa?', { timestamp: Math.floor(clock / 1000) }))
+  await second.assistant.idle()
+  assert.deepEqual([transport.toCustomer(), second.store.getDraft(2).placeholderCovered], [[], 1])
 })
 
 test('placeholder: when your reply on the phone cancels the draft while its placeholder goes out, no /ok is offered (send-path-r1-5)', async t => {
