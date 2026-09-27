@@ -27,6 +27,13 @@ switch (scenario) {
   case 'success':
     out(init); out(rateLimit); out({ type: 'assistant', message: { content: [] } }); out(result())
     break
+  case 'waiting':
+  case 'waiting_string':
+  case 'waiting_false': {
+    const customerWaiting = { waiting: true, waiting_string: 'true', waiting_false: false }[scenario]
+    out(init); out(rateLimit); out(result({ structured_output: { ...triage, decision: 'escalate', customer_waiting: customerWaiting } }))
+    break
+  }
   case 'echo':
     out(init); out(rateLimit)
     out(result({ structured_output: { ...triage, reply: input, reason: JSON.stringify({ argv: process.argv.slice(2), env: process.env, cwd: process.cwd() }) } }))

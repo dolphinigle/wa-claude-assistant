@@ -6,6 +6,11 @@ import { ANSWER_HOURS, knowledge, makeConfig, okRateLimit, triageResult } from '
 
 const config = makeConfig()
 const NOW = Date.UTC(2026, 8, 26, 3, 0)
+// The routing part of a decision; the placeholder part has its own tests below.
+const route = (result, ctx) => {
+  const { action, reasons } = decide(result, ctx)
+  return { action, reasons }
+}
 const baseContext = () => ({
   config,
   incomingText: 'Kak, jam berapa buka?',
@@ -20,15 +25,15 @@ const baseContext = () => ({
 })
 
 test('an answer with every gate passing auto-sends', () => {
-  assert.deepEqual(decide(triageResult(ANSWER_HOURS), baseContext()), { action: 'auto_send', reasons: ['decision:answer', 'all_gates_passed'] })
+  assert.deepEqual(route(triageResult(ANSWER_HOURS), baseContext()), { action: 'auto_send', reasons: ['decision:answer', 'all_gates_passed'] })
 })
 
 test('escalate always escalates, whatever the gates say', () => {
   const ctx = baseContext()
   ctx.paused = true
   ctx.rateLimit = undefined
-  assert.deepEqual(decide(triageResult({ decision: 'escalate' }), ctx), { action: 'escalate', reasons: ['decision:escalate'] })
-  assert.deepEqual(decide(triageResult({ decision: 'escalate' }), baseContext()).action, 'escalate')
+  assert.deepEqual(route(triageResult({ decision: 'escalate' }), ctx), { action: 'escalate', reasons: ['decision:escalate'] })
+  assert.deepEqual(route(triageResult({ decision: 'escalate' }), baseContext()).action, 'escalate')
 })
 
 test('anything but "answer" escalates: an unknown or old-schema decision never auto-sends', () => {
@@ -189,7 +194,7 @@ test('a thanks that agrees closes only after our closing reply: after a /no, a s
   assert.equal(closedThisSession(asked, { lastClosingAt: CLOSED_AT, sessionStart: SESSION_START }), false, 'unset: it agrees')
   // decide reads it from the message.
   for (const incomingText of ['iya kak makasih', '👍 makasih kak', 'ok siap, makasih', 'perfect, thanks']) {
-    assert.deepEqual(decide(triageResult(THANKS), thanksContext(asked, {}, { incomingText })), { action: 'escalate', reasons: ['decision:answer', 'no_question'] }, incomingText)
+    assert.deepEqual(route(triageResult(THANKS), thanksContext(asked, {}, { incomingText })), { action: 'escalate', reasons: ['decision:answer', 'no_question'] }, incomingText)
   }
   assert.equal(decide(triageResult(THANKS), thanksContext(asked)).action, 'skip', 'makasih kak 🙏')
 })
@@ -198,7 +203,7 @@ test('a "ya" before the thanks is a yes: after a /no, a shadow /ok or a restart 
   const asked = [customer('kak brownies bisa diantar besok?', 41), ours('Bisa kak, mau diantar jam 5 sore?', 40), customer('makasih kak', 30)]
   for (const incomingText of ['ya makasih', 'ya kak, makasih', 'yaa makasih', 'ya deh makasih kak', 'Ya, terima kasih banyak kak', 'ya\nmakasih kak']) {
     for (const history of [asked, []]) {
-      assert.deepEqual(decide(triageResult(THANKS), thanksContext(history, {}, { incomingText })), { action: 'escalate', reasons: ['decision:answer', 'no_question'] },
+      assert.deepEqual(route(triageResult(THANKS), thanksContext(history, {}, { incomingText })), { action: 'escalate', reasons: ['decision:answer', 'no_question'] },
         `${incomingText} (${history.length ? 'after a /no' : 'after a restart'})`)
     }
   }
@@ -210,9 +215,9 @@ test('a thanks quoting our message is skipped only when that message is our clos
   const asked = [customer('kak brownies bisa diantar besok?', 41), question, customer('makasih kak', 30)]
   const escalated = { action: 'escalate', reasons: ['decision:answer', 'no_question'] }
   for (const quote of [{ id: question.id, text: question.text }, { text: question.text }, question.text]) {
-    assert.deepEqual(decide(triageResult(THANKS), thanksContext(asked, {}, { quoted: [quote] })), escalated, JSON.stringify(quote))
+    assert.deepEqual(route(triageResult(THANKS), thanksContext(asked, {}, { quoted: [quote] })), escalated, JSON.stringify(quote))
   }
-  assert.deepEqual(decide(triageResult({ decision: 'escalate' }), thanksContext(asked, {}, { quoted: [question.text] })), { action: 'escalate', reasons: ['decision:escalate'] })
+  assert.deepEqual(route(triageResult({ decision: 'escalate' }), thanksContext(asked, {}, { quoted: [question.text] })), { action: 'escalate', reasons: ['decision:escalate'] })
   const reply = ours('Sama-sama, Kak 🙏', 20, { closing: true })
   assert.equal(decide(triageResult(THANKS), thanksContext([...asked, reply], {}, { quoted: [{ id: reply.id, text: reply.text }] })).action, 'skip', 'our closing reply')
 })
@@ -222,10 +227,10 @@ test('a thanks quoting an older message without text is drafted: quotes are told
   const reply = ours('Sama-sama, Kak 🙏', 20, { closing: true })
   const history = [photo, ...THANKED, reply]
   const escalated = { action: 'escalate', reasons: ['decision:answer', 'no_question'] }
-  assert.deepEqual(decide(triageResult(THANKS), thanksContext(history, {}, { quoted: [{ id: photo.id, text: '' }] })), escalated, 'our older photo, by id')
-  assert.deepEqual(decide(triageResult(THANKS), thanksContext(history, {}, { quoted: [{ text: '' }] })), escalated, 'no id: an empty text is not our last')
+  assert.deepEqual(route(triageResult(THANKS), thanksContext(history, {}, { quoted: [{ id: photo.id, text: '' }] })), escalated, 'our older photo, by id')
+  assert.deepEqual(route(triageResult(THANKS), thanksContext(history, {}, { quoted: [{ text: '' }] })), escalated, 'no id: an empty text is not our last')
   const photoLast = [...THANKED, ours('', 25, { attachment: 'image' }), ours('', 24, { attachment: 'image', closing: true })]
-  assert.deepEqual(decide(triageResult(THANKS), thanksContext(photoLast, {}, { quoted: [{ id: photoLast.at(-2).id, text: '' }] })), escalated,
+  assert.deepEqual(route(triageResult(THANKS), thanksContext(photoLast, {}, { quoted: [{ id: photoLast.at(-2).id, text: '' }] })), escalated,
     'two photos with no text: the id says which one')
   assert.equal(decide(triageResult(THANKS), thanksContext(history, {}, { quoted: [{ id: reply.id, text: reply.text }] })).action, 'skip', 'our last message, by id')
 })
@@ -236,7 +241,7 @@ test('a thanks after a closing this session is skipped, whatever Claude decided 
       const ctx = thanksContext(history)
       ctx.paused = true
       ctx.chatAutoSendsLastHour = 3
-      assert.deepEqual(decide(triageResult(triage), ctx), SKIP([`decision:${triage.decision}`, 'closing_already_sent']))
+      assert.deepEqual(route(triageResult(triage), ctx), SKIP([`decision:${triage.decision}`, 'closing_already_sent']))
     }
   }
   const quotingOurLast = thanksContext([...THANKED, ours('Sama-sama, Kak 🙏', 20, { closing: true })], {}, { quoted: ['Sama-sama,  Kak 🙏'] })
@@ -250,12 +255,12 @@ test('an answer to a message that asks nothing is never auto-sent, whatever it c
   const open = incomingText => ({ ...baseContext(), incomingText })
   for (const incomingText of ['iya kak', 'ok', '👍', 'makasih bang', 'sama2 kak', 'gapapa', 'betul', 'saya tunggu', 'ok kk', 'siap bos',
     'saya mau ambil besok', 'makasih infonya kak', 'ok makasih kak 🙏', 'thanks!', '🙏', 'Terima kasih kembali kak', 'bye', 'Selamat pagi kak']) {
-    assert.deepEqual(decide(triageResult(facts), open(incomingText)), drafted, incomingText)
-    assert.deepEqual(decide(triageResult(THANKS), open(incomingText)), drafted, incomingText)
+    assert.deepEqual(route(triageResult(facts), open(incomingText)), drafted, incomingText)
+    assert.deepEqual(route(triageResult(THANKS), open(incomingText)), drafted, incomingText)
   }
-  assert.deepEqual(decide(triageResult(facts), { ...baseContext(), incomingText: undefined }), drafted, 'no text: it asks nothing')
-  assert.deepEqual(decide(triageResult(THANKS), { ...open('makasih kak 🙏'), attachments: ['image'] }).reasons, ['decision:answer', 'no_question', 'attachment:image'])
-  assert.deepEqual(decide(triageResult({ decision: 'escalate' }), open('makasih kak')), { action: 'escalate', reasons: ['decision:escalate'] }, 'Claude\'s escalation stands')
+  assert.deepEqual(route(triageResult(facts), { ...baseContext(), incomingText: undefined }), drafted, 'no text: it asks nothing')
+  assert.deepEqual(route(triageResult(THANKS), { ...open('makasih kak 🙏'), attachments: ['image'] }).reasons, ['decision:answer', 'no_question', 'attachment:image'])
+  assert.deepEqual(route(triageResult({ decision: 'escalate' }), open('makasih kak')), { action: 'escalate', reasons: ['decision:escalate'] }, 'Claude\'s escalation stands')
 })
 
 test('a fact-cited answer to a yes with "kok", a spelled-out "no problem" or a shared link is a draft (send-path-r1-1, send-path-r1-2, send-path-r1-3)', () => {
@@ -269,7 +274,7 @@ test('a fact-cited answer to a yes with "kok", a spelled-out "no problem" or a s
   ]) {
     const guard = guardTriage(triage, { knowledge, config, incomingText })
     assert.deepEqual(guard, { ok: true, reasons: [] }, `${incomingText}: the guards alone would let it out`)
-    assert.deepEqual(decide(triageResult(triage), { ...baseContext(), incomingText, guard }), { action: 'escalate', reasons: ['decision:answer', 'no_question'] }, incomingText)
+    assert.deepEqual(route(triageResult(triage), { ...baseContext(), incomingText, guard }), { action: 'escalate', reasons: ['decision:answer', 'no_question'] }, incomingText)
   }
 })
 
@@ -286,7 +291,7 @@ test('a fact-cited answer to a no, an emphatic or English yes, or a closing with
   ]) {
     const guard = guardTriage(triage, { knowledge, config, incomingText })
     assert.deepEqual(guard, { ok: true, reasons: [] }, `${incomingText}: the guards alone would let it out`)
-    assert.deepEqual(decide(triageResult(triage), { ...baseContext(), incomingText, guard }), { action: 'escalate', reasons: ['decision:answer', 'no_question'] }, incomingText)
+    assert.deepEqual(route(triageResult(triage), { ...baseContext(), incomingText, guard }), { action: 'escalate', reasons: ['decision:answer', 'no_question'] }, incomingText)
   }
 })
 
@@ -304,7 +309,7 @@ test('a fact-cited answer to an apology, a "maybe", a deferral, a one-word yes, 
   ]) {
     const guard = guardTriage(triage, { knowledge, config, incomingText })
     assert.deepEqual(guard, { ok: true, reasons: [] }, `${incomingText}: the guards alone would let it out`)
-    assert.deepEqual(decide(triageResult(triage), { ...baseContext(), incomingText, guard }), { action: 'escalate', reasons: ['decision:answer', 'no_question'] }, incomingText)
+    assert.deepEqual(route(triageResult(triage), { ...baseContext(), incomingText, guard }), { action: 'escalate', reasons: ['decision:answer', 'no_question'] }, incomingText)
   }
 })
 
@@ -314,23 +319,23 @@ test('an answer to a message that asks something goes on to the other gates, a b
   for (const incomingText of ['Halo kak, tokonya buka jam berapa aja ya?', "Hi! Where is your shop located? I'd like to pick up my order.",
     'Kak, brownies panggang harganya berapa ya?', 'jam berapa buka kak', 'alamatnya dimana', 'where are you located', 'tokonya buka gak kak',
     'makasih kak, jam berapa tutup?', 'ok makasih kak\njam tutupnya jam berapa']) {
-    assert.deepEqual(decide(triageResult(ANSWER_HOURS), open(incomingText)), autoSent, incomingText)
+    assert.deepEqual(route(triageResult(ANSWER_HOURS), open(incomingText)), autoSent, incomingText)
   }
   const ctx = { ...open('jam berapa buka kak'), guard: { ok: false, reasons: ['unsupported_time:21:00'] } }
-  assert.deepEqual(decide(triageResult(ANSWER_HOURS), ctx), { action: 'escalate', reasons: ['decision:answer', 'guard:unsupported_time:21:00'] }, 'the other gates still hold it')
+  assert.deepEqual(route(triageResult(ANSWER_HOURS), ctx), { action: 'escalate', reasons: ['decision:answer', 'guard:unsupported_time:21:00'] }, 'the other gates still hold it')
 })
 
 test('an answer that cites no fact never auto-sends', () => {
   for (const incomingText of ['jam buka?', 'alamatnya dimana kak', 'where is the shop', 'makasih, bisa kirim ke Jakarta?']) {
     const reply = { decision: 'answer', reply: 'Siap Kak 🙏', facts_used: [] }
     const guard = guardTriage(reply, { knowledge, config, incomingText })
-    const decision = decide(triageResult(reply), { ...baseContext(), incomingText, guard })
+    const decision = route(triageResult(reply), { ...baseContext(), incomingText, guard })
     assert.deepEqual(decision, { action: 'escalate', reasons: ['decision:answer', 'guard:no_facts_used'] }, incomingText)
   }
 })
 
 test('drafted, not skipped: an open draft, an acknowledgement, a greeting, a quote, a file, something new, another session, a failed triage', () => {
-  const escalated = ctx => decide(triageResult({ decision: 'escalate', reply: 'Baik Kak' }), ctx)
+  const escalated = ctx => route(triageResult({ decision: 'escalate', reply: 'Baik Kak' }), ctx)
   const expectDraft = (ctx, note) => assert.deepEqual(escalated(ctx), { action: 'escalate', reasons: ['decision:escalate'] }, note)
 
   // Another draft of the chat is open and nothing was closed: the thanks is drafted too.
@@ -347,11 +352,73 @@ test('drafted, not skipped: an open draft, an acknowledgement, a greeting, a quo
   expectDraft(thanksContext(afterClosing, {}, { attachments: ['image'] }), 'a thanks with a photo')
   expectDraft(thanksContext([...afterClosing, ours('Oh ya kak, besok kami libur', 10)]), 'our side said something new after the closing')
   expectDraft(thanksContext(afterClosing, { lastClosingAt: NOW - 13 * HOUR_MS }), 'a closing from an earlier session')
-  assert.deepEqual(decide({ ok: false, error: 'isolation_assertion_failed' }, thanksContext(afterClosing)), { action: 'escalate', reasons: ['triage_failed:isolation_assertion_failed'] },
+  assert.deepEqual(route({ ok: false, error: 'isolation_assertion_failed' }, thanksContext(afterClosing)), { action: 'escalate', reasons: ['triage_failed:isolation_assertion_failed'] },
     'a failed triage is escalated, before any skip')
 })
 
 test('an attachment holds any answer: Claude only saw the caption', () => {
   const ctx = { ...baseContext(), incomingText: 'jam buka?', attachments: ['image'] }
-  assert.deepEqual(decide(triageResult(ANSWER_HOURS), ctx).reasons, ['decision:answer', 'attachment:image'])
+  assert.deepEqual(route(triageResult(ANSWER_HOURS), ctx).reasons, ['decision:answer', 'attachment:image'])
+})
+
+// --- the escalation placeholder (owner decision 2026-09-27) ---------------------------------------------------------
+
+const WAITING = { decision: 'escalate', reply: 'Baik Kak, saya cek dulu ya.', customer_waiting: true }
+const waitingContext = () => ({ ...baseContext(), incomingText: 'Kak ada cheesecake nggak? Harganya berapa?' })
+
+test('placeholder: a customer Claude says is waiting gets one on an escalation, also on an answer a gate held', () => {
+  assert.deepEqual(decide(triageResult(WAITING), waitingContext()), { action: 'escalate', reasons: ['decision:escalate'], placeholder: true, placeholderWithheld: [] })
+  const held = { ...waitingContext(), incomingText: 'jam berapa buka kak?', guard: { ok: false, reasons: ['unsupported_time:21:00'] } }
+  assert.equal(decide(triageResult({ ...ANSWER_HOURS, customer_waiting: true }), held).placeholder, true, 'the owner answers it instead: the customer waits')
+  assert.deepEqual(decide(triageResult({ ...ANSWER_HOURS, customer_waiting: true }), { ...waitingContext(), incomingText: 'jam berapa buka kak?' }),
+    { action: 'auto_send', reasons: ['decision:answer', 'all_gates_passed'], placeholder: false, placeholderWithheld: [] }, 'an auto-reply is the answer itself')
+})
+
+test('placeholder: none unless customer_waiting is exactly true, and none on a failed triage', () => {
+  for (const customerWaiting of [false, undefined, 'true', 1, null]) {
+    const decision = decide(triageResult({ ...WAITING, customer_waiting: customerWaiting }), waitingContext())
+    assert.deepEqual([decision.placeholder, decision.placeholderWithheld], [false, ['customer_not_waiting']], String(customerWaiting))
+  }
+  for (const result of [{ ok: false, error: 'timeout' }, { ok: true }, undefined]) {
+    const decision = decide(result, waitingContext())
+    assert.deepEqual([decision.action, decision.placeholder, decision.placeholderWithheld], ['escalate', false, ['triage_failed']])
+  }
+})
+
+// Each row breaks exactly one condition; a waiting customer's escalation then gets no placeholder, and the audit says why.
+const withholders = [
+  ['placeholder_disabled', ctx => { ctx.config = makeConfig({ placeholder: { enabled: false } }) }],
+  ['thanks', ctx => { ctx.incomingText = 'makasih kak 🙏' }],
+  ['paused', ctx => { ctx.paused = true }],
+  ['muted', ctx => { ctx.chat.muted = true }],
+  ['blocked', ctx => { ctx.chat.blocked = true }],
+  ['blocklist_unchecked', ctx => { ctx.chat.blocklistUnchecked = true }],
+  ['human_takeover', ctx => { ctx.chat.takeoverUntil = NOW + 60_000 }],
+  ['chat_rate_limit', ctx => { ctx.chatAutoSendsLastHour = 3 }],
+  ['daily_rate_limit', ctx => { ctx.autoSendsLastDay = 30 }],
+  ['backlog', ctx => { ctx.isBacklog = true; ctx.config = makeConfig({ backlog: { autoSend: true } }) }],
+  ['placeholder_already_sent', ctx => { ctx.chat.placeholderSent = true }]
+]
+
+for (const [reason, mutate] of withholders) {
+  test(`placeholder: none when ${reason}`, () => {
+    const ctx = waitingContext()
+    ctx.chat = { ...ctx.chat }
+    mutate(ctx)
+    const decision = decide(triageResult(WAITING), ctx)
+    assert.deepEqual([decision.action, decision.placeholder, decision.placeholderWithheld], ['escalate', false, [reason]])
+  })
+}
+
+test('placeholder: a skip never gets one, whatever Claude says', () => {
+  const decision = decide(triageResult(WAITING), thanksContext(THANKED))
+  assert.deepEqual([decision.action, decision.placeholder], ['skip', false])
+})
+
+test('placeholder: it is our side\'s message, so a thanks after it is not skipped as if nothing came after the closing', () => {
+  const placeholder = ours('🤖 Tunggu sebentar ya Kak 🙏', 20)
+  assert.equal(closed([...THANKED, placeholder]), false, 'in the history')
+  assert.equal(closedThisSession([...THANKED], { lastClosingAt: CLOSED_AT, sessionStart: SESSION_START, lastOursAt: at(20) * 1000, agrees: false }), false,
+    'or only on the record (lastSentAt), on the other addressing form or before a restart')
+  assert.equal(decide(triageResult(THANKS), thanksContext([...THANKED, placeholder])).action, 'escalate')
 })

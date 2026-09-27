@@ -169,7 +169,9 @@ false`); most were added or tightened after a review or the live run found the f
 
 ## 7. The decision: binary, grounded, no self-rated confidence
 
-- Claude returns `{decision: answer|escalate, reply, facts_used, reason, summary}` (`prompts/triage-schema.json`).
+- Claude returns `{decision: answer|escalate, reply, facts_used, reason, summary, customer_waiting}`
+  (`prompts/triage-schema.json`); `customer_waiting` (since 2026-09-27) only decides whether an escalated customer gets
+  a fixed "one moment please" placeholder, and anything but `true` counts as false.
   Four categories plus a self-rated confidence were tried first and dropped by the owner's choice; the guards and
   gates, not the model's own confidence, decide whether an answer may go out.
 - `knowledge.md`: `## Facts` with stable ids (`[F1]` …) is the **only ground truth**; `## Voice` for tone; `## Never`

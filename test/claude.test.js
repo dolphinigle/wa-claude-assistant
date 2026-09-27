@@ -79,6 +79,16 @@ test('success: structured output, rate limit and meta are returned', async t => 
   assert.equal(result.meta.exitCode, 0)
 })
 
+test('customer_waiting is true only when Claude says exactly true: missing or not a boolean is false, and the triage still counts', async t => {
+  const brain = brainFor(t)
+  const cases = [['SCENARIO:success', false], ['SCENARIO:waiting', true], ['SCENARIO:waiting_string', false], ['SCENARIO:waiting_false', false]]
+  for (const [text, expected] of cases) {
+    const result = await ask(brain, text)
+    assert.equal(result.ok, true, `${text}: ${result.error}`)
+    assert.equal(result.triage.customer_waiting, expected, text)
+  }
+})
+
 test('stdin passthrough: escaped user turn on stdin, sandbox cwd, locked argv and env', async t => {
   process.env.ANTHROPIC_API_KEY = 'sk-ant-test-must-not-leak'
   t.after(() => { delete process.env.ANTHROPIC_API_KEY })
@@ -105,7 +115,8 @@ test('the rendered system prompt contains the knowledge and the schema has the e
   const result = await ask(brain, 'SCENARIO:echo')
   const argv = JSON.parse(result.triage.reason).argv
   const schema = JSON.parse(argv[argv.indexOf('--json-schema') + 1])
-  assert.deepEqual(schema.required, ['decision', 'reply', 'facts_used', 'reason', 'summary'])
+  assert.deepEqual(schema.required, ['decision', 'reply', 'facts_used', 'reason', 'summary', 'customer_waiting'])
+  assert.equal(schema.properties.customer_waiting.type, 'boolean')
   assert.deepEqual(Object.keys(schema.properties), schema.required, 'every field is required, nothing else exists')
   assert.deepEqual(schema.properties.decision.enum, ['answer', 'escalate'])
   assert.equal(schema.additionalProperties, false)

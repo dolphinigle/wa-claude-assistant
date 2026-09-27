@@ -1,5 +1,5 @@
 // Orchestrator: dedupe, loop guard, takeover, debounce, triage, policy, and the ONE send gate.
-import { findPrivateDetails, guardTriage, isThanks, privateIdentifiersFor } from './guards.js'
+import { detectLanguage, findPrivateDetails, guardTriage, isThanks, privateIdentifiersFor } from './guards.js'
 import { isAllowedChat, listNamesChat, phoneEntry } from './chat-lists.js'
 import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice } from './owner.js'
 import { decide } from './policy.js'
@@ -89,6 +89,9 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const chatIds = store.linkedChatIds(chatId)
     return store.pendingDrafts().filter(draft => chatIds.includes(draft.chatId))
   }
+  // One placeholder per open-draft period: from the draft whose customer got one until the contact has no open draft,
+  // so a draft created meanwhile carries the period on after that first draft is dealt with.
+  const inPlaceholderPeriod = chatId => openDrafts(chatId).some(draft => draft.placeholder || draft.placeholderCovered)
 
   // --- the send gate: every outgoing message passes through one of these two functions ------------------------
 
@@ -426,7 +429,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
         lastClosingAt: lastClosingAt(chatId),
         lastOursAt: lastOursAt(chatId),
         lastUntriagedAt: lastUntriagedAt(chatId),
-        lastOpenedAt: lastOpenedAt(chatId)
+        lastOpenedAt: lastOpenedAt(chatId),
+        placeholderSent: inPlaceholderPeriod(chatId)
       },
       now: now(),
       chatAutoSendsLastHour: chatAutoSendsLastHour(chatId),
@@ -446,6 +450,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       guard,
       action: decision.action,
       reasons: decision.reasons,
+      ...(decision.action === 'escalate' && { placeholder: decision.placeholder, placeholderWithheld: decision.placeholderWithheld }),
       mode: config.mode,
       rateLimit: result.rateLimit,
       meta: result.meta
@@ -500,6 +505,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   /** Every escalation, whether Claude chose it or a gate stopped its answer, is a draft for /ok, /edit or /no. */
   async function postDraft (chatId, batch, result, decision, closing) {
     const triage = result.triage
+    const covered = inPlaceholderPeriod(chatId)
     const draft = store.createDraft({
       chatId,
       contactName: contactLabel(chatId),
@@ -513,10 +519,35 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       closing,
       // Whatever held it: the owner may /ok it, and the send gate cannot match this chat against a phone number.
       ...(blocklistUnchecked(chatId) && { blocklistUnchecked: true }),
+      ...(covered && { placeholderCovered: true }),
       privateDetails: findPrivateDetails(triage?.reply ?? '', privateIdentifiersFor(config))
     })
+    if (decision.placeholder) await sendPlaceholder(chatId, batch, draft) // before the notice, which says it went out
     const notice = await sendToOwner(formatDraftNotice(draft))
     if (!notice.sent) logger.error(`[assistant] draft #${draft.id} could not be posted to self-chat yet; queued for when WhatsApp is back`)
+  }
+
+  /**
+   * Owner decision (2026-09-27): a customer whose message waits for the owner is not left in silence. The text is fixed,
+   * never Claude's, in the sender's language. It quotes nothing and marks nothing read, since the owner has not seen the
+   * message yet. It counts toward the auto-send caps and, when it starts with the disclosure text (🤖), as the session's
+   * AI disclosure. It is recorded on the draft before the first await, so an escalation of the same contact triaged
+   * meanwhile sees it and gets none. A failed send is audited by the send gate and leaves no trace but lastSentAt.
+   */
+  async function sendPlaceholder (chatId, batch, draft) {
+    const language = detectLanguage(batch.map(message => message.text).join('\n')) === 'en' ? 'en' : 'id'
+    const text = config.placeholder.text[language]
+    store.updateDraft(draft.id, { placeholder: { text, status: 'sending' } })
+    const slot = store.recordAutoSend(chatId)
+    const outcome = await sendToCustomer(chatId, text, { source: 'placeholder', draftId: draft.id })
+    if (!outcome.sent && !outcome.shadow) {
+      store.releaseAutoSend(chatId, slot)
+      store.updateDraft(draft.id, { placeholder: undefined })
+      return
+    }
+    store.updateDraft(draft.id, { placeholder: { text, status: outcome.shadow ? 'shadow' : 'sent', at: now() } })
+    const disclosure = config.disclosure?.text?.trim()
+    if (disclosure && text.startsWith(disclosure)) store.updateChat(chatId, { [config.mode === 'live' ? 'lastDisclosureAt' : 'shadowDisclosureAt']: now() })
   }
 
   function sweepExpiredDrafts () {

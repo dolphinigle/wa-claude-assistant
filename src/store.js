@@ -252,6 +252,15 @@ export class Store {
 
   getDraft (id) { return this.state.drafts[id] }
 
+  /** Adds to a draft without resolving it (e.g. the placeholder its customer got). */
+  updateDraft (id, patch) {
+    const draft = this.state.drafts[id]
+    if (!draft) return undefined
+    Object.assign(draft, patch)
+    this.save()
+    return draft
+  }
+
   pendingDrafts () { return Object.values(this.state.drafts).filter(draft => draft.status === 'pending') }
 
   resolveDraft (id, status, extra = {}) {

@@ -134,6 +134,8 @@ From Node: spawn('claude', ARGS, {cwd: EMPTY_DIR, env: {HOME, PATH, LANG:'C.UTF-
 
 Schema (owner decision 2026-09-26: binary, no confidence; was four categories plus a confidence): {"type":"object","properties":{"decision":{"type":"string","enum":["answer","escalate"]},"reply":{"type":"string"},"facts_used":{"type":"array","items":{"type":"string"}},"reason":{"type":"string"},"summary":{"type":"string"}},"required":["decision","reply","facts_used","reason","summary"],"additionalProperties":false}. `answer` is auto-sent only if every gate passes; anything else escalates to the owner.
 
+2026-09-27 (owner decision: escalation placeholder): the schema adds a required boolean `customer_waiting` after `summary` (`prompts/triage-schema.json`). The command and the init assertions are unchanged. `src/brain/claude.js` treats a missing or non-boolean value as false, so the triage still counts but no placeholder goes out.
+
 Parse stdout as JSON lines:
 - system/init: assert tools==['StructuredOutput'], mcp_servers/skills/slash_commands==[], apiKeySource=='none'; log claude_code_version and model.
 - rate_limit_event.rate_limit_info: status, unifiedWindows.five_hour.utilization, unifiedWindows.seven_day.utilization, resetsAt.

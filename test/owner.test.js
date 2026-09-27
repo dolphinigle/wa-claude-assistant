@@ -193,6 +193,11 @@ test('one notice format: id, name, excerpt, summary, draft, reason, held gates a
     assert.match(formatDraftNotice({ id: 9, chatId: '1@lid', contactName: '1@lid', excerpt: 'e', draft: 'd', reason: 'r', policyReasons, blocklistUnchecked: true }), hint, policyReasons.join())
   }
   assert.doesNotMatch(formatDraftNotice({ id: 9, chatId: '1@lid', contactName: '1@lid', excerpt: 'e', draft: 'd', reason: 'r', policyReasons: ['decision:escalate'] }), /Number unknown/)
+  // The placeholder the customer got, one line under what they wrote; nothing while it is still being sent.
+  const base = { id: 10, contactName: 'Sari', excerpt: 'bisa kue custom?', draft: 'Baik Kak', reason: 'r', policyReasons: ['decision:escalate'] }
+  assert.equal(formatDraftNotice({ ...base, placeholder: { text: '🤖 Tunggu sebentar ya Kak 🙏', status: 'sent' } }).split('\n')[2], '↩️ They got: 🤖 Tunggu sebentar ya Kak 🙏')
+  assert.equal(formatDraftNotice({ ...base, placeholder: { text: '🤖 One moment please 🙏', status: 'shadow' } }).split('\n')[2], '↩️ [SHADOW] would have sent: 🤖 One moment please 🙏')
+  for (const placeholder of [undefined, { text: 'x', status: 'sending' }]) assert.doesNotMatch(formatDraftNotice({ ...base, placeholder }), /↩️/)
 })
 
 test('a pending draft saved by the four-category version still works with /ok and /status', async t => {

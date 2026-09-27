@@ -60,6 +60,12 @@ export function checkInit (init) {
   return violations
 }
 
+/**
+ * `customer_waiting` only lets a placeholder out (policy.js), so a missing or non-boolean value is false: no placeholder,
+ * and the triage still counts. Everything else is checked by validateTriage.
+ */
+export const normalizeTriage = value => ({ ...value, customer_waiting: value.customer_waiting === true })
+
 /** Our own check of the structured output, so a schema drift in the CLI can never reach the policy. */
 export function validateTriage (value) {
   const errors = []
@@ -248,7 +254,7 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
           resolve({ ok: false, error, rateLimit, meta })
           return
         }
-        resolve({ ok: true, triage: result.structured_output, rateLimit, meta })
+        resolve({ ok: true, triage: normalizeTriage(result.structured_output), rateLimit, meta })
       }
 
       // Must always resolve: an unsettled triage would also hold its limiter slot forever.

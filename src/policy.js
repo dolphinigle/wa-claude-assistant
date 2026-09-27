@@ -4,6 +4,8 @@
 // "everything reaches the owner" is a thanks right after a closing this session: it is skipped, since another
 // "sama-sama" or another draft only adds volume. Shadow mode is not decided here: the send gate in assistant.js turns
 // an approved send into a notice.
+// An escalation also says whether the customer gets a short fixed placeholder ("🤖 Tunggu sebentar ya Kak 🙏", owner
+// decision 2026-09-27), so a waiting customer does not wait in silence; see placeholderWithheld.
 import { asksSomething, isThanks, normalizeText, thanksAgrees } from './guards.js'
 
 const QUOTA_OK_STATUSES = new Set(['allowed', 'allowed_warning'])
@@ -73,17 +75,61 @@ const flatText = text => normalizeText(text).replace(/\s+/g, ' ').trim()
  *   quotes): their ids where known, and their texts ('' for a photo, a voice note or a pin)
  * @param {object[]} [ctx.history]  earlier messages of the chat, oldest first (see closedThisSession)
  * @param {boolean} ctx.paused
- * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, lastClosingAt?: number, lastOursAt?: number, lastUntriagedAt?: number, lastOpenedAt?: number}} ctx.chat
+ * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, lastClosingAt?: number, lastOursAt?: number, lastUntriagedAt?: number, lastOpenedAt?: number, placeholderSent?: boolean}} ctx.chat
  *   `lastClosingAt`: when the last thanks the owner dealt with arrived; `lastOursAt`, `lastUntriagedAt`, `lastOpenedAt`:
- *   see closedThisSession
+ *   see closedThisSession; `placeholderSent`: the contact got a placeholder and has had an open draft ever since
  * @param {number} ctx.now  epoch ms
  * @param {number} ctx.chatAutoSendsLastHour
  * @param {number} ctx.autoSendsLastDay
  * @param {{status?: string, fiveHourUtilization?: number, sevenDayUtilization?: number}} [ctx.rateLimit]
  * @param {boolean} ctx.isBacklog
- * @returns {{action: 'auto_send'|'escalate'|'skip', reasons: string[]}}
+ * @returns {{action: 'auto_send'|'escalate'|'skip', reasons: string[], placeholder: boolean, placeholderWithheld: string[]}}
+ *   `placeholder`: send the customer the fixed placeholder (escalations only); `placeholderWithheld`: why an escalation
+ *   gets none, for the audit
  */
 export function decide (result, ctx) {
+  const routed = route(result, ctx)
+  if (routed.action !== 'escalate') return { ...routed, placeholder: false, placeholderWithheld: [] }
+  const withheld = placeholderWithheld(result, ctx)
+  return { ...routed, placeholder: withheld.length === 0, placeholderWithheld: withheld }
+}
+
+/** The gates on the chat and on volume that hold any automatic message to it: an answer or a placeholder. */
+function chatBlockers (ctx) {
+  const { config, chat = {} } = ctx
+  const blockers = []
+  if (ctx.paused) blockers.push('paused')
+  if (chat.blocked) blockers.push('blocked')
+  if (chat.blocklistUnchecked) blockers.push('blocklist_unchecked') // phone number unknown, cannot rule the blocklist out
+  if (chat.muted) blockers.push('muted')
+  if (chat.takeoverUntil && chat.takeoverUntil > ctx.now) blockers.push('human_takeover')
+  if (ctx.chatAutoSendsLastHour >= config.autoSend.maxPerChatPerHour) blockers.push('chat_rate_limit')
+  if (ctx.autoSendsLastDay >= config.autoSend.maxPerDay) blockers.push('daily_rate_limit')
+  return blockers
+}
+
+/**
+ * Why an escalation gets no placeholder; empty means it gets one. Only Claude's `customer_waiting: true` (a customer
+ * waiting for the owner: not family, friends, spam, a scam or a manipulation attempt) lets one out, since a family
+ * emergency must never get "tunggu sebentar". A thanks never gets one, whatever Claude says: it waits for nothing.
+ * Backlog never does: it comes late, and the owner may have answered it on the phone meanwhile. One placeholder covers
+ * every escalation while a draft whose customer got one is open (`chat.placeholderSent`); it counts toward the caps.
+ */
+function placeholderWithheld (result, ctx) {
+  if (!result?.ok || !result.triage) return ['triage_failed']
+  const { config, chat = {} } = ctx
+  const withheld = []
+  if (config.placeholder?.enabled !== true) withheld.push('placeholder_disabled')
+  if (result.triage.customer_waiting !== true) withheld.push('customer_not_waiting')
+  if (ctx.incomingText !== undefined && isThanks(ctx.incomingText)) withheld.push('thanks')
+  withheld.push(...chatBlockers(ctx))
+  if (ctx.isBacklog) withheld.push('backlog')
+  if (chat.placeholderSent) withheld.push('placeholder_already_sent')
+  return withheld
+}
+
+/** answer → auto_send or escalate, escalate, or skip (see the top of this file). */
+function route (result, ctx) {
   const { config, chat = {}, rateLimit } = ctx
   const history = ctx.history ?? []
   const attachments = ctx.attachments ?? []
@@ -122,13 +168,7 @@ export function decide (result, ctx) {
   if (!config.autoSend?.enabled) blockers.push('auto_send_disabled')
   if (!ctx.guard) blockers.push('guards_not_run')
   else if (!ctx.guard.ok) blockers.push(...ctx.guard.reasons.map(reason => `guard:${reason}`))
-  if (ctx.paused) blockers.push('paused')
-  if (chat.blocked) blockers.push('blocked')
-  if (chat.blocklistUnchecked) blockers.push('blocklist_unchecked') // phone number unknown, cannot rule the blocklist out
-  if (chat.muted) blockers.push('muted')
-  if (chat.takeoverUntil && chat.takeoverUntil > ctx.now) blockers.push('human_takeover')
-  if (ctx.chatAutoSendsLastHour >= config.autoSend.maxPerChatPerHour) blockers.push('chat_rate_limit')
-  if (ctx.autoSendsLastDay >= config.autoSend.maxPerDay) blockers.push('daily_rate_limit')
+  blockers.push(...chatBlockers(ctx))
   if (ctx.isBacklog && !config.backlog?.autoSend) blockers.push('backlog')
 
   // Unknown quota counts as exhausted: the bot shares the owner's subscription windows.

@@ -45,7 +45,8 @@ test('console REPL end to end with the keyword brain: echoes are loop-guarded, /
   await settle()
 
   assert.match(printed, /── to alice ──\n {2}│ 🤖 Kami buka/)
-  assert.match(printed, /📝 DRAFT #1 · bob \(bob@console\)/)
+  assert.match(printed, /── to bob ──\n {2}│ 🤖 Tunggu sebentar ya Kak 🙏\n[\s\S]*📝 DRAFT #1 · bob \(bob@console\)\n {2}│ They wrote: "bisa bikin kue custom\?"\n {2}│ ↩️ They got: 🤖 Tunggu sebentar ya Kak 🙏/,
+    'a waiting customer hears something before the owner is told')
   assert.match(printed, /── to bob ──\n {2}│ Terima kasih Kak, saya cek dulu ya\./)
   assert.match(printed, /✅ Sent to bob \(bob@console\) \(draft #1\)/)
   assert.match(printed, /📝 DRAFT #2 · carol \(carol@console\)[\s\S]*Not auto-sent: no_question/, 'a thanks asks nothing: never auto-sent')

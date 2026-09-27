@@ -1311,3 +1311,160 @@ test('allowChats: messages of another chat left in the inbox before a restart ar
   assert.deepEqual(store.inboxMessages(), [])
   assert.deepEqual(audit().find(entry => entry.event === 'inbox_recovered').notAllowed, [oldBob.id, bob.id])
 })
+
+// --- the escalation placeholder (owner decision 2026-09-27) ---------------------------------------------------------
+
+const PLACEHOLDER_ID = '🤖 Tunggu sebentar ya Kak 🙏'
+const PLACEHOLDER_EN = '🤖 One moment please 🙏'
+// A custom cake or a complaint is a waiting customer; the rest as byKeyword (whose escalations say nothing about it).
+const waiting = input => {
+  const text = input.messages.map(message => message.text).join(' ')
+  if (/kue|cake|kecewa/i.test(text)) return triageResult({ decision: 'escalate', reply: 'Baik Kak, saya cek dulu ya.', summary: 'custom order', customer_waiting: true })
+  return byKeyword(input)
+}
+function placeholderSetup (t, options = {}) {
+  const env = setup(t, { respond: waiting, ...options })
+  const stamp = () => ({ timestamp: Math.floor(env.now() / 1000) })
+  const say = async (chatId, text, extra = {}) => { env.advance(60_000); await env.deliver(incoming(chatId, text, { ...stamp(), ...extra })) }
+  const placeholders = () => env.transport.toCustomer().filter(item => item.text === PLACEHOLDER_ID || item.text === PLACEHOLDER_EN)
+  const withheld = () => env.audit().filter(entry => entry.event === 'decision' && entry.action === 'escalate').map(entry => entry.placeholderWithheld)
+  return { ...env, stamp, say, placeholders, withheld }
+}
+
+test('placeholder: a waiting customer\'s escalation gets one after its draft, in their language, unquoted, unread, counted in the caps', async t => {
+  const { transport, store, say, placeholders, audit } = placeholderSetup(t)
+  const send = transport.send.bind(transport)
+  const draftsAtSend = []
+  transport.send = async (chatId, text, options) => {
+    if (chatId !== 'self') draftsAtSend.push(store.pendingDrafts().map(draft => draft.id))
+    return send(chatId, text, options)
+  }
+  await say(ALICE, 'Kak bisa pesan kue custom unicorn untuk Sabtu?', { raw: { key: { id: 'raw' } } })
+  await say(BOB, 'Can you make a unicorn cake for 40 people next Saturday? How much would it be?')
+  assert.deepEqual(transport.toCustomer().map(item => [item.chatId, item.text, item.quotedRaw]), [[ALICE, PLACEHOLDER_ID, undefined], [BOB, PLACEHOLDER_EN, undefined]])
+  assert.deepEqual(draftsAtSend, [[1], [1, 2]], 'each went out once its draft existed')
+  assert.deepEqual(transport.read, [], 'the owner has not seen the message: no blue ticks')
+  assert.deepEqual([store.countChatAutoSends(ALICE, 3_600_000), store.countAutoSends(24 * 3_600_000)], [1, 2])
+  assert.ok(placeholders().every(item => store.isSentByBot(item.id)), 'loop-guarded')
+  const notices = transport.toSelf()
+  assert.match(notices[0], /^🤖 📝 DRAFT #1 .*\nThey wrote: "Kak bisa pesan kue custom unicorn untuk Sabtu\?"\n↩️ They got: 🤖 Tunggu sebentar ya Kak 🙏\nSummary:/)
+  assert.match(notices[1], /\n↩️ They got: 🤖 One moment please 🙏\n/)
+  assert.deepEqual(store.getDraft(1).placeholder, { text: PLACEHOLDER_ID, status: 'sent', at: store.getDraft(1).placeholder.at })
+  assert.deepEqual(audit().filter(entry => entry.event === 'sent_to_customer').map(entry => [entry.source, entry.draftId]), [['placeholder', 1], ['placeholder', 2]])
+  assert.ok(!notices.join('\n').includes('customer_not_waiting'), 'why one was withheld goes to the audit, not the notice')
+})
+
+test('placeholder: one per open draft; after /ok or /no a new escalation gets one again', async t => {
+  const { owner, say, placeholders, withheld } = placeholderSetup(t)
+  await say(ALICE, 'bisa kue custom unicorn?')
+  await say(ALICE, 'kue ulang tahun 3 tingkat juga bisa?')
+  assert.equal(placeholders().length, 1, 'the second escalation meets the first draft still open')
+  await owner('/no 1')
+  await say(ALICE, 'kue tart 2 tingkat bisa?')
+  assert.equal(placeholders().length, 1, 'draft #2, from while the placeholder stood, is still open: the customer is still told to wait')
+  await owner('/ok 2')
+  await owner('/no 3')
+  await say(ALICE, 'kue ulang tahun lagi bisa kak?')
+  assert.equal(placeholders().length, 2, 'nothing open: a new one')
+  assert.deepEqual(withheld(), [[], ['placeholder_already_sent'], ['placeholder_already_sent'], []])
+  await owner('/no 4')
+  await say(ALICE, 'kue ulang tahun 2 tingkat bisa kak?')
+  assert.equal(placeholders().length, 3, 'after /no too')
+})
+
+test('placeholder: none for customer_waiting false or missing, a thanks, a triage failure, while paused, or with placeholder.enabled false', async t => {
+  const respond = input => {
+    const text = input.messages.map(message => message.text).join(' ')
+    if (/makasih/.test(text)) return triageResult({ decision: 'escalate', reply: 'Sama-sama Kak', customer_waiting: true })
+    if (/mama/.test(text)) return triageResult({ decision: 'escalate', reply: 'Iya ma', customer_waiting: false })
+    return waiting(input)
+  }
+  const { transport, owner, say, withheld, store } = placeholderSetup(t, { respond })
+  await say(ALICE, 'nak, ini mama. papa masuk IGD')
+  await say(BOB, 'saya sudah transfer') // byKeyword: no customer_waiting at all
+  await say('6284444444444@s.whatsapp.net', 'makasih kak 🙏')
+  await say('6285555555555@s.whatsapp.net', 'crash please')
+  await owner('/pause')
+  await say('6286666666666@s.whatsapp.net', 'bisa kue custom?')
+  await owner('/resume')
+  const off = placeholderSetup(t, { respond, config: { placeholder: { enabled: false } } })
+  await off.say(ALICE, 'bisa kue custom?')
+  assert.deepEqual([transport.toCustomer(), off.transport.toCustomer()], [[], []])
+  assert.deepEqual(withheld(), [['customer_not_waiting'], ['customer_not_waiting'], ['thanks'], ['triage_failed'], ['paused']])
+  assert.deepEqual(off.withheld(), [['placeholder_disabled']])
+  assert.ok(store.pendingDrafts().every(draft => !draft.placeholder))
+})
+
+test('placeholder: none for backlog, a muted, blocked or blocklist-unchecked chat, over a cap, or during a takeover', async t => {
+  const { transport, store, config, brain, assistant, say, deliver, withheld, now } = placeholderSetup(t, { config: { autoSend: { maxPerChatPerHour: 1 }, blocklist: ['081234567890'] } })
+  store.seedHistoryFloor(Math.floor(now() / 1000) - 3600)
+  await deliver(incoming(ALICE, 'bisa kue custom?', { kind: 'append', timestamp: Math.floor(now() / 1000) - 10 * 60 }))
+  store.updateChat(BOB, { muted: true })
+  await say(BOB, 'kue tart bisa?')
+  await say('123456789012345@lid', 'bisa kue custom?')
+  // Blocked after the message was accepted: the policy sees it at routing time.
+  const release = brain.hold()
+  await assistant.handleMessage(incoming('6287777777777@s.whatsapp.net', 'bisa kue custom?', { timestamp: Math.floor(now() / 1000) }))
+  config.blocklist = ['081234567890', '087777777777']
+  release()
+  await assistant.idle()
+  // The hourly cap: an auto-reply took the chat's one slot.
+  await say(LUKI, 'jam berapa buka kak?')
+  await say(LUKI, 'bisa kue custom?')
+  assert.deepEqual(withheld(), [['backlog'], ['muted'], ['blocklist_unchecked'], ['blocked'], ['chat_rate_limit']])
+  assert.deepEqual(transport.toCustomer().map(item => item.chatId), [LUKI], 'only the auto-reply')
+
+  // During a takeover nothing is even triaged.
+  const calls = brain.calls.length
+  await deliver(incoming(LUKI, 'bentar ya kak', { fromMe: true, timestamp: Math.floor(now() / 1000) }))
+  await say(LUKI, 'bisa kue ulang tahun?')
+  assert.deepEqual([brain.calls.length, transport.toCustomer().length], [calls, 1])
+})
+
+test('placeholder: the send gate refuses a chat outside allowChats; a failed send leaves no trace but the audit', async t => {
+  const { transport, store, config, brain, assistant, say, placeholders, audit, now } = placeholderSetup(t)
+  const release = brain.hold()
+  await assistant.handleMessage(incoming(ALICE, 'bisa kue custom?', { timestamp: Math.floor(now() / 1000) }))
+  config.allowChats = [BOB]
+  release()
+  await assistant.idle()
+  config.allowChats = []
+  transport.down = true
+  await say(BOB, 'bisa kue custom?')
+  transport.down = false
+  assert.deepEqual(placeholders(), [])
+  assert.deepEqual(audit().filter(entry => entry.source === 'placeholder').map(entry => entry.event), ['send_refused_not_allowed', 'send_failed'])
+  assert.deepEqual([store.getDraft(1).placeholder, store.getDraft(2).placeholder], [undefined, undefined])
+  assert.deepEqual([store.countAutoSends(24 * 3_600_000), store.chat(BOB).lastDisclosureAt], [0, 0], 'the cap slot is given back, no disclosure counted')
+  assert.ok(!transport.toSelf().some(text => text.includes('↩️')), 'the notices say nothing went out')
+  await say(BOB, 'kue tart bisa?')
+  assert.equal(placeholders().length, 1, 'the next escalation may try again')
+})
+
+test('placeholder: shadow mode records it and sends nothing; the notice says it would have', async t => {
+  const { transport, store, say, audit } = placeholderSetup(t, { config: { mode: 'shadow' } })
+  await say(ALICE, 'bisa kue custom?')
+  assert.deepEqual(transport.toCustomer(), [])
+  assert.match(transport.toSelf()[0], /\n↩️ \[SHADOW\] would have sent: 🤖 Tunggu sebentar ya Kak 🙏\n/)
+  assert.equal(store.getDraft(1).placeholder.status, 'shadow')
+  assert.deepEqual(audit().filter(entry => entry.event === 'shadow_send_suppressed').map(entry => [entry.source, entry.text]), [['placeholder', PLACEHOLDER_ID]])
+  assert.equal(store.countChatAutoSends(ALICE, 3_600_000), 1, 'counted, as shadow auto-replies are')
+  assert.ok(store.chat(ALICE).shadowDisclosureAt > 0 && store.chat(ALICE).lastDisclosureAt === 0)
+})
+
+test('placeholder: it is the session\'s AI disclosure, its echo starts no takeover, and a thanks after it is not skipped', async t => {
+  const { transport, store, deliver, owner, say, stamp, audit } = placeholderSetup(t)
+  await say(ALICE, 'makasih kak')
+  await owner('/no 1') // a closing
+  await say(ALICE, 'bisa kue custom?')
+  const [sent] = transport.toCustomer()
+  assert.equal(sent.text, PLACEHOLDER_ID)
+  await deliver({ id: sent.id, chatId: ALICE, fromMe: true, isSelfChat: false, text: sent.text, ...stamp(), kind: 'notify' })
+  assert.deepEqual([store.chat(ALICE).takeoverUntil, store.getDraft(2).status], [0, 'pending'], 'the echo is ours, not the owner typing')
+  assert.ok(store.chat(ALICE).lastSentAt > store.chat(ALICE).lastClosingAt, 'our side\'s newest word, after the closing')
+  await say(ALICE, 'jam berapa buka kak?')
+  assert.equal(transport.toCustomer().at(-1).text, ANSWER_HOURS.reply, 'no 🤖 prefix: the placeholder disclosed this session')
+  await say(ALICE, 'makasih kak 🙏')
+  assert.deepEqual(audit().filter(entry => entry.event === 'decision').map(entry => entry.action), ['escalate', 'escalate', 'auto_send', 'escalate'], 'drafted, not skipped')
+  assert.deepEqual(store.pendingDrafts().map(draft => draft.excerpt), ['bisa kue custom?', 'makasih kak 🙏'])
+})

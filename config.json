@@ -20,6 +20,13 @@
     "text": "🤖",
     "sessionGapHours": 12
   },
+  "placeholder": {
+    "enabled": true,
+    "text": {
+      "id": "🤖 Tunggu sebentar ya Kak 🙏",
+      "en": "🤖 One moment please 🙏"
+    }
+  },
   "notifyOwnerOnAutoSend": true,
   "draftTtlHours": 24,
   "guards": {

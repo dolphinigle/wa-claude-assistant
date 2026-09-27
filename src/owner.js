@@ -68,6 +68,9 @@ export function parseCommand (input) {
 /** One format for every escalation: Claude's summary and reason say why it needs the owner, the gates why an answer was held. */
 export function formatDraftNotice (draft) {
   const lines = [`${BOT_PREFIX} 📝 DRAFT #${draft.id} · ${draft.contactName}`, `They wrote: "${draft.excerpt}"`]
+  // The fixed placeholder the customer got while the draft waits (assistant.js); one line, since it is always the same.
+  if (draft.placeholder?.status === 'sent') lines.push(`↩️ They got: ${draft.placeholder.text}`)
+  if (draft.placeholder?.status === 'shadow') lines.push(`↩️ [SHADOW] would have sent: ${draft.placeholder.text}`)
   if (draft.summary) lines.push(`Summary: ${draft.summary}`)
   lines.push(draft.draft ? `Draft:\n${draft.draft}` : 'Draft: (none, write your own)')
   if (draft.privateDetails?.length > 0) lines.push(`⚠️ Check before /ok: the draft mentions your own account or machine details (${draft.privateDetails.join(', ')}).`)
@@ -171,7 +174,7 @@ export function createOwnerCommands ({ config, store, gate, now = () => Date.now
       ...(config.allowChats?.length > 0 ? [`Only these chats (allowChats): ${config.allowChats.join(', ')}`] : []),
       `Auto-reply: ${autoSend}`,
       `Pending drafts: ${pending.length === 0 ? 'none' : pending.map(draft => `#${draft.id} ${draft.contactName}`).join(', ')}`,
-      `Auto-replies in the last 24 h: ${store.countAutoSends(24 * HOUR_MS)}/${config.autoSend.maxPerDay}`,
+      `Auto-replies and placeholders in the last 24 h: ${store.countAutoSends(24 * HOUR_MS)}/${config.autoSend.maxPerDay}`,
       `Claude quota: 5 h ${percent(quota?.fiveHourUtilization)}, 7 d ${percent(quota?.sevenDayUtilization)} (${quota?.status ?? 'not seen yet'})`,
       `Human takeover: ${takeovers.length ? takeovers.join(', ') : 'none'}`,
       `Muted: ${muted.length ? muted.join(', ') : 'none'}`
