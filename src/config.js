@@ -54,6 +54,12 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
     !['id', 'en'].every(language => typeof placeholder.text[language] === 'string' && placeholder.text[language].trim())) {
     throw new Error(`config.placeholder must be {"enabled": true or false, "text": {"id": "…", "en": "…"}} with both texts set, got ${JSON.stringify(placeholder)}`)
   }
+  // The switches for what reaches customers on its own are read as truthy: a quoted "false" would leave them on, and
+  // `autoSend.enabled` false is the owner's "drafts only" switch (correctness-r1-4).
+  for (const key of ['autoSend.enabled', 'backlog.autoSend']) {
+    const value = key.split('.').reduce((node, part) => node?.[part], config)
+    if (typeof value !== 'boolean') throw new Error(`config.${key} must be true or false (no quotes), got ${JSON.stringify(value)}`)
+  }
   for (const [key, why] of REMOVED_KEYS) {
     if (key.split('.').reduce((node, part) => node?.[part], config) !== undefined) throw new Error(`config ${key} is no longer supported (${why}); remove it from config.local.json`)
   }

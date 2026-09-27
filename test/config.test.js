@@ -24,6 +24,15 @@ test('a removed safety setting stops the start instead of being ignored', t => {
   assert.throws(() => loadConfig({ rootDir: rootWith(t), overrides: { mode: 'sideways' } }), /config\.mode/)
 })
 
+test('the auto-send switches must be true or false: a quoted "false" would leave auto-replies and placeholders on (correctness-r1-4)', t => {
+  const config = loadConfig({ rootDir: rootWith(t, { autoSend: { enabled: false }, backlog: { autoSend: false } }) })
+  assert.deepEqual([config.autoSend.enabled, config.backlog.autoSend], [false, false])
+  for (const value of ['false', 'true', 0, 1, null, 'off']) {
+    assert.throws(() => loadConfig({ rootDir: rootWith(t, { autoSend: { enabled: value } }) }), /config\.autoSend\.enabled must be true or false/, JSON.stringify(value))
+    assert.throws(() => loadConfig({ rootDir: rootWith(t, { backlog: { autoSend: value } }) }), /config\.backlog\.autoSend must be true or false/, JSON.stringify(value))
+  }
+})
+
 test('a phone number written with the trunk 0 after +62 names the chat, in the blocklist and in allowChats (consistency-r3-1)', t => {
   const PN = '6281234567890@s.whatsapp.net'
   const store = { linkedChatIds: (chatId, chatIdAlt) => [chatId, chatIdAlt].filter(Boolean) }
