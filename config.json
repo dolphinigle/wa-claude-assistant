@@ -6,7 +6,7 @@
     "maxPerDay": 30
   },
   "humanTakeoverMinutes": 30,
-  "debounceMs": 15000,
+  "debounceMs": 10000,
   "backlog": {
     "maxAgeMinutes": 60,
     "liveWindowMinutes": 2,

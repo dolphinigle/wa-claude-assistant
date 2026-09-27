@@ -477,11 +477,11 @@ test('placeholder: a customer\'s greeting alone gets one when Claude says they w
     const family = decide(triageResult({ ...WAITING, customer_waiting: false }), { ...waitingContext(), incomingText })
     assert.deepEqual([family.action, family.placeholder, family.placeholderWithheld], ['escalate', false, ['customer_not_waiting']], `${incomingText} from family`)
   }
-  // After a closing, this session or the day before, a greeting opens a new conversation: escalated with a
-  // placeholder, never skipped.
+  // After a closing, this session or the day before, a greeting opens a new conversation: it gets the greeting-back
+  // (nothing of ours in the last 10 min), never a skip.
   for (const lastClosingAt of [CLOSED_AT, NOW - 20 * HOUR_MS]) {
     const greeting = decide(triageResult(WAITING), thanksContext(THANKED, { lastClosingAt }, { incomingText: 'Selamat pagi kak' }))
-    assert.deepEqual([greeting.action, greeting.placeholder], ['escalate', true], String(lastClosingAt))
+    assert.deepEqual([greeting.action, greeting.greeting], ['auto_send', true], String(lastClosingAt))
   }
 })
 
@@ -606,11 +606,10 @@ const greetingHolders = [
   ['auto_send_disabled', ctx => { ctx.config = makeConfig({ autoSend: { enabled: false } }) }, false],
   ['attachment', ctx => { ctx.attachments = ['image'] }, true],
   ['quote', ctx => { ctx.quoted = [{ id: 'Q1', text: 'Mau diambil kapan kak?' }] }, true],
-  ['greeted_this_session', ctx => { ctx.chat.lastGreetingReplyAt = NOW - 11 * HOUR_MS }, true],
-  ['conversation_open: ours this session', ctx => { ctx.chat.lastOursAt = NOW - 60_000 }, true],
+  ['greeted_recently', ctx => { ctx.chat.lastGreetingReplyAt = NOW - 30 * 60_000 }, true],
+  ['conversation_open: ours a minute ago', ctx => { ctx.chat.lastOursAt = NOW - 60_000 }, true],
   ['conversation_open: a draft open', ctx => { ctx.chat.draftOpen = true }, true],
   ['conversation_open: our question in the history', ctx => { ctx.history = [ours('Mau diambil kapan kak?', 5)]; ctx.incomingText = 'Pagi kak' }, true],
-  ['conversation_open: an earlier message of theirs', ctx => { ctx.history = [customer('Hai', 120)] }, true],
   ['backlog', ctx => { ctx.isBacklog = true; ctx.config = makeConfig({ backlog: { autoSend: true } }) }, false],
   ['paused', ctx => { ctx.paused = true }, false],
   ['muted', ctx => { ctx.chat.muted = true }, false],
@@ -631,6 +630,19 @@ for (const [reason, mutate, placeholder] of greetingHolders) {
     assert.deepEqual([decision.action, decision.reasons, decision.greeting, decision.placeholder], ['escalate', ['decision:escalate'], undefined, placeholder])
   })
 }
+
+test('greeting: a returning customer is greeted: their earlier chat, our reply 30 min ago and a greeting 2 h ago hold nothing', () => {
+  const ctx = { ...greetingContext(), history: [customer('Hai', 120), ours('Halo Kak, ada yang bisa saya bantu? 🙏', 119), customer('jam buka?', 40), ours('Buka 08.00–17.00 ya Kak.', 30)] }
+  ctx.chat = { ...ctx.chat, lastGreetingReplyAt: NOW - 2 * HOUR_MS, lastOursAt: NOW - 30 * 60_000 }
+  const decision = decide(triageResult(GREETING), ctx)
+  assert.deepEqual([decision.action, decision.greeting], ['auto_send', true])
+})
+
+test('greeting: a held greeting says why, for the audit', () => {
+  const ctx = greetingContext()
+  ctx.chat.draftOpen = true
+  assert.deepEqual(decide(triageResult(GREETING), ctx).greetingHeld, ['conversation_open'])
+})
 
 test('greeting: the session ends as the disclosure\'s does: a greeting, reply or message from 13 h ago holds nothing', () => {
   const ctx = { ...greetingContext(), history: [customer('jam buka kak?', 13 * 60), ours('Buka 08.00–17.00 ya Kak.', 13 * 60 - 1)] }

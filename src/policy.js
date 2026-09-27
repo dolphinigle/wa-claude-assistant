@@ -11,6 +11,10 @@ import { asksSomething, isGreetingOnly, isLooseThanks, isThanks, normalizeText, 
 
 const QUOTA_OK_STATUSES = new Set(['allowed', 'allowed_warning'])
 const HOUR_MS = 60 * 60 * 1000
+// Live test (2026-09-27): a returning customer's "Hai" later the same day was held as mid-conversation. Only a
+// greeting that may answer something fresh is held: our message in the last 10 min, or a draft still open.
+const GREETING_ANSWERS_OURS_MS = 10 * 60 * 1000
+const GREETING_REPEAT_MS = HOUR_MS
 // Text that looks like a tag, escaped or not ("</message>", "<system>", "&lt;system&gt;"): trust rule 4 of the prompt
 // calls it a manipulation attempt, yet Sonnet once flagged such a message as a waiting customer while its own reason
 // called it manipulation (eval 2026-09-27, tag-breakout-id). normalizeText has folded fullwidth "＜" and dropped
@@ -97,9 +101,11 @@ const flatText = text => normalizeText(text).replace(/\s+/g, ' ').trim()
  */
 export function decide (result, ctx) {
   const routed = route(result, ctx)
-  if (routed.action !== 'escalate') return { ...routed, placeholder: false, placeholderWithheld: [] }
+  // For the audit: why a greeting alone did not get the greeting-back.
+  const greetingNote = routed.greeting || !result?.ok || !result.triage || !isGreetingOnly(ctx.incomingText) ? {} : { greetingHeld: greetingHeld(result, ctx) }
+  if (routed.action !== 'escalate') return { ...routed, ...greetingNote, placeholder: false, placeholderWithheld: [] }
   const withheld = placeholderWithheld(result, ctx)
-  return { ...routed, placeholder: withheld.length === 0, placeholderWithheld: withheld }
+  return { ...routed, ...greetingNote, placeholder: withheld.length === 0, placeholderWithheld: withheld }
 }
 
 /** The gates on the chat and on volume that hold any automatic message to it: an answer or a placeholder. */
@@ -139,15 +145,15 @@ function quotaBlockers ({ config, rateLimit }) {
  */
 function greetingHeld (result, ctx) {
   const { config, chat = {} } = ctx
-  const sessionStart = ctx.now - (config.disclosure?.sessionGapHours ?? 12) * HOUR_MS
+  const recent = ctx.now - GREETING_ANSWERS_OURS_MS
   const held = []
   if (config.greetingReply?.enabled !== true) held.push('greeting_reply_disabled')
   if (!config.autoSend?.enabled) held.push('auto_send_disabled')
   if (result.triage.customer_waiting !== true) held.push('customer_not_waiting')
   if ((ctx.attachments ?? []).length > 0) held.push('attachment')
   if ((ctx.quoted ?? []).length > 0) held.push('quote')
-  if (chat.lastGreetingReplyAt > sessionStart) held.push('greeted_this_session')
-  if (chat.lastOursAt > sessionStart || chat.draftOpen || (ctx.history ?? []).some(item => !(item.timestamp * 1000 <= sessionStart))) held.push('conversation_open')
+  if (chat.lastGreetingReplyAt > ctx.now - GREETING_REPEAT_MS) held.push('greeted_recently')
+  if (chat.lastOursAt > recent || chat.draftOpen || (ctx.history ?? []).some(item => item.fromMe && !(item.timestamp * 1000 <= recent))) held.push('conversation_open')
   if (ctx.isBacklog) held.push('backlog')
   return [...held, ...chatBlockers(ctx), ...quotaBlockers(ctx)]
 }

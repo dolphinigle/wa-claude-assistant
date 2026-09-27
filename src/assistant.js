@@ -487,6 +487,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       action: decision.action,
       reasons: decision.reasons,
       ...(decision.action === 'escalate' && { placeholder: decision.placeholder, placeholderWithheld: decision.placeholderWithheld }),
+      ...(decision.greetingHeld && { greetingHeld: decision.greetingHeld }),
       mode: config.mode,
       rateLimit: result.rateLimit,
       meta: result.meta
