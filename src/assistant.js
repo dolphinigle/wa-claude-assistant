@@ -549,7 +549,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       privateDetails: findPrivateDetails(triage?.reply ?? '', privateIdentifiersFor(config))
     })
     if (decision.placeholder) {
-      await sendPlaceholder(chatId, batch, draft) // before the notice, which says it went out
+      await sendPlaceholder(chatId, batch, draft, triage.reply) // before the notice, which says it went out
       // Your reply on the phone during that send cancelled the draft (startTakeover, which said so): no /ok to offer,
       // only what the customer got (send-path-r1-5).
       const { status, placeholder } = store.getDraft(draft.id)
@@ -564,16 +564,18 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
 
   /**
    * Owner decision (2026-09-27): a customer whose message waits for the owner is not left in silence. The text is fixed,
-   * never Claude's, in the sender's language. It quotes nothing and marks nothing read, since the owner has not seen the
-   * message yet. It counts toward the auto-send caps and, when it starts with the disclosure text (🤖), as the session's
-   * AI disclosure. It is recorded on the draft, and the contact's other open drafts join its period, before the first
+   * never Claude's, in the sender's language: a greeting alone is often too short to tell ("Hi!", "Good morning"), and
+   * then Claude's draft, which the prompt writes in the sender's language, tells it; Indonesian when neither does
+   * (correctness-r2-3). It quotes nothing and marks nothing read, since the owner has not seen the message yet. It
+   * counts toward the auto-send caps and, when it starts with the disclosure text (🤖), as the session's AI disclosure.
+   * It is recorded on the draft, and the contact's other open drafts join its period, before the first
    * await, so an escalation of the same contact triaged meanwhile sees it and gets none. A send that certainly failed
    * (`notSent`) is undone but for lastSentAt, so the next escalation may try again; one that failed in flight may have
    * been delivered, so its period and cap slot stand (status `unknown`), since a missed retry is the safe way round.
    */
-  async function sendPlaceholder (chatId, batch, draft) {
-    const language = detectLanguage(batch.map(message => message.text).join('\n')) === 'en' ? 'en' : 'id'
-    const text = config.placeholder.text[language]
+  async function sendPlaceholder (chatId, batch, draft, reply) {
+    const language = [batch.map(message => message.text).join('\n'), reply].map(text => detectLanguage(text)).find(found => found !== 'unknown')
+    const text = config.placeholder.text[language === 'en' ? 'en' : 'id']
     store.updateDraft(draft.id, { placeholder: { text, status: 'sending' } })
     for (const open of openDrafts(chatId)) if (open.id !== draft.id) store.updateDraft(open.id, { placeholderCovered: draft.id })
     const slot = store.recordAutoSend(chatId)

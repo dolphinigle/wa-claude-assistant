@@ -1375,6 +1375,18 @@ test('placeholder: a customer\'s greeting gets exactly one, the new text; a gree
   assert.doesNotMatch(transport.toSelf()[2], /↩️/, 'the notice for Mama says nothing went out')
 })
 
+test('placeholder: a greeting too short to tell its language gets the language of Claude\'s draft, Indonesian when neither tells (correctness-r2-3)', async t => {
+  const replies = { 'Hi!': 'Hi! How can I help you?', 'Good morning': 'Good morning! What can I do for you?', Hai: 'Halo Kak, ada yang bisa dibantu?', Hello: '' }
+  const respond = input => triageResult({ decision: 'escalate', reply: replies[input.messages[0].text], summary: 'customer greeting', customer_waiting: true })
+  const { owner, say, placeholders, advance } = placeholderSetup(t, { respond })
+  for (const [index, text] of Object.keys(replies).entries()) {
+    await say(ALICE, text)
+    await owner(`/no ${index + 1}`) // ends the open-draft period, so the next greeting gets one again
+    advance(3_600_000) // and clears the hourly cap
+  }
+  assert.deepEqual(placeholders().map(item => item.text), [PLACEHOLDER_EN, PLACEHOLDER_EN, PLACEHOLDER_ID, PLACEHOLDER_ID])
+})
+
 test('placeholder: drafts only (autoSend.enabled false) sends a customer nothing automated; /ok still sends the draft', async t => {
   // Both customers wait: only the switch holds the placeholder, and the answer too.
   const respond = input => (/jam/.test(input.messages[0].text) ? triageResult({ ...ANSWER_HOURS, customer_waiting: true }) : waiting(input))
