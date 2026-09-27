@@ -612,13 +612,17 @@ export function findPrivateDetails (text, { words = [], paths = [] } = {}) {
   ]
 }
 
-// Demo mode invents what the facts do not say, but never how to pay: a bank, an account or a transfer target, or a
-// run of 8+ digits (spaces or dashes allowed: "123-456-7890"), which also holds an invented phone number that may be
-// a stranger's. Bank codes as whole words only ("Brian" is no BRI); the rest with affixes ("rekeningnya").
-const PAYMENT_TERMS = ['rekening', 'no. rek', 'no rek', 'norek', 'account number', 'transfer ke']
-const BANKS = /(?<![\p{L}\p{N}])(?:bca|bni|bri|mandiri)(?![\p{L}\p{N}])/iu
-const ACCOUNT_DIGITS = /\p{Nd}(?:[ -]?\p{Nd}){7,}/u
-const hasPaymentDetail = text => BANKS.test(text) || ACCOUNT_DIGITS.test(text) || PAYMENT_TERMS.some(term => containsTerm(text, term))
+// Demo mode invents what the facts do not say, but never how to pay: a bank or e-wallet, an account, a transfer or its
+// recipient ("a.n. Rina"), or a run of 8+ digits (spaces, dots or dashes allowed: "123-456-7890", "712.345.6789"), which
+// also holds an invented phone number that may be a stranger's. Prices ("Rp 12.500.000") and clock times
+// ("08.00-17.00") are left out before digits are counted. Bank and wallet names as whole words only ("Brian" is no
+// BRI); the ordinary words among them (dana, jago, permata, mandiri) and an order's "atas nama siapa?" are held too,
+// which only means a draft. The terms match with affixes ("rekeningnya", "ditransfer").
+const PAYMENT_TERMS = ['rekening', 'no. rek', 'no rek', 'norek', 'account number', 'transfer', 'tf', 'a.n', 'a/n', 'atas nama']
+const BANKS = /(?<![\p{L}\p{N}])(?:bca|bni|bri|mandiri|bsi|btn|cimb|permata|danamon|jago|seabank|ocbc|jenius|bjb|dana|ovo|go[ -]?pay|shopee[ -]?pay|linkaja)(?![\p{L}\p{N}])/iu
+const NOT_ACCOUNT = /(?<![\p{Nd}.,:])(?:\d{1,3}(?:\.\d{3})+|(?:[01]?\d|2[0-3])[.:][0-5]\d)(?![.,:]?\p{Nd})/gu
+const ACCOUNT_DIGITS = /\p{Nd}(?:[ .-]?\p{Nd}){7,}/u
+const hasPaymentDetail = text => BANKS.test(text) || ACCOUNT_DIGITS.test(text.replace(NOT_ACCOUNT, ' ')) || PAYMENT_TERMS.some(term => containsTerm(text, term))
 
 /**
  * @param {object} options

@@ -170,8 +170,11 @@ reach real customers by accident. What changes:
   personal information.
 - The guards no longer check the reply against the facts (no `no_facts_used`, `unsupported_*`, number words or
   sensitive terms). In their place `demo_payment_detail` holds a reply with `rekening`, `no. rek`, `norek`,
-  `account number`, `transfer ke`, BCA, BNI, BRI, Mandiri or a run of 8+ digits (an account or phone number). Length,
-  placeholder, fact id, `private_detail` and language checks stay.
+  `account number`, `transfer`, `tf`, `a.n.`, `a/n`, `atas nama`, a bank (BCA, BNI, BRI, Mandiri, BSI, BTN, CIMB,
+  Permata, Danamon, Jago, SeaBank, OCBC, Jenius, BJB), an e-wallet (DANA, OVO, GoPay, ShopeePay, LinkAja) or a run of
+  8+ digits with spaces, dots or dashes (an account or phone number; a price such as `Rp 12.500.000` and a time such as
+  `08.00-17.00` don't count). Ordinary words among them (`dana`, `jago`) and an order's `atas nama siapa?` make a draft
+  too. Length, placeholder, fact id, `private_detail` and language checks stay.
 - The policy auto-answers messages that ask nothing too (a thanks gets Claude's thanks-back) and caps each chat at
   `demo.maxPerChatPerHour` (30) instead of `autoSend.maxPerChatPerHour`. Every other gate stays: drafts only, `/pause`,
   `/mute`, blocklist, `allowChats`, takeover, the daily cap (`autoSend.maxPerDay`, raise it for a long demo), quota,

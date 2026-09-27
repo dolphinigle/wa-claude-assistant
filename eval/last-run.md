@@ -1,6 +1,6 @@
 # Eval: last full run, rescored
 
-> Rescore of the saved run: 2026-09-27T13:20:25.729Z, the current guards and policy applied to the saved triage results of 2026-09-27T06:51:21.008Z (no new claude calls).
+> Rescore of the saved run: 2026-09-27T13:36:43.461Z, the current guards and policy applied to the saved triage results of 2026-09-27T06:51:21.008Z (no new claude calls).
 
 Run 2026-09-27T06:51:21.008Z · model `claude-sonnet-5` (alias `sonnet`, thinking off) · claude 2.1.283 · 20 saved `claude -p` results from `src/brain/claude.js`, then `guards.js` and `policy.js` evaluated as live mode on a fresh chat (quota limit 0.8); fixture history given to Claude: up to 4 message(s).
 

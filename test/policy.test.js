@@ -674,6 +674,17 @@ test('demo mode: a reply with payment details is held (demo_payment_detail)', ()
   assert.deepEqual(fine.guard, { ok: true, reasons: [] }, 'a name is no bank code, a price no account number')
 })
 
+test('demo mode: dotted account numbers, other banks and e-wallets, "TF" and "a.n." are payment details too', () => {
+  for (const reply of ['Bisa ke BSI 712.345.6789 a.n. Rina ya Kak', 'Bisa TF ke Jago a.n. Toko Rina ya Kak', 'Bayarnya bisa via OVO 0812.3456.7890 ya Kak',
+    'Bisa ke DANA atas nama Rina ya Kak', 'Nanti ditransfer ke Toko Rina ya Kak', 'Bisa lewat GoPay ya Kak', 'Bisa ke 123.456.7890 ya Kak']) {
+    const guard = demoContext('Bayarnya ke mana kak?', { decision: 'answer', reply, facts_used: [] }).guard
+    assert.deepEqual(guard, { ok: false, reasons: ['demo_payment_detail'] }, reply)
+  }
+  for (const reply of ['Tart 3 tingkat Rp 12.500.000, jadi dalam 2 hari ya Kak', 'Kami buka jam 08.00-17.00 ya Kak']) {
+    assert.deepEqual(demoContext('Kak, tart 3 tingkat berapa? buka jam berapa?', { decision: 'answer', reply, facts_used: [] }).guard, { ok: true, reasons: [] }, reply)
+  }
+})
+
 test('demo mode: a thanks gets Claude\'s thanks-back, and the per-chat cap is demo.maxPerChatPerHour', () => {
   const thanks = { decision: 'answer', reply: 'Sama-sama, Kak 🙏', facts_used: [] }
   assert.equal(decide(triageResult(thanks), { ...baseContext(), incomingText: 'ok makasih kak' }).reasons[1], 'no_question', 'held outside demo mode')
