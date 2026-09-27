@@ -163,6 +163,11 @@ export function buildAllowList (knowledge, factIds) {
   return allow
 }
 
+// A day is a commitment or a claim even without a digit: "besok dikirim ya", "buka Senin–Sabtu".
+const DAY_WORDS = /\b(?:besok|lusa|hari ini|malam ini|minggu depan|bulan depan|hari minggu|senin|selasa|rabu|kamis|jum'?at|sabtu|tomorrow|today|tonight|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i
+// A reply without facts may only ask; opening with a yes would agree to whatever was asked ("Siap Kak", "Bisa kak").
+const YES_OPENING = /^[^\p{L}]*(?:bisa|boleh|siap|oke?|okay|iya|ya|tentu|pasti|sure|yes|can)\b/iu
+
 const PLACEHOLDERS = [
   /\{\{|\}\}/,
   /\[(?:[A-Z_ ]{3,}|[^\]]*\b(?:nama|name|harga|price|tanggal|date|alamat|address|nomor|number|link|url)\b[^\]]*)\]/i,
@@ -421,7 +426,7 @@ const NOT_WANTED = new Set(wordsOf('that it this them to'))
 // Ask only with something to request in their clause, and not after "saya" or "I" or after a no: alone they say yes
 // ("bisa kak", "boleh", "ada", "tolong ya", "yes please"), after "I" they state ("saya bisa ambil besok", "I can come
 // at 5"), and after a no they say no ("gak ada kak, makasih", "gak bisa kak", "belum ada") (send-path-r2-1).
-const REQUEST_WORDS = new Set(wordsOf('bisa bs boleh blh ada minta mohon tolong tlg please pls plz can could would'))
+const REQUEST_WORDS = new Set(wordsOf('bisa bs boleh blh ada minta mohon tolong tlg please pls plz can could would mau pengen pingin ingin'))
 // An English request puts its modal before the subject ("can you", "could I", "would it"): "that would be great",
 // "can do" and "sure you can" say yes (send-path-r2-2).
 const MODALS = new Set(wordsOf('can could would'))
@@ -617,16 +622,20 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
   if (/\[F\d+\]/i.test(text)) reasons.push('fact_id_in_reply')
   else if (PLACEHOLDERS.some(pattern => pattern.test(text))) reasons.push('placeholder')
 
-  // Every auto-reply is backed by facts, so a thanks-back, which cites none, only ever goes out as a draft.
   const cited = Array.isArray(factsUsed) ? factsUsed : []
-  if (cited.length === 0) reasons.push('no_facts_used')
-  else {
+  if (cited.length > 0) {
     const unknown = cited.filter(id => !knowledge.facts.has(factId(id)))
     if (unknown.length > 0) reasons.push(`unknown_fact:${unknown.join(',')}`)
   }
 
   const allow = buildAllowList(knowledge, cited)
   const details = extractDetails(text)
+  // Owner decision (2026-09-27, live test): a customer-service reply may cite no fact when it only asks ("Halo Kak, mau
+  // pesan apa, berapa banyak, dan untuk tanggal berapa?"): a question, nothing concrete (no number, price, time, link,
+  // contact, number word or day) and no yes up front. Everything else without a cited fact is a draft.
+  const concrete = Object.values(details).some(value => (Array.isArray(value) ? value.length > 0 : value === true)) || DAY_WORDS.test(text)
+  const onlyAsks = /[?¿]/.test(text) && !concrete && !YES_OPENING.test(text)
+  if (cited.length === 0 && !onlyAsks) reasons.push('no_facts_used')
   const check = (kind, values, allowed) => {
     const missing = [...new Set(values.filter(value => !allowed.has(value)))]
     if (missing.length > 0) reasons.push(`unsupported_${kind}:${missing.join(',')}`)

@@ -8,7 +8,7 @@ const { guards } = makeConfig()
 const check = (reply, factsUsed = ['F1']) => checkReply({ reply, factsUsed }, { knowledge, ...guards })
 
 test('knowledge parsing: fact ids, facts-only section, comments stripped', () => {
-  assert.deepEqual([...knowledge.facts.keys()], ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'F13'])
+  assert.deepEqual([...knowledge.facts.keys()], ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'F13', 'F14', 'F15'])
   assert.ok(!knowledge.promptText.includes('<!--'))
   assert.ok(!knowledge.factsText.includes('## Never'))
   const parsed = parseKnowledge('# X\n## Facts\n- [F1] a 10\n## Never\n- promise 99')
@@ -177,7 +177,17 @@ test('structural checks: empty, length, placeholders, fact ids, facts_used', () 
 
 const reply = (text, factsUsed, incomingText) => checkReply({ reply: text, factsUsed, incomingText }, { knowledge, ...guards })
 
-test('a reply without facts never passes: a thanks-back is only ever drafted', () => {
+test('a reply without facts passes only when it just asks: a question, nothing concrete, no yes up front', () => {
+  for (const text of ['Halo Kak, mau pesan apa, berapa banyak, dan untuk tanggal berapa?', 'Maaf Kak, boleh dijelaskan maksudnya?', 'Hi! What would you like to order?']) {
+    assert.deepEqual(reply(text, []), { ok: true, reasons: [] }, text)
+  }
+  for (const text of ['Siap Kak 🙏', 'Bisa kak, mau dikirim ke mana?', 'Boleh kak, mau pesan apa?', 'Mau diambil besok kak?', 'Buka Senin–Sabtu ya kak?',
+    'Mau pesan 2 loyang kak?', 'Harganya Rp 85.000, mau pesan?', 'Cek di contoh.com ya kak?', 'Halo Kak, ada diskon lho, mau?']) {
+    assert.ok(!reply(text, []).ok, text)
+  }
+})
+
+test('a thanks-back without facts never passes: it is only ever drafted', () => {
   for (const [incoming, text] of [
     ['ok makasih kak 🙏', 'Sama-sama, Kak 🙏'],
     ['thanks!', "You're welcome! Have a nice day."],

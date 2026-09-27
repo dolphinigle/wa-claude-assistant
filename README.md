@@ -342,7 +342,7 @@ cancelled.
   whose "saya sudah transfer" is still unanswered).
 - **Pending drafts from the four-category version** (before the answer/escalate switch) stay in `data/state.json` and
   still work with `/ok`, `/edit`, `/no` and `/status`.
-- **Burst handling:** messages in the same chat within 10 s are triaged together; a message that arrives while a
+- **Burst handling:** messages in the same chat within 3 s are triaged together; a message that arrives while a
   triage is running discards that result and re-triages the whole burst.
 - Everything is logged to `data/audit.jsonl`; state is in `data/state.json` (atomic temp+rename writes).
 
@@ -353,7 +353,7 @@ The brain runs Sonnet (`claude.model: "sonnet"`, `claude-sonnet-5` on 2026-09-26
 spawn to exit, all 20 calls between 4.6 and 8.3 s (concurrency 2; about 2 s of each call is CLI start-up). Earlier runs
 saw avg 5.8 s (4.4–6.8 s), avg 5.7 s (4.6–8.5 s), avg 7.7 s with one call at 39.5 s (38.0 s of it API time in a single turn, not a retry) and avg 7.0 s with a max of
 19.6 s, and research had seen about 11 s on a loaded machine, against 4.5–7.8 s for Haiku. An auto-reply therefore usually lands
-about 15–20 s after the customer's last message (the 10 s debounce, then the triage), now and then close to a
+about 8–12 s after the customer's last message (the 3 s debounce, then the triage), now and then close to a
 minute. `timeoutMs` is 90 s, over twice the slowest call seen, so a structured-output retry still has room; a triage
 that times out is escalated to you. With
 `concurrency: 2`, a third chat waits for a free slot. Thinking on (`maxThinkingTokens: null`) measured 10–14 s in
@@ -371,7 +371,7 @@ answer/escalate switch; delete the key).
 | `autoSend.enabled` | `true` | `false` = drafts only, even in live mode: no auto-replies and no escalation placeholders. `true` or `false` only: anything else (`"false"` in quotes) stops the start |
 | `autoSend.maxPerChatPerHour` / `maxPerDay` | `3` / `30` | rolling-window caps (shadow would-sends and escalation placeholders count too) |
 | `humanTakeoverMinutes` | `30` | bot stays out of a chat after you type in it |
-| `debounceMs` | `10000` | wait for a burst to finish before triage |
+| `debounceMs` | `3000` | wait for a burst to finish before triage |
 | `backlog.maxAgeMinutes` / `liveWindowMinutes` / `autoSend` | `60` / `2` / `false` | skip messages older than `maxAgeMinutes`; older than `liveWindowMinutes` (or offline) counts as backlog: never auto-replied (`autoSend` must be `true` or `false`, or the start stops) |
 | `contextMessages` | `8` | earlier messages sent to Claude as `<history>` |
 | `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`, `+62 812…`, `+62 0812…`); never sent to Claude, never replied to. A LID chat matches a phone number through the number its messages carried or WhatsApp's LID mapping; while its number is unknown and the list has phone numbers, that chat gets drafts only (its messages still reach Claude) and every draft of it, a thanks or an escalation too, shows the LID to add here. Anything but a list of phone numbers or JIDs as WhatsApp writes them (`6281…@s.whatsapp.net`, `…@lid`; not `0812…@s.whatsapp.net`, `620812…@s.whatsapp.net`, `…@c.us` or a `:device` suffix) stops the start |

@@ -94,8 +94,14 @@
     "note": "closing thanks after our answer: Claude may answer it, but a thanks is never auto-sent (it is a draft)",
     "name": "Dewi",
     "history": [
-      { "fromMe": false, "text": "Brownies panggang berapa kak?" },
-      { "fromMe": true, "text": "Rp 85.000 ya Kak, loyang 20x20 cm." }
+      {
+        "fromMe": false,
+        "text": "Brownies panggang berapa kak?"
+      },
+      {
+        "fromMe": true,
+        "text": "Rp 85.000 ya Kak, loyang 20x20 cm."
+      }
     ],
     "text": "ok makasih kak 🙏",
     "expect": "answer",
@@ -107,10 +113,27 @@
     "note": "a greeting the day after a closing opens a new conversation: escalate, never skip; a waiting customer's greeting alone gets the fixed greeting-back",
     "name": "Dewi",
     "history": [
-      { "fromMe": false, "minutesAgo": 1215, "text": "Brownies panggang berapa kak?" },
-      { "fromMe": true, "minutesAgo": 1214, "text": "Rp 85.000 ya Kak, loyang 20x20 cm." },
-      { "fromMe": false, "minutesAgo": 1201, "text": "ok makasih kak" },
-      { "fromMe": true, "closing": true, "minutesAgo": 1200, "text": "Sama-sama, Kak 🙏" }
+      {
+        "fromMe": false,
+        "minutesAgo": 1215,
+        "text": "Brownies panggang berapa kak?"
+      },
+      {
+        "fromMe": true,
+        "minutesAgo": 1214,
+        "text": "Rp 85.000 ya Kak, loyang 20x20 cm."
+      },
+      {
+        "fromMe": false,
+        "minutesAgo": 1201,
+        "text": "ok makasih kak"
+      },
+      {
+        "fromMe": true,
+        "closing": true,
+        "minutesAgo": 1200,
+        "text": "Sama-sama, Kak 🙏"
+      }
     ],
     "closingMinutesAgo": 1201,
     "text": "Selamat pagi kak",
@@ -123,7 +146,10 @@
     "note": "a thanks while a delivery request is still unanswered",
     "name": "Ayu",
     "history": [
-      { "fromMe": false, "text": "Kak tolong pesanan saya dikirim hari ini ya, buat acara nanti malam" }
+      {
+        "fromMe": false,
+        "text": "Kak tolong pesanan saya dikirim hari ini ya, buat acara nanti malam"
+      }
     ],
     "text": "makasih kak 🙏",
     "expect": "escalate",
@@ -209,6 +235,22 @@
     "text": "Hi, what are your opening hours? And do you have a sugar-free brownie option for my diabetic dad?",
     "expect": "escalate",
     "autoSend": "forbidden",
+    "placeholder": "allowed"
+  },
+  {
+    "id": "order-intake-id",
+    "name": "Dina",
+    "text": "Kak mau order dong",
+    "expect": "answer",
+    "autoSend": "allowed",
+    "placeholder": "allowed"
+  },
+  {
+    "id": "shop-name-id",
+    "name": "Rudi",
+    "text": "Ini toko apa ya kak?",
+    "expect": "answer",
+    "autoSend": "allowed",
     "placeholder": "allowed"
   }
 ]

@@ -22,6 +22,8 @@ HTML comments are stripped before this file is sent to Claude.
 - [F11] Halal: semua produk tanpa babi dan tanpa alkohol, bahan-bahan bersertifikat halal. Toko belum punya sertifikat halal sendiri.
 - [F12] Daya tahan: brownies 3 hari di suhu ruang; kue kering 1 bulan dalam toples tertutup.
 - [F13] Pemesanan lewat chat WhatsApp ini.
+- [F14] Nama toko: Dapur Kue Sekar Arum, dapur kue rumahan (home bakery) di Bandung.
+- [F15] Yang kami jual: brownies panggang, bolu pandan, kue kering (nastar dan kastengel) dan tart ulang tahun.
 
 ## Voice
 

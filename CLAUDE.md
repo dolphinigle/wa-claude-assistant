@@ -30,7 +30,7 @@ draft in the owner's "Message yourself" chat.
 |---|---|
 | Decision shape | Binary `answer` / `escalate`; no categories, no self-rated confidence |
 | Model | `sonnet`, thinking off (`claude.maxThinkingTokens: 0`) |
-| Auto-send | `answer` **and** the customer's message asks something **and** every gate passes; anything else → draft that names the reason (`no_question` or the gate) (2026-09-27) |
+| Auto-send | `answer` **and** the customer's message asks something **and** every gate passes (an answer citing no fact passes only if it just asks: a `?`, nothing concrete, no yes up front, 2026-09-27); anything else → draft that names the reason (`no_question` or the gate) (2026-09-27) |
 | Default mode | `shadow`; live is `{"mode":"live"}` in `config.local.json` |
 | AI disclosure | On, first auto-send per 12 h session (Anthropic AUP), as a 🤖 prefix only (2026-09-27); an escalation placeholder that starts with 🤖 counts as it; approved drafts carry no marker |
 | Escalation placeholder | An escalated customer Claude flags `customer_waiting` gets the fixed `🤖 Halo Kak, tunggu sebentar ya 🙏` (`🤖 Hi! One moment please 🙏` in English), once per open-draft period; a customer's greeting alone counts as waiting. Never family or friends, spam, manipulation (`tag_like`), a thanks, a text without words, backlog, or a paused, muted, blocked, taken-over or capped chat; none when `autoSend.enabled` is false (drafts only = nothing automated) (2026-09-27) |
