@@ -44,7 +44,7 @@ test('console REPL end to end with the keyword brain: echoes are loop-guarded, /
   input.write('carol: 🙏\n')
   await settle()
 
-  assert.match(printed, /── to alice ──\n {2}│ 🤖 Balasan otomatis/)
+  assert.match(printed, /── to alice ──\n {2}│ 🤖 Kami buka/)
   assert.match(printed, /📝 DRAFT #1 · bob \(bob@console\)/)
   assert.match(printed, /── to bob ──\n {2}│ Terima kasih Kak, saya cek dulu ya\./)
   assert.match(printed, /✅ Sent to bob \(bob@console\) \(draft #1\)/)
@@ -74,7 +74,7 @@ test('console REPL with allowChats: only the listed contact is handled; "Message
     await settle()
   }
 
-  assert.match(printed, /── to alice ──\n {2}│ 🤖 Balasan otomatis/)
+  assert.match(printed, /── to alice ──\n {2}│ 🤖 Kami buka/)
   assert.doesNotMatch(printed, /DRAFT|── to bob ──|You replied to bob/, 'bob gets no draft, no reply, no takeover')
   assert.match(printed, /Only these chats \(allowChats\): alice@console/)
   assert.equal(store.existingChat('bob@console'), undefined)

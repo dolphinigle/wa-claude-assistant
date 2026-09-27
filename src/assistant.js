@@ -463,7 +463,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const disclosureKey = live ? 'lastDisclosureAt' : 'shadowDisclosureAt'
     const chat = store.chat(chatId)
     const needsDisclosure = config.disclosure?.enabled && now() - (chat[disclosureKey] ?? 0) > config.disclosure.sessionGapHours * HOUR_MS
-    const text = needsDisclosure ? `${config.disclosure.text}\n\n${triage.reply}` : triage.reply
+    // The owner's choice (2026-09-27): the disclosure is a short prefix on the first reply of a session, 🤖 by default.
+    const text = needsDisclosure ? `${config.disclosure.text} ${triage.reply}` : triage.reply
     const last = batch[batch.length - 1]
 
     // Counted before the first await, so another chat's triage finishing during this send sees the slot as taken.
@@ -481,7 +482,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     if (outcome.shadow) {
       await sendToOwner(`${BOT_PREFIX} [SHADOW] Would auto-reply to ${name}\nThey wrote: "${excerpt(describe(batch))}"\nReply:\n${text}`)
     } else if (config.notifyOwnerOnAutoSend) {
-      await sendToOwner(`${BOT_PREFIX} ✅ Auto-replied to ${name}\nThey wrote: "${excerpt(describe(batch))}"\nReply:\n${triage.reply}`)
+      // One line: the owner can read the whole exchange in the customer's chat.
+      await sendToOwner(`${BOT_PREFIX} ✅ Auto-replied to ${name}: "${excerpt(triage.reply, 80)}"`)
     }
   }
 

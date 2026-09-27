@@ -266,8 +266,10 @@ cancelled.
   (`https://maps.app.goo.gl/…?g_st=iw`) or a word in its path asks nothing; a bare `kak.kirim` is no link. A burst asks
   if any of its messages does, and a question with a thanks (`makasih kak, jam berapa tutup?`) goes on to the other
   gates like any question.
-- **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with a short
-  Indonesian/English line saying it is an automated AI reply. Approved drafts carry no marker.
+- **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with 🤖
+  (`disclosure.text`; the owner's choice on 2026-09-27, after a two-language sentence was too much text). An icon is a
+  weaker disclosure than words: for real customers, consider a word such as `🤖 Asisten AI:`. Approved drafts carry
+  no marker.
 - **Contacts are shown with their number:** notices say `Name (+62…)`, because the name is the sender's own
   WhatsApp name and anyone can call themselves "Mama".
 - **Loop and duplicate guards:** ids of everything the bot sends are recorded before sending; every message id is
@@ -325,7 +327,7 @@ answer/escalate switch; delete the key).
 | `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`, `+62 812…`, `+62 0812…`); never sent to Claude, never replied to. A LID chat matches a phone number through the number its messages carried or WhatsApp's LID mapping; while its number is unknown and the list has phone numbers, that chat gets drafts only (its messages still reach Claude) and every draft of it, a thanks or an escalation too, shows the LID to add here. Anything but a list of phone numbers or JIDs as WhatsApp writes them (`6281…@s.whatsapp.net`, `…@lid`; not `0812…@s.whatsapp.net`, `620812…@s.whatsapp.net`, `…@c.us` or a `:device` suffix) stops the start |
 | `allowChats` | `[]` | empty = every chat. Otherwise only the chats it lists (JIDs or phone numbers, matched like `blocklist`) are handled; every other chat is ignored before anything happens to it (no Claude call, no draft, notice, blue ticks or takeover, nothing in `data/state.json`, one `skip_not_allowed` audit line without the text), and the send gate refuses it. A LID chat whose number is unknown is ignored until you list its LID or its number becomes known; your own reply there is kept in memory and becomes a takeover if the LID turns out to be a listed chat. "Message yourself" always works. Anything but a list of phone numbers or JIDs as WhatsApp writes them (`6281…@s.whatsapp.net`, `…@lid`; not `0812…@s.whatsapp.net`, `620812…@s.whatsapp.net`, `…@c.us` or a `:device` suffix) stops the start. See "Testing with one contact" |
 | `disclosure.enabled` / `text` / `sessionGapHours` | `true` / … / `12` | AI disclosure on the first auto-reply per session |
-| `notifyOwnerOnAutoSend` | `true` | post each auto-reply to "Message yourself" |
+| `notifyOwnerOnAutoSend` | `true` | post each auto-reply to "Message yourself", as one line: `✅ Auto-replied to Name (+62…): "…"` |
 | `draftTtlHours` | `24` | pending drafts expire |
 | `guards.maxReplyChars` / `guards.sensitiveTerms` | `600` / list | auto-reply length cap; terms that force a draft unless in the facts |
 | `guards.ownerIdentifiers` | `[]` | your details that must never reach a customer, e.g. your Claude account email; with your local username, HOME and the app's paths they force a draft (and a warning on drafts) |

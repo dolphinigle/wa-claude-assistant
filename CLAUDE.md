@@ -32,7 +32,7 @@ draft in the owner's "Message yourself" chat.
 | Model | `sonnet`, thinking off (`claude.maxThinkingTokens: 0`) |
 | Auto-send | `answer` **and** the customer's message asks something **and** every gate passes; anything else → draft that names the reason (`no_question` or the gate) (2026-09-27) |
 | Default mode | `shadow`; live is `{"mode":"live"}` in `config.local.json` |
-| AI disclosure | On, first auto-send per 12 h session (Anthropic AUP); approved drafts carry no marker |
+| AI disclosure | On, first auto-send per 12 h session (Anthropic AUP), as a 🤖 prefix only (2026-09-27); approved drafts carry no marker |
 | Tone and facts | `knowledge.md`: `## Voice` for tone, `## Facts` is the only ground truth, `## Never` for hard rules |
 | WhatsApp client | Baileys `7.0.0-rc14`, exact pin. Switch triggers are in `docs/implementation-notes.md` |
 | Thanks | Never auto-answered (it asks nothing); skipped only after a closing this session, drafted otherwise (2026-09-26) |

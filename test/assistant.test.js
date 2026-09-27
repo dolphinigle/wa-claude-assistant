@@ -51,11 +51,11 @@ test('live: an answer is auto-sent with disclosure, quoted, marked read, owner n
   await deliver(message)
   const [sent] = transport.toCustomer()
   assert.equal(sent.chatId, ALICE)
-  assert.ok(sent.text.startsWith('🤖 Balasan otomatis dari asisten AI'))
-  assert.ok(sent.text.endsWith(ANSWER_HOURS.reply))
+  assert.equal(sent.text, `🤖 ${ANSWER_HOURS.reply}`, 'the disclosure is one icon in front of the reply')
   assert.deepEqual(sent.quotedRaw, message.raw)
   assert.deepEqual(transport.read, [message.id])
-  assert.match(transport.toSelf()[0], /✅ Auto-replied to 6282222222222|✅ Auto-replied to /)
+  assert.match(transport.toSelf()[0], /^🤖 ✅ Auto-replied to [^\n]+: "Kami buka/)
+  assert.ok(!transport.toSelf()[0].includes('\n'), 'the auto-reply notice is one line')
   assert.ok(store.isSentByBot(sent.id), 'the customer send is loop-guarded')
   assert.equal(store.countChatAutoSends(ALICE, 3_600_000), 1)
 })
@@ -96,7 +96,7 @@ test('disclosure only on the first auto-reply of a session', async t => {
   await deliver(incoming(ALICE, 'buka hari sabtu juga?', live()))
   advance(13 * 60 * 60 * 1000)
   await deliver(incoming(ALICE, 'jam buka lagi?', live()))
-  const disclosed = transport.toCustomer().map(item => item.text.startsWith('🤖 Balasan otomatis'))
+  const disclosed = transport.toCustomer().map(item => item.text.startsWith('🤖 '))
   assert.deepEqual(disclosed, [true, false, true])
 })
 
@@ -575,7 +575,7 @@ test('/ok, /edit and /no from self-chat', async t => {
     [BOB, 'Sudah kami terima Kak, terima kasih.']
   ])
   assert.deepEqual([1, 2, 3].map(id => store.getDraft(id).status), ['approved', 'edited', 'rejected'])
-  assert.ok(!transport.toCustomer().some(item => item.text.includes('Balasan otomatis')), 'approved drafts carry no AI marker')
+  assert.ok(!transport.toCustomer().some(item => item.text.includes('🤖')), 'approved drafts carry no AI marker')
 })
 
 test('self-chat: only the owner’s own /commands act; notes and non-fromMe messages are ignored', async t => {
