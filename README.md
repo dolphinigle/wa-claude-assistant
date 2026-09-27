@@ -110,7 +110,8 @@ npm start                 # run on WhatsApp in shadow mode
    { "mode": "live" }
    ```
 
-   Restart. Set `"autoSend": { "enabled": false }` to go live with drafts only.
+   Restart. Set `"autoSend": { "enabled": false }` to go live without auto-replies. The escalation placeholder has its
+   own switch: for drafts only, also set `"placeholder": { "enabled": false }` (`/status` shows both).
 
 `npm run dev` is a REPL: `alice: jam berapa buka?` is a message from contact alice, `me@alice: bentar ya kak` is
 you typing in alice's chat (human takeover), `me: /ok 1` is you in "Message yourself". Without `--fake-brain` it
@@ -169,12 +170,13 @@ start with 🤖 and are ignored, and so is anything you forward there (a custome
 | `/ok N` | send draft N as written (no AI marker: it is your approved reply) |
 | `/edit N <text>` | send your text instead of draft N |
 | `/no N` | discard draft N |
-| `/pause` · `/resume` | stop / allow all auto-replies (drafts keep coming) |
-| `/status` | mode, pending drafts, auto-replies in the last 24 h, last seen Claude quota, takeovers, muted chats |
-| `/mute <N, number or name>` · `/unmute …` | no auto-replies in that chat, on both its addressing forms (N = a draft number); drafts keep coming. A name matching more than one contact is refused: names are chosen by the senders |
+| `/pause` · `/resume` | stop / allow all auto-replies and escalation placeholders (drafts keep coming) |
+| `/status` | mode, whether auto-replies and the escalation placeholder are on, pending drafts, auto-replies and placeholders in the last 24 h, last seen Claude quota, takeovers, muted chats |
+| `/mute <N, number or name>` · `/unmute …` | no auto-replies or placeholders in that chat, on both its addressing forms (N = a draft number); drafts keep coming. A name matching more than one contact is refused: names are chosen by the senders |
 | `/help` | the list |
 
-Every escalation uses one notice format: `📝 DRAFT #N · contact`, what they wrote, Claude's one-line summary, the
+Every escalation uses one notice format: `📝 DRAFT #N · contact`, what they wrote, the placeholder they got
+(`↩️ They got: …`, `↩️ [SHADOW] would have sent: …`, or `↩️ They may have got (the send failed): …`), Claude's one-line summary, the
 suggested draft, Claude's reason, the gates that held back an answer (`Not auto-sent: …`, e.g. `guard:unsupported_amount:150000`
 or `triage_failed:timeout`), and the hints. There is no separate "urgent" format: the summary and reason say what it
 is about (a family emergency reads as one).
@@ -272,15 +274,21 @@ cancelled.
   please 🙏` when the message is English by `detectLanguage`), never Claude's words. It needs all of: the triage
   succeeded, Claude set `customer_waiting` (a new required schema field: a customer waiting for an answer or an action
   from you; anything but `true` counts as false), the message is no thanks and has a letter or digit or a file (not
-  `😡😡`, `🙏` or `?` alone), `placeholder.enabled`, not paused, the chat not muted, blocklisted or
+  `😡😡`, `🙏` or `?` alone; a thanks is read more loosely here than for the skip, chat spellings included:
+  `makasih bgt kak`, `trimakasih`, `thank u`, `matur nuwun`), `placeholder.enabled`, not paused, the chat not muted, blocklisted or
   `blocklist_unchecked`, no human takeover, the hourly and daily auto-send caps not reached, not backlog, and the
-  contact got none since it last had no open draft (one per open-draft period: after `/ok`, `/edit`, `/no`, expiry or
-  your own reply leaves nothing open, the next escalation gets one again). It is sent after the draft is created,
+  contact got none since it last had no open draft (one per open-draft period, drafts already open when it went out
+  included: after `/ok`, `/edit`, `/no`, expiry or your own reply leaves nothing open, the next escalation gets one
+  again). It is sent after the draft is created,
   through the send gate (shadow mode records it, `allowChats` and the blocklist refuse it), quotes nothing, gives no
   blue ticks, counts toward the auto-send caps, and counts as the session's AI disclosure (the next auto-reply in that
   session has no 🤖). The draft notice then says `↩️ They got: 🤖 Tunggu sebentar ya Kak 🙏` (`↩️ [SHADOW] would have
   sent: …`); why one was withheld goes to `data/audit.jsonl` (`placeholderWithheld` on the decision), not the notice.
-  A failed send changes nothing else. Like any send of ours, it is loop-guarded (its echo starts no takeover) and it
+  A send that certainly failed (refused by the send gate, or WhatsApp not connected) is undone, so the next escalation
+  may try again; it still counts as our side's newest word for the thanks skip. One that failed in flight may have
+  been delivered, so its period and its cap slot stand and the notice says `↩️ They may have got (the send failed): …`.
+  If your own reply on the phone cancels the draft while the placeholder goes out, the notice is one line naming what
+  they got, with no `/ok`. Like any send of ours, it is loop-guarded (its echo starts no takeover) and it
   is our side's newest word, so a thanks after it is not skipped as if nothing came after a closing.
 - **AI disclosure** (Anthropic AUP): the first auto-reply of each chat session (12 h gap) starts with 🤖
   (`disclosure.text`; the owner's choice on 2026-09-27, after a two-language sentence was too much text). An icon is a
@@ -334,7 +342,7 @@ answer/escalate switch; delete the key).
 | Key | Default | Meaning |
 |---|---|---|
 | `mode` | `"shadow"` | `shadow` never messages anyone but you; `live` really sends |
-| `autoSend.enabled` | `true` | `false` = no auto-replies, only drafts, even in live mode (the escalation placeholder has its own switch, `placeholder.enabled`) |
+| `autoSend.enabled` | `true` | `false` = no auto-replies, even in live mode; escalations are drafts, but a waiting customer still gets the escalation placeholder unless `placeholder.enabled` is `false` too |
 | `autoSend.maxPerChatPerHour` / `maxPerDay` | `3` / `30` | rolling-window caps (shadow would-sends and escalation placeholders count too) |
 | `humanTakeoverMinutes` | `30` | bot stays out of a chat after you type in it |
 | `debounceMs` | `15000` | wait for a burst to finish before triage |
@@ -374,21 +382,28 @@ messages was sent as a closing, and when that closing's thanks arrived). One fix
 fixture expects `answer` or `escalate` and marks auto-send as allowed (3: hours, address, listed price) or forbidden
 (the other 17). The social "ok makasih" still expects `answer`, since the prompt asks Claude for a thanks-back, but
 its auto-send is forbidden: it asks nothing, so the policy drafts it. Each fixture also marks the escalation
-placeholder as allowed (7: unlisted price, custom cake, complaint, unconfirmed transfer, discount, holiday hours, the
-half-answerable question) or forbidden (13: family and friends, spam, manipulation and injection, thanks and
-acknowledgements, a greeting alone, `😡😡`, and every answer case); the eval computes it with `decide()`. The key numbers are FORBIDDEN cases that would have auto-sent, escalations the policy skipped
+placeholder as allowed (10: unlisted price, custom cake, complaint, unconfirmed transfer, discount, holiday hours, the
+half-answerable question, and the three answer cases, which get one only if a gate holds their answer) or forbidden
+(10: family and friends, spam, manipulation and injection, thanks and acknowledgements, a greeting alone, `😡😡`); the
+eval computes it with `decide()`, and counts an allowed case as a miss only if it was escalated without one. The key numbers are FORBIDDEN cases that would have auto-sent, escalations the policy skipped
 (a skip reaches nobody, so an `escalate` fixture may only be skipped if it sets `skipOk`) and placeholders that would
-have gone to a FORBIDDEN case; all three must be 0. A `contextMessages` in `config.local.json` below the fixtures'
-longest history (4) is raised to it for the run, and the report says how much history Claude was given.
+have gone to a FORBIDDEN case; all three must be 0. The report also counts the FORBIDDEN cases Claude itself flagged
+`customer_waiting`, before the policy's backstops (a thanks, no letter or digit) withhold them: that line, not the
+hard gate, shows whether the prompt keeps the flag off. A `contextMessages` in `config.local.json` below the
+fixtures' longest history (4) is raised to it for the run, `autoSend.enabled` and `placeholder.enabled` are forced on
+(off, their gates would test nothing), and the report says how much history Claude was given.
 
 - [eval/last-run.md](eval/last-run.md) is a **rescore** (2026-09-27, no Claude calls) of the full run of 2026-09-27
-  (20 calls, `claude-sonnet-5`, thinking off, the first prompt with `customer_waiting`), with the policy rule added
-  after that run (no placeholder for a text without a letter or digit): **0 forbidden auto-sends**, **0 skipped
-  escalations**, **0 forbidden placeholders**, decision **19/20**, **3/3 allowed auto-sends**, **7/7 allowed
-  placeholders**, no triage errors. Latency: avg 5.8 s, 4.4–6.8 s.
+  (20 calls, `claude-sonnet-5`, thinking off, the first prompt with `customer_waiting`), with the policy rules added
+  after that run (no placeholder for a text without a letter or digit, a thanks read loosely for it) and the three
+  answer cases relabelled as placeholder-allowed: **0 forbidden auto-sends**, **0 skipped escalations**, **0 forbidden
+  placeholders**, decision **19/20**, **3/3 allowed auto-sends**, **7/7 allowed placeholders** among the escalated
+  allowed cases, **1** forbidden case flagged by Claude (`😡😡`, from the raw run), no triage errors. Latency: avg
+  5.8 s, 4.4–6.8 s.
 - That run itself failed the new gate once: Sonnet flagged `😡😡` as a waiting customer ("could indicate a
   complaint"), which would have sent it `🤖 Tunggu sebentar ya Kak 🙏`. Since then the prompt says an emoji alone is
-  `false` (**unverified**: that wording needs the next full `npm run eval`), and the policy withholds the placeholder
+  `false` (**unverified**: the next full `npm run eval` verifies it when its "FORBIDDEN cases Claude flagged" line
+  reads 0; the hard gate cannot show it), and the policy withholds the placeholder
   from any text without a letter or digit, whatever Claude says. Family, friends, spam, both manipulation fixtures,
   the thanks and the greeting were all `customer_waiting: false`.
 - That run also inherited `contextMessages: 0` from `config.local.json` (a live-test setting), so Claude saw none of
