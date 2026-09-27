@@ -100,6 +100,9 @@ thanks path even had an exponential-time matcher). Both are deliberately fail-cl
 
 ## Working style
 
+- **Keep it light (owner, 2026-09-27): this is a prototype.** One implementer with its own tests, then at most one
+  review round when the change touches what reaches a customer; prefer `--rescore` and `--only=` eval subsets over full
+  runs. Don't polish docs or chase word-list edge cases.
 - **Ultracode sessions:** use workflows for substantive work. The pattern that worked: one implementer → review
   lenses → one skeptic per finding (defaults to refuted) → one fixer → eval. It is saved as `.claude/workflows/review-fix.js`
   (`args: {context, lenses?, maxRounds?, evalBudget?}`). Run coding agents one at a time, since they share the working tree.
