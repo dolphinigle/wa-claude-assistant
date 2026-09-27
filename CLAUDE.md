@@ -32,7 +32,8 @@ draft in the owner's "Message yourself" chat.
 | Model | `sonnet`, thinking off (`claude.maxThinkingTokens: 0`) |
 | Auto-send | `answer` **and** the customer's message asks something **and** every gate passes; anything else → draft that names the reason (`no_question` or the gate) (2026-09-27) |
 | Default mode | `shadow`; live is `{"mode":"live"}` in `config.local.json` |
-| AI disclosure | On, first auto-send per 12 h session (Anthropic AUP), as a 🤖 prefix only (2026-09-27); approved drafts carry no marker |
+| AI disclosure | On, first auto-send per 12 h session (Anthropic AUP), as a 🤖 prefix only (2026-09-27); an escalation placeholder that starts with 🤖 counts as it; approved drafts carry no marker |
+| Escalation placeholder | An escalated customer Claude flags `customer_waiting` gets the fixed `🤖 Halo Kak, tunggu sebentar ya 🙏` (`🤖 Hi! One moment please 🙏` in English), once per open-draft period; a customer's greeting alone counts as waiting. Never family or friends, spam, manipulation (`tag_like`), a thanks, a text without words, backlog, or a paused, muted, blocked, taken-over or capped chat; none when `autoSend.enabled` is false (drafts only = nothing automated) (2026-09-27) |
 | Tone and facts | `knowledge.md`: `## Voice` for tone, `## Facts` is the only ground truth, `## Never` for hard rules |
 | WhatsApp client | Baileys `7.0.0-rc14`, exact pin. Switch triggers are in `docs/implementation-notes.md` |
 | Thanks | Never auto-answered (it asks nothing); skipped only after a closing this session, drafted otherwise (2026-09-26) |
@@ -50,7 +51,11 @@ confirmation here: just do it and report.
 - **Isolation assertions fail closed** on every call: `tools == ["StructuredOutput"]`, no MCP, `apiKeySource: "none"`.
 - **`policy.decide()` is pure.** A triage failure or a malformed decision → escalate, never auto-send.
 - **Owner commands** come only from the owner's own `/` messages in self-chat: not bot-sent, not forwarded.
-- **Each message id is processed once**, and history or backlog never auto-sends.
+- **Each message id is processed once**, and history or backlog never auto-sends and never gets a placeholder.
+- **No link previews.** `send()` in `src/transport/whatsapp.js` passes `linkPreview: null`: otherwise Baileys fetches
+  URLs in outgoing text from this machine, and notices quote customers' and spammers' links.
+- **Key material never reaches a log.** libsignal's session dumps are redacted before the console
+  (`src/transport/redact-signal-logs.js`); read the bot's logs through a filter, never raw.
 
 ## Commands
 
@@ -65,12 +70,14 @@ confirmation here: just do it and report.
 
 **Eval rule:**
 - A prompt, knowledge, model or thinking change needs a full `npm run eval`. A guards or policy change needs `--rescore`.
-- Hard gate: **0 forbidden auto-sends and 0 skipped escalations**.
+- Hard gate: **0 forbidden auto-sends, 0 skipped escalations and 0 forbidden placeholders**. Also read "FORBIDDEN cases
+  Claude flagged `customer_waiting`": the policy's backstops hide Claude's misses from the gate.
+- `npm run eval` reads `config.local.json` too; the harness raises `contextMessages` to the fixtures' histories.
 - Update `eval/last-run.md` and the README eval section after a run.
 
 ## Known weak spot
 
-Word matching on customer text decides two things, and every review round has found cases it gets wrong (the old
+Word matching on customer text decides three things, and every review round has found cases it gets wrong (the old
 thanks path even had an exponential-time matcher). Both are deliberately fail-closed; keep them that way.
 - **Auto-send:** `asksSomething` in `src/guards.js` (`no_question` in `decide()`, right after the decision). A message
   asks if it has a `?` (links left out), a question word or phrase, a request word with something to request in its
@@ -84,8 +91,12 @@ thanks path even had an exponential-time matcher). Both are deliberately fail-cl
   customer's untriaged content (`lastUntriagedAt`: captionless files, pins, stubs, stickers, reactions, missed calls)
   and newest non-thanks message (`lastOpenedAt`) on either form. A false match drops a real message: keep the
   vocabulary narrow.
-- Six review rounds on 2026-09-26/27 (after `2a0c9b7`) confirmed and fixed 47 findings; the loop did not run dry
-  (9/8/7 in the last three, mostly word-list edge cases), and the round-3 fixes (`4515127`..`2ee44fe`) are unreviewed.
+- **Placeholder:** Claude's `customer_waiting` decides it; the policy only ever withholds it (`placeholderWithheld`:
+  `isLooseThanks`, no letter or digit, `tag_like` on the text and its quotes). `isLooseThanks` may read loosely (a false
+  match only withholds a fixed text) but must never widen the skip, which keeps the narrow `isThanks`. With no chat
+  history, a family member's bare "Halo" looks like a customer's and gets the placeholder.
+- Ten review rounds on 2026-09-26/27 (after `2a0c9b7`) confirmed and fixed or deferred 86 findings; the loop never ran
+  dry (mostly word-list edge cases). The last round's fixes (`dd9361b`..`c2aade9`) are unreviewed.
 
 ## Working style
 
