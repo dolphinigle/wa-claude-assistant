@@ -121,7 +121,7 @@ const skippedEscalations = rows.filter(row => row.skippedEscalation)
 const allowedExpected = rows.filter(row => row.fixture.autoSend === 'allowed').length
 const allowedActual = rows.filter(row => row.allowedAutoSend).length
 const forbiddenPlaceholders = rows.filter(row => row.forbiddenPlaceholder)
-// The policy's own backstops (a thanks, no_words) hide what Claude said: this shows whether the prompt keeps
+// The policy's own backstops (a thanks, no_words, tag_like) hide what Claude said: this shows whether the prompt keeps
 // customer_waiting false on the FORBIDDEN cases by itself.
 const flaggedForbidden = rows.filter(row => row.fixture.placeholder === 'forbidden' && row.result.triage?.customer_waiting === true)
 // An allowed case that auto-sends gets its answer instead: only its escalation should get a placeholder.

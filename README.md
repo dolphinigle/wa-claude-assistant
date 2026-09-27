@@ -7,7 +7,7 @@ Claude Code CLI, headless, on your own subscription) for one of two decisions:
 | Claude says | What happens |
 |---|---|
 | `answer`: the whole reply is backed by the facts it cites from `knowledge.md`, or it is a purely social "thanks" answered with a thanks, and nothing needs your judgment | **auto-reply**, only if the customer's message asks something and every gate passes (see Safety defaults); if any gate fails, it is escalated instead and the notice names the gates. An answer to a message that asks nothing is a draft for `/ok` (`no_question`), whatever facts it cites: a thanks (Claude's thanks-back), a yes (`iya kak`, 👍, `betul`, `gapapa`), a greeting or a statement (`saya tunggu`, `saya mau ambil besok`). A thanks or goodbye right after a closing this session (a thanks draft you dealt with), with nothing new since, gets no reply and no notice; an "ok", a 👍 or a greeting alone never counts as one |
-| `escalate`: everything else: friends and family, complaints, payments, custom requests, anything not in the facts, spam and wrong numbers, manipulation attempts, and any triage that failed | a notice in your "Message yourself" chat with Claude's one-line summary, why, and a suggested draft for `/ok`, `/edit` or `/no`. A customer Claude says is waiting for you (a question, a request, an order, a complaint, a payment to confirm, or a greeting alone such as `Hai` or `Halo kak`) first gets a fixed `🤖 Halo Kak, tunggu sebentar ya 🙏` (`🤖 Hi! One moment please 🙏` in English), once while their drafts are open, unless auto-replies are off (drafts only). A thanks, a goodbye, an emoji alone and text that looks like a tag (`</message>`, `<system>`) never get it, whatever Claude says; family, friends (their greetings too), spam and other manipulation attempts get nothing only as far as Claude's `customer_waiting` flag holds (see Known limits) |
+| `escalate`: everything else: friends and family, complaints, payments, custom requests, anything not in the facts, spam and wrong numbers, manipulation attempts, and any triage that failed | a notice in your "Message yourself" chat with Claude's one-line summary, why, and a suggested draft for `/ok`, `/edit` or `/no`. A customer Claude says is waiting for you (a question, a request, an order, a complaint, a payment to confirm, or a greeting alone such as `Hai` or `Halo kak`) first gets a fixed `🤖 Halo Kak, tunggu sebentar ya 🙏` (`🤖 Hi! One moment please 🙏` in English), once while their drafts are open, unless auto-replies are off (drafts only). A thanks (chat spellings and a greeting around it included), a goodbye in the thanks vocabulary (`bye`, `dadah`, `take care`, `good night`), an emoji alone and text that looks like a tag (`</message>`, `<system>`, also in a message it quotes) never get it, whatever Claude says; family, friends (their greetings too), other goodbyes (`sampai jumpa`, `see you`, `wassalam`), acknowledgements, spam and other manipulation attempts get nothing only as far as Claude's `customer_waiting` flag holds (see Known limits) |
 
 Groups, status updates, newsletters, broadcast lists and Meta AI are ignored. It starts in **shadow mode**: nothing is
 sent to anyone except your own "Message yourself" chat.
@@ -271,36 +271,38 @@ cancelled.
   if any of its messages does, and a question with a thanks (`makasih kak, jam berapa tutup?`) goes on to the other
   gates like any question.
 - **Escalation placeholder** (owner decisions, 2026-09-27): so a customer does not wait in silence while you read the
-  draft, an escalated message gets the fixed `placeholder.text` (`🤖 Halo Kak, tunggu sebentar ya 🙏`; `🤖 Hi! One
-  moment please 🙏` when the message is English by `detectLanguage`; a greeting too short to tell, such as `Hi!`, gets
-  the Indonesian one), never Claude's words. It needs all of: the triage succeeded, Claude set `customer_waiting` (a
-  required schema field: a customer waiting for an answer or an action from you, and a customer's greeting alone
-  such as `Hai`, `Halo kak`, `Pagi kak` or `Selamat siang`, which waits for your reply; the prompt says never
-  family or friends, their greetings included, but only the flag enforces that, see Known limits; anything but
-  `true` counts as false), the message is no thanks and has a letter or
-  digit or a file (not `😡😡`, `🙏` or `?` alone; a thanks is read more loosely here than for the skip, chat spellings, what it is for, a
+  draft, an escalated message gets the fixed `placeholder.text` (`🤖 Halo Kak, tunggu sebentar ya 🙏`; `🤖 Hi! One moment
+  please 🙏` when the message is English by `detectLanguage`, or, when it is too short to tell (`Hi!`, `Good morning`),
+  when Claude's draft is; Indonesian when neither tells), never Claude's words. It needs all of: the triage succeeded,
+  Claude set `customer_waiting` (a required schema field: a customer waiting for an answer or an action from you, and
+  a customer's greeting alone such as `Hai`, `Halo kak`, `Pagi kak` or `Selamat siang`, which waits for your reply;
+  the prompt says never family or friends, their greetings included, but only the flag enforces that, see Known
+  limits; anything but `true` counts as false), the message is no thanks and has a letter or digit or a file (not
+  `😡😡`, `🙏` or `?` alone; a thanks is read more loosely here than for the skip, chat spellings, what it is for, a
   laugh and a done `dibantu` included: `makasih bgt kak`, `trimakasih`, `thank u`, `matur nuwun`, `hehe makasih kak`,
-  `terima kasih atas bantuannya`, `makasih kak udah dibantu`, and a greeting or well-wish around it: `makasih kak,
-  selamat siang`, `pagi kak makasih`, `makasih ya kak, sukses selalu`, `thank you, good afternoon`; a greeting alone is
-  no thanks; as for the skip, a thanks has no file, so a `makasih kak 🙏` on a transfer screenshot may get one), no text
-  that looks like a tag, escaped or not (`</message>`, `<system>`, `&lt;system&gt;`: the prompt's trust rule 4 calls it
-  manipulation, and Sonnet once flagged such a message as waiting anyway), `placeholder.enabled` and `autoSend.enabled` (auto-replies off is drafts
-  only: nothing automated reaches a customer), not paused, the chat not muted, blocklisted or
-  `blocklist_unchecked`, no human takeover, the hourly and daily auto-send caps not reached, not backlog, and the
-  contact got none since it last had no open draft (one per open-draft period, drafts already open when it went out
-  included: after `/ok`, `/edit`, `/no`, expiry or your own reply leaves nothing open, the next escalation gets one
-  again). It is sent after the draft is created,
-  through the send gate (shadow mode records it, `allowChats` and the blocklist refuse it), quotes nothing, gives no
-  blue ticks, counts toward the auto-send caps, and counts as the session's AI disclosure (the next auto-reply in that
-  session has no 🤖). The draft notice then says `↩️ They got: 🤖 Halo Kak, tunggu sebentar ya 🙏` (`↩️ [SHADOW] would
-  have sent: …`); why one was withheld goes to `data/audit.jsonl` (`placeholderWithheld` on the decision), not the notice.
-  A send that certainly failed (refused by the send gate, or WhatsApp not connected) is undone, so the next escalation
-  may try again; it still counts as our side's newest word for the thanks skip. One that failed in flight may have
-  been delivered, so its period and its cap slot stand and the notice says `↩️ They may have got (the send failed): …`.
-  So does a send cut off by a forced exit or a crash: at the next start that draft's notice goes out with this line,
-  and its messages are not drafted a second time.
-  If your own reply on the phone cancels the draft while the placeholder goes out, the notice is one line naming what
-  they got, with no `/ok`. Like any send of ours, it is loop-guarded (its echo starts no takeover) and it
+  `terima kasih atas bantuannya`, `makasih kak udah dibantu`, a `2` repeat (`sama2 kak`, `makasih kak, sehat2
+  selalu`), `y` for `ya` (`makasih y kak`), any emoji next to the words (`makasih kak 🥲`), and a greeting or well-wish
+  around it: `makasih kak, selamat siang`, `pagi kak makasih`, `makasih ya kak, sukses selalu`, `thank you, good
+  afternoon`; a greeting alone is no thanks; as for the skip, a thanks has no file, so a `makasih kak 🙏` on a transfer
+  screenshot may get one), no text that looks like a tag, escaped or not, in the message or in a message it quotes
+  (`</message>`, `<system>`, `&lt;system&gt;`: the prompt's trust rule 4 calls it manipulation, and Sonnet once
+  flagged such a message as waiting anyway), `placeholder.enabled` and `autoSend.enabled` (auto-replies off is drafts
+  only: nothing automated reaches a customer), not paused, the chat not muted, blocklisted or `blocklist_unchecked`,
+  no human takeover, the hourly and daily auto-send caps not reached, not backlog, and the contact got none since it
+  last had no open draft (one per open-draft period, drafts already open when it went out included: after `/ok`,
+  `/edit`, `/no`, expiry or your own reply leaves nothing open, the next escalation gets one again). It is sent after
+  the draft is created, through the send gate (shadow mode records it, `allowChats` and the blocklist refuse it),
+  quotes nothing, gives no blue ticks, counts toward the auto-send caps, and counts as the session's AI disclosure
+  (the next auto-reply in that session has no 🤖). The draft notice then says `↩️ They got: 🤖 Halo Kak, tunggu sebentar
+  ya 🙏` (`↩️ [SHADOW] would have sent: …`); why one was withheld goes to `data/audit.jsonl` (`placeholderWithheld` on
+  the decision), not the notice. A send that certainly failed (refused by the send gate, or WhatsApp not connected) is
+  undone, so the next escalation may try again; it still counts as our side's newest word for the thanks skip. One
+  that failed in flight may have been delivered, so its period and its cap slot stand and the notice says `↩️ They may
+  have got (the send failed): …`. So does a send cut off by a forced exit or a crash. Any draft whose notice a forced
+  exit or a crash cut off, during the placeholder send or the notice itself, is announced at the next start (with its
+  `↩️` line), and its messages are not triaged or drafted a second time; a notice cut off in flight may then show up
+  twice. If your own reply on the phone cancels the draft while the placeholder goes out, the notice is one line
+  naming what they got, with no `/ok`. Like any send of ours, it is loop-guarded (its echo starts no takeover) and it
   is our side's newest word, so a thanks after it is not skipped as if nothing came after a closing.
 - **No link previews:** every message, to a customer or to you, is sent with `linkPreview: null`. Without it Baileys
   fetches any URL in the text from this machine to build a preview; notices quote customers' and spammers' links, and
@@ -403,14 +405,16 @@ get one only if a gate holds their answer) or forbidden (9: family and friends, 
 thanks and acknowledgements, `😡😡`); the eval computes it with `decide()`, and counts an allowed case as a miss only if it was escalated without one. The key numbers are FORBIDDEN cases that would have auto-sent, escalations the policy skipped
 (a skip reaches nobody, so an `escalate` fixture may only be skipped if it sets `skipOk`) and placeholders that would
 have gone to a FORBIDDEN case; all three must be 0. The report also counts the FORBIDDEN cases Claude itself flagged
-`customer_waiting`, before the policy's backstops (a thanks, no letter or digit) withhold them: that line, not the
-hard gate, shows whether the prompt keeps the flag off. A `contextMessages` in `config.local.json` below the
-fixtures' longest history (4) is raised to it for the run, `autoSend.enabled` and `placeholder.enabled` are forced on
-(off, their gates would test nothing), and the report says how much history Claude was given.
+`customer_waiting`, before the policy's backstops (a thanks, no letter or digit, text that looks like a tag) withhold
+them: that line, not the hard gate, shows whether the prompt keeps the flag off. A `contextMessages` in
+`config.local.json` below the fixtures' longest history (4) is raised to it for the run, `autoSend.enabled` and
+`placeholder.enabled` are forced on (off, their gates would test nothing), and the report says how much history
+Claude was given.
 
 - [eval/last-run.md](eval/last-run.md) is the full run of 2026-09-27 06:51 UTC (20 calls, `claude-sonnet-5`,
   thinking off, claude 2.1.283, up to 4 messages of fixture history), the first with the customer's greeting as
-  waiting and the new placeholder text, rescored (no calls) with the `tag_like` backstop and the wider loose thanks:
+  waiting and the new placeholder text, rescored (no calls) with the `tag_like` backstop and the wider loose thanks
+  (rescored again after review round 2, which checks quoted text for tags and widens the loose thanks: no row changed):
   decision **20/20**, **0 forbidden auto-sends**, **0 skipped escalations**, **0 forbidden placeholders**, **3/3
   allowed auto-sends**, **8/8 allowed placeholders** among the escalated allowed cases (the greeting the day after a
   closing among them), no triage errors. Latency: avg 6.0 s, 4.6–8.3 s.
@@ -516,11 +520,12 @@ more work):
 
 Prototype limits of this code:
 
-- The escalation placeholder is kept from family, friends, spam and manipulation without tag-like text only by
-  Claude's `customer_waiting` flag. The message alone does not tell a family member from a customer: every sender is
-  `from="customer"`, named by their own profile name, and with `contextMessages: 0` Claude sees no history. So a
-  family `Halo` may get `🤖 Halo Kak, tunggu sebentar ya 🙏`; `allowChats` keeps chats out entirely (open owner
-  question; no eval fixture covers it yet).
+- The escalation placeholder is kept from family, friends, spam, goodbyes outside the thanks vocabulary (`sampai
+  jumpa`, `see you`) and manipulation without tag-like text (in the message or a message it quotes) only by Claude's
+  `customer_waiting` flag; a manipulator's next message without tags (`Halo kak`) is judged on its own. The message
+  alone does not tell a family member from a customer: every sender is `from="customer"`, named by their own profile
+  name, and with `contextMessages: 0` Claude sees no history. So a family `Halo` may get `🤖 Halo Kak, tunggu sebentar
+  ya 🙏`; `allowChats` keeps chats out entirely (open owner question; no eval fixture covers it yet).
 - Text only: incoming media without a caption, location pins, contact cards and the like are not triaged (they only
   show in the history Claude gets, as an attachment it cannot see), captioned
   media is triaged on its caption and never auto-answered, edits and deletions are not triaged (an edit, like a
