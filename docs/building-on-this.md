@@ -98,6 +98,14 @@ personal WhatsApp account with two testers. Not reviewed by a human.
   your data-protection law (Indonesia's UU PDP covers customer service).
 - **Voice and rules** stay hand-written: `## Voice` (tone, forms of address) and `## Never` (no payment details, no
   discounts the facts don't state, no personal data).
+- **Done once (2026-09-28, branch `borma-demo`, README "Borma demo")**: `src/lookup.js` matches the message against an
+  exported catalog (IDF-weighted title words plus a few synonyms: "susu" is rarer than "ultra" in the titles, so
+  without "susu = milk" a biscuit outranked Ultra Milk), adds stores, and looks up the sender's own orders live by the
+  chat's own number (16 MB, 2–3 s per BigQuery query). Claude cited the lookup ids correctly on the first run. What
+  held the answers were the guards: the owner's email domain was the shop's (`private_detail` on every "Borma Dago";
+  identifiers the facts state are public now), and a bare `bormadago.com` was not in the product fact (it is now).
+  Demo mode on real data keeps the price check (`demo_unsupported_amount`). The `bq` CLI's JSON gives every value as
+  a string, `"false"` included.
 
 ## What the live test taught (short version; details in reference-guide §13)
 

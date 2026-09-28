@@ -187,6 +187,42 @@ reach real customers by accident. What changes:
 
 `npm run eval` always runs with demo mode off: its fixtures hold the real rules.
 
+### Borma demo (branch `borma-demo`)
+
+On this branch the assistant answers Borma customers from real data (docs/building-on-this.md, "Real data"):
+`knowledge.md` holds Borma's voice, rules and the facts the shop's own pages confirm; per message, `src/lookup.js`
+adds the matching products (selling price per store, current promo, a stock status with its time), the stores, and,
+for an order question, the sender's own online orders. These go to Claude in a trusted `<lookup>` block and to the
+guards as facts (`[F100]`+ products, `[F401]`/`[F402]` stores, `[F900]`+ orders), so every price and number of an
+answer is checked against them. The made-up bakery moved to `eval/knowledge.md`, which the eval and the tests use.
+
+1. **Export** (read-only, `bq` CLI logged in to `solvent-staging`; about 155 MB scanned, 10 s):
+   `npm run export` writes `data/borma/catalog.json` (the 300 best sellers of the last 30 days per store, about 460
+   products) and `data/borma/stores.json`. `data/` is gitignored: no company data is committed. Re-run it before a
+   demo session: prices and stock are a snapshot, and the answers say its time.
+2. **Enable** in `config.local.json`, next to the testers in `allowChats` (and `demo` if you want it):
+   `"borma": { "enabled": true }`. Without the export the start stops and says to run it.
+3. **Restart** (`npm start`): the startup line says `BORMA data`.
+
+- **Orders** are looked up only when a message asks about one (pesanan, order, status, kirim, sampai, resi, paket …)
+  and only by the chat's own WhatsApp number (its `@s.whatsapp.net` JID, or the one WhatsApp links to its LID), never
+  by a number in a message. A LID chat whose number is unknown gets no order facts. The query matches `auth_user` by
+  `+62…` (all real numbers are stored that way), skips staff accounts (in-store orders belong to cashiers) and returns
+  at most the 5 newest **online** orders of 30 days: number, status in the app's Indonesian, total, date, store,
+  delivery or pickup, last shipping event. About 16 MB and 2–3 s per query, cached per number for a minute; a failure
+  or more than 8 s (`borma.orderTimeoutMs`) means no order facts and a note to Claude, which then escalates. In-store
+  purchases (98% of sales) are not linked to any phone.
+- **Guards**: in demo mode the facts checks stay off as before, but with Borma data every price or percentage must
+  still come from the cited facts (`demo_unsupported_amount`). A digit run the facts state (an order number, the CS
+  number) is not held as an account number, and a `guards.ownerIdentifiers` word the facts state (`bormadago`, when
+  your email is on that domain) is not a private detail.
+- **Not in any system**: store opening hours. `## Never` forbids stating them; add them as a fact once confirmed.
+- **Risk**: this runs on your personal WhatsApp number (Baileys linked device, against WhatsApp's terms: the ban risk
+  is that number), and the sender's own order details go to Claude on your subscription. Keep it to testers who know.
+- `npm run eval -- --borma` runs `eval/fixtures-borma.json` (5 fixtures) against `knowledge.md` and the export, without
+  orders, and writes to `data/borma/` (the reports hold shop data). 2026-09-28, 4 fixtures (price, stock, order
+  question without a number, a faked lookup block): 4/4 decisions, 0 forbidden auto-sends or placeholders.
+
 ### Pairing fallback (PR #2765)
 
 Pairing passed on unpatched rc14 on 2026-09-26, so this is only for a future re-pair that fails. If the phone
@@ -417,6 +453,7 @@ answer/escalate switch; delete the key).
 | `placeholder.enabled` / `text.id` / `text.en` | `true` / `🤖 Halo Kak, tunggu sebentar ya 🙏` / `🤖 Hi! One moment please 🙏` | the fixed reply to a waiting customer whose message is escalated (see Safety defaults); sent only while `autoSend.enabled` is on too, and `/pause` stops it. Both texts must be non-empty strings or the start stops |
 | `greetingReply.enabled` / `text.id` / `text.en` | `true` / `Halo Kak, ada yang bisa saya bantu? 🙏` / `Hi! How can I help you? 🙏` | the fixed greeting-back to a waiting customer's greeting alone (see Safety defaults), sent as an auto-reply (🤖 first on the session's first reply); `false` drafts it as before. Both texts must be non-empty strings or the start stops |
 | `demo.enabled` / `maxPerChatPerHour` | `false` / `30` | demo mode: **invents answers** the facts do not give, for testers only; `true` needs a non-empty `allowChats` or the start stops. See "Demo mode" |
+| `borma.enabled` / `maxProducts` / `orders` / `orderTimeoutMs` / `orderCacheMs` | `false` / `10` / `true` / `8000` / `60000` | Borma demo: per-message facts from `data/borma/` (`npm run export`) and the sender's own orders from BigQuery. See "Borma demo" |
 | `notifyOwnerOnAutoSend` | `true` | post each auto-reply to "Message yourself", as one line: `✅ Auto-replied to Name (+62…): "…"` |
 | `draftTtlHours` | `24` | pending drafts expire |
 | `guards.maxReplyChars` / `guards.sensitiveTerms` | `600` / list | auto-reply length cap; terms that force a draft unless in the facts |
@@ -543,7 +580,9 @@ src/brain/prompt.js         escaped stdin user turn   src/brain/fake.js      key
 src/transport/whatsapp.js   Baileys adapter           src/transport/wa-normalize.js  pure message helpers
 src/transport/console.js    REPL transport            prompts/               system prompt + schema
 src/chat-lists.js           blocklist, allowChats
-scripts/selftest.js, scripts/eval.js, eval/fixtures.json, test/ (node:test, no network)
+src/lookup.js               Borma per-message facts   src/bq.js              read-only bq CLI runner
+scripts/selftest.js, scripts/eval.js, scripts/export-borma.js, eval/fixtures*.json, eval/knowledge.md,
+test/ (node:test, no network)
 ```
 
 ## Known limits and open questions

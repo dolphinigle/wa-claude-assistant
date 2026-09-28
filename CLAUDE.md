@@ -39,6 +39,7 @@ draft in the owner's "Message yourself" chat.
 | Thanks | Never auto-answered (it asks nothing); skipped only after a closing this session, drafted otherwise (2026-09-26) |
 | Greeting reply | A waiting customer's greeting alone that opens the conversation gets the fixed `greetingReply.text` (`Halo Kak, ada yang bisa saya bantu? 🙏`) as an auto-send, once per session, through the non-Claude gates; `greetingReply.enabled: false` turns it off (2026-09-27) |
 | Demo mode | Opt-in `"demo": {"enabled": true}` in `config.local.json`, only with a non-empty `allowChats`: Claude answers like CS and may invent what the facts don't give (`prompts/triage-demo.md`); guards skip the facts checks but `demo_payment_detail` holds bank, account and transfer details; no `no_question` hold; per-chat cap `demo.maxPerChatPerHour`. The eval forces it off (2026-09-27) |
+| Borma demo | Branch `borma-demo`: `knowledge.md` is Borma's (the bakery is `eval/knowledge.md`, used by the eval and tests); `"borma": {"enabled": true}` adds per-message catalog, store and own-order facts (README "Borma demo"). In demo mode prices must still come from the cited facts (2026-09-28) |
 | Trying it live | `allowChats` in `config.local.json`: only the listed chats are handled, every other chat is untouched (2026-09-27) |
 
 Ask the owner before changing **what gets auto-sent, drafted, or silently skipped**. Mechanical work needs no plan
@@ -69,6 +70,8 @@ confirmation here: just do it and report.
 | `npm run eval` | 24 fixtures through real Claude + guards + policy → `eval/last-run.{md,json}` |
 | `npm run eval -- --rescore=eval/last-run.json` | Re-apply current guards/policy to saved results, 0 calls |
 | `npm run eval -- --only=id1,id2` | Subset → `eval/last-run-partial.*` |
+| `npm run export` | Borma demo (this branch): read-only BigQuery export → `data/borma/` (~155 MB scanned) |
+| `npm run eval -- --borma` | `eval/fixtures-borma.json` (5 calls) against `knowledge.md` + the export → `data/borma/` |
 
 **Eval rule:**
 - A prompt, knowledge, model or thinking change needs a full `npm run eval`. A guards or policy change needs `--rescore`.
