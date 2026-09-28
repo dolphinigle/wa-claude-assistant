@@ -228,8 +228,16 @@ answer is checked against them. The made-up bakery moved to `eval/knowledge.md`,
 - **Risk**: this runs on your personal WhatsApp number (Baileys linked device, against WhatsApp's terms: the ban risk
   is that number), and the sender's own order details go to Claude on your subscription. Keep it to testers who know.
 - `npm run eval -- --borma` runs `eval/fixtures-borma.json` (5 fixtures) against `knowledge.md` and the export, without
-  orders, and writes to `data/borma/` (the reports hold shop data). 2026-09-28, 4 fixtures (price, stock, order
-  question without a number, a faked lookup block): 4/4 decisions, 0 forbidden auto-sends or placeholders.
+  orders, and writes to `data/borma/` (the reports hold shop data). 2026-09-28 evening, after the per-sender replies:
+  5/5 decisions, 0 forbidden auto-sends or placeholders, 3/3 holding replies written, passed the guard and distinct
+  ("Baik Kak Sari, pertanyaan soal status pengiriman pesanannya saya teruskan …").
+
+**Testing it.** Testers (listed in `allowChats`) message your number; nobody types in their chat from your phone for
+`humanTakeoverMinutes` before. Price and stock questions (`harga indomie goreng berapa?`, `ada susu ultra di dago?`,
+`promo apa aja?`) are answered from the export; store questions from the store facts; `pesanan saya sudah sampai
+mana?` from the tester's own online orders, if their WhatsApp number has a bormadago.com account. Anything else is a
+draft for you, and a waiting customer gets Claude's own holding reply for them (no fixed text), e.g. `🤖 Baik Kak
+Sari, pertanyaan soal … saya teruskan ke tim Borma ya 🙏`.
 
 ### Pairing fallback (PR #2765)
 
