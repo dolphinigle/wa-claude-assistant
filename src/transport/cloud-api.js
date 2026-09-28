@@ -25,6 +25,10 @@ const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000
 // Meta counts the window from its own receipt of the user's message; a send close to the edge can still land outside.
 const WINDOW_MARGIN_MS = 5 * 60 * 1000
 const OUT_OF_WINDOW = 131047
+// Meta refuses a text.body over 4096 characters (text-messages reference). `length` counts UTF-16 units, never fewer
+// than code points, so a clip by it fits whichever way Meta counts.
+const MAX_TEXT_LENGTH = 4096
+const CLIPPED = '\n… (cut here: WhatsApp allows 4096 characters per message)'
 
 // Files reach Claude only by their caption, as on Baileys (wa-normalize.js). Stickers and reactions are no content for
 // the history, but like a file they are never triaged and must hold a thanks after them.
@@ -41,6 +45,14 @@ export function verifySignature (rawBody, header, appSecret) {
   const expected = Buffer.from(createHmac('sha256', appSecret).update(rawBody).digest('hex'))
   const given = Buffer.from(header.slice('sha256='.length).toLowerCase())
   return given.length === expected.length && timingSafeEqual(given, expected)
+}
+
+/** An owner notice (a long draft, a long backlog list) is clipped rather than refused: a refused notice stays at the
+ * head of the owner outbox, and the flush stops there, so every notice behind it would wait for good. */
+function clipForWhatsApp (text) {
+  if (text.length <= MAX_TEXT_LENGTH) return text
+  const head = text.slice(0, MAX_TEXT_LENGTH - CLIPPED.length)
+  return (/[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head) + CLIPPED // never half an emoji
 }
 
 const sameSecret = (a, b) => typeof a === 'string' && typeof b === 'string' &&
@@ -226,7 +238,9 @@ export function createCloudApiTransport ({ config, store, onMessage, onUntriaged
   }
 
   function handleRequest (req, res) {
-    const url = new URL(req.url, 'http://localhost')
+    let url
+    // A request-target such as `//` makes `new URL` throw, and a throw in the listener would end the process.
+    try { url = new URL(req.url, 'http://localhost') } catch { return res.writeHead(400).end() }
     if (url.pathname !== webhookPath) return res.writeHead(404).end()
     if (req.method === 'GET') {
       const ok = url.searchParams.get('hub.mode') === 'subscribe' && sameSecret(url.searchParams.get('hub.verify_token'), cloud.verifyToken)
@@ -263,7 +277,15 @@ export function createCloudApiTransport ({ config, store, onMessage, onUntriaged
     async start () {
       // First start ever: anything Meta still retries from before it is history, never handled (as on Baileys).
       store.seedHistoryFloor(Math.floor(now() / 1000))
-      server = http.createServer(handleRequest)
+      // Nothing a request carries may stop the bot: anything this path did not foresee is a 500, not a crash.
+      server = http.createServer((req, res) => {
+        try {
+          handleRequest(req, res)
+        } catch (error) {
+          logger.error(`[cloud-api] webhook request failed: ${error.message}`)
+          if (!res.headersSent) res.writeHead(500).end()
+        }
+      })
       await new Promise((resolve, reject) => {
         server.once('error', reject)
         // Loopback only: the tunnel reaches it from this machine, the LAN never does.
@@ -287,7 +309,7 @@ export function createCloudApiTransport ({ config, store, onMessage, onUntriaged
     send,
     // Notices carry other customers' texts and numbers: only ever to the owner's number.
     async sendToSelf (text, options) {
-      const sent = await send(ownerChatId, text, options)
+      const sent = await send(ownerChatId, clipForWhatsApp(text), options)
       if (sent.id) {
         selfSends.set(sent.id, text)
         if (selfSends.size > MAX_SELF_SENDS) selfSends.delete(selfSends.keys().next().value)

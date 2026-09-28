@@ -222,6 +222,9 @@ guards, policy, drafts, commands, shadow mode, `allowChats`) is unchanged.
   will do), then go out marked "Delayed notice"; each message you send opens the window for another 24 h. On start,
   the bot logs a hint when your window is closed. For a customer: a `/ok` more than 24 h after their last message is
   refused (the draft stays open; answer them another way).
+- **4096 characters per message.** A longer notice to you (say, a draft with a very long reply) is cut at the limit
+  and says so. A longer message to a customer is refused: `/ok` reports the failure and the draft stays open for a
+  shorter `/edit`.
 - **No human takeover.** The business number has no phone app here, so you cannot type in a customer's chat; answer
   through `/ok` and `/edit`.
 - `npm run pair` is Baileys-only and refuses to run with `cloud-api`.

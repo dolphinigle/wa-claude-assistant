@@ -35,7 +35,7 @@ flowchart LR
   S --> OUT
 ```
 
-Status: prototype. 373 unit tests (no network), an eval of 24 fixtures against real Claude, two days live on a
+Status: prototype. 386 unit tests (no network), an eval of 24 fixtures against real Claude, two days live on a
 personal WhatsApp account with two testers. Not reviewed by a human.
 
 ## The seams

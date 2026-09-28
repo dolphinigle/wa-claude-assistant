@@ -2,6 +2,7 @@
 // signatures, normalization, the owner's chat and the 24 h window. No network beyond 127.0.0.1.
 import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
+import net from 'node:net'
 import { test } from 'node:test'
 import { createAssistant } from '../src/assistant.js'
 import { Store } from '../src/store.js'
@@ -27,6 +28,7 @@ function fakeGraph () {
     calls.push({ url, body, headers: init.headers })
     const reply = replies.shift()
     if (reply) return Response.json(reply.body, { status: reply.status })
+    if (body.text?.body.length > 4096) return Response.json({ error: { message: '(#100) Invalid parameter', code: 100 } }, { status: 400 })
     if (body.status === 'read') return Response.json({ success: true })
     return Response.json({ messaging_product: 'whatsapp', contacts: [{ input: body.to, wa_id: body.to }], messages: [{ id: `wamid.OUT${++counter}` }] })
   }
@@ -102,6 +104,21 @@ test('Meta\'s verification GET gets the challenge back only with the right verif
   assert.equal((await get({ 'hub.mode': 'subscribe', 'hub.verify_token': 'wrong', 'hub.challenge': '1' })).status, 403)
   assert.equal((await get({ 'hub.verify_token': 'verify-me', 'hub.challenge': '1' })).status, 403)
   assert.equal((await fetch(url.replace('/webhook', '/other'))).status, 404)
+})
+
+test('a malformed request path gets a 400 and the webhook keeps answering', async t => {
+  const { url, transport } = await setup(t)
+  // `GET //` made `new URL` throw in the request listener, which ended the whole process (webhook-security-r1-1).
+  const status = await new Promise((resolve, reject) => {
+    const socket = net.connect(transport.address().port, '127.0.0.1', () => socket.end('GET // HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'))
+    let reply = ''
+    socket.on('data', chunk => { reply += chunk })
+    socket.on('end', () => resolve(reply.split('\r\n')[0]))
+    socket.on('error', reject)
+  })
+  assert.equal(status, 'HTTP/1.1 400 Bad Request')
+  const verify = await fetch(`${url}?${new URLSearchParams({ 'hub.mode': 'subscribe', 'hub.verify_token': 'verify-me', 'hub.challenge': '42' })}`)
+  assert.equal(await verify.text(), '42')
 })
 
 test('a POST with a wrong or missing signature is refused with 401 and nothing is delivered', async t => {
@@ -224,6 +241,20 @@ test('a notice outside the owner\'s 24 h window waits in the outbox and goes out
   await post(url, webhook({ statuses: [{ id, status: 'failed', timestamp: '1751142888', recipient_id: OWNER, errors: [{ code: 131047, title: 'Re-engagement message' }] }] }))
   await until(() => failedNotices.length === 1)
   assert.match(failedNotices[0], /third/)
+})
+
+test('an owner notice over Meta\'s 4096 characters is clipped, so it cannot block the outbox behind it', async t => {
+  const { url, graph, store, assistant } = await setup(t, { withAssistant: true })
+  // Refused whole, it stayed at the head of the outbox and every notice behind it waited for good (webhook-security-r1-2).
+  await assistant.announce(`🤖 Draft #1\n${'😀'.repeat(3000)}`)
+  await assistant.announce('🤖 Draft #2')
+  assert.equal(store.ownerOutbox.length, 2)
+  await post(url, webhook({ messages: [text(OWNER, 'hai')] }))
+  await until(() => store.ownerOutbox.length === 0)
+  const [long, short] = graph.texts().map(body => body.text.body)
+  assert.ok(long.length <= 4096, `${long.length} characters`)
+  assert.match(long, /^🤖 ⏳ Delayed notice[\s\S]*Draft #1\n😀[\s\S]*😀\n… \(cut here: WhatsApp allows 4096 characters per message\)$/u)
+  assert.match(short, /Draft #2$/)
 })
 
 test('a customer question is answered through the Graph API, quoting it, and marked read', async t => {
