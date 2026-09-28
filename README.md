@@ -36,6 +36,10 @@ sent to anyone except your own "Message yourself" chat.
   New-device pairing is reported broken since 2026-07-28 (#2737), but it worked here on 2026-09-26 (unpatched rc14,
   default preset). `npm run pair` is the go/no-go test.
 
+**Since 2026-09-28 the official WhatsApp Cloud API is a second transport** (`"transport": "cloud-api"`): no linked
+device on your personal number, so the ban risk above no longer applies to it. See
+[Official WhatsApp Cloud API](#official-whatsapp-cloud-api).
+
 The evidence, sources and the official alternative (WhatsApp Business app + coexistence Cloud API) are in
 [docs/research.md](docs/research.md). The verified library and CLI details are in
 [docs/implementation-notes.md](docs/implementation-notes.md).
@@ -197,6 +201,74 @@ details in the implementation notes); re-check that the head is unchanged, then 
 (`"baileys": "github:WhiskeySockets/Baileys#4f263f0e365c2e74dd1b824031d1c5910f518c26"`), `rm -rf auth`,
 `npm install` (npm builds the TypeScript on install) and run `npm run pair` again. If that fails too, the notes say
 switch to whatsapp-web.js 1.34.7 with local patches.
+
+## Official WhatsApp Cloud API
+
+`"transport": "cloud-api"` replaces the Baileys linked device with Meta's official API (`src/transport/cloud-api.js`).
+Baileys stays available and is still the default (`"transport": "baileys"`); everything after the transport (triage,
+guards, policy, drafts, commands, shadow mode, `allowChats`) is unchanged.
+
+**What changes**
+
+- Customers write to a **business number** (for now the Meta test number), not to your personal WhatsApp. Messages
+  come in on a webhook (a small HTTP server on `127.0.0.1:3000/webhook`, reached through a tunnel) and go out through
+  the Graph API. Every webhook POST must carry Meta's `X-Hub-Signature-256` (HMAC with the app secret); anything else
+  gets a 401 and is never read.
+- **Your chat with the bot.** The Cloud API has no "Message yourself". Your personal number (`cloudApi.ownerNumber`)
+  is the owner: notices arrive in your chat with the business number, and the `/commands` you type there run (only
+  your own typed ones: forwarded messages are ignored, as before). Your number is never triaged as a customer.
+- **The 24 h rule.** WhatsApp delivers a normal message only within 24 h of the recipient's last message to the
+  business number. For you: notices wait in the outbox until you send the business number any message (`/status`
+  will do), then go out marked "Delayed notice"; each message you send opens the window for another 24 h. On start,
+  the bot logs a hint when your window is closed. For a customer: a `/ok` more than 24 h after their last message is
+  refused (the draft stays open; answer them another way).
+- **No human takeover.** The business number has no phone app here, so you cannot type in a customer's chat; answer
+  through `/ok` and `/edit`.
+- `npm run pair` is Baileys-only and refuses to run with `cloud-api`.
+
+**Setup**
+
+1. In the Meta app (developers.facebook.com → your app → WhatsApp → API Setup): note the **Phone number ID**, click
+   **Generate access token**, and add your personal number and up to four testers to the **To** list (each confirms
+   a code). The **App secret** is under App settings → Basic → App secret → Show.
+2. Put the values in `config.local.json` (gitignored; the only place for these secrets, never commit or paste them):
+
+   ```json
+   {
+     "transport": "cloud-api",
+     "cloudApi": {
+       "phoneNumberId": "123456789012345",
+       "accessToken": "EAAG…",
+       "appSecret": "…",
+       "verifyToken": "any long random string you make up",
+       "ownerNumber": "0812…"
+     }
+   }
+   ```
+
+   The start is refused, naming the missing keys, until all five are set.
+3. `npm start` (shadow mode as usual), then in a second terminal `npm run tunnel`: it starts a free Cloudflare quick
+   tunnel (no account; it downloads `cloudflared` to `~/copilot/research/wa-claude-assistant/bin/` if it is not
+   installed) and prints the **Callback URL** and the **Verify token**.
+4. Meta app → WhatsApp → Configuration → Webhook → **Edit**: paste both, **Verify and save** (the bot must be running:
+   it answers Meta's check). Then, under Webhook fields, **subscribe** to `messages`.
+5. From your personal number, send `/status` to the business number: it opens your 24 h window, and the "Assistant
+   online" notice follows.
+
+**Limits**
+
+- The **test number** only delivers to the (up to 5) numbers on its **To** list; a reply to anyone else fails with
+  Meta error 131030 and becomes a draft.
+- The **temporary access token lasts about 24 h**. When Meta rejects it (401 / code 190) the bot stops with
+  `access_token_rejected`; put a new one in `config.local.json` and restart. For longer runs, create a **system user**
+  token in Meta Business settings (System users → Generate token, with the `whatsapp_business_messaging` permission).
+- The **quick tunnel's URL changes** every time `npm run tunnel` starts: paste the new callback URL in Meta again.
+  While the bot or the tunnel is down, Meta retries the webhook (for up to 7 days); what arrives late is backlog
+  (drafts only, or skipped after `backlog.maxAgeMinutes`), as on Baileys.
+- A WhatsApp **username** user whose webhook carries no phone number is skipped (logged): `allowChats` and the
+  blocklist match numbers.
+- A message Meta accepts and later reports **failed** (a status webhook) is only logged with its error code, except a
+  notice to you, which goes back to the outbox.
 
 ## Owner commands
 
@@ -425,6 +497,9 @@ answer/escalate switch; delete the key).
 | `claude.model` | `sonnet` | CLI model alias; it floats, and the eval report shows the model id it resolved to |
 | `claude.maxThinkingTokens` | `0` | `0` = thinking off; `null` = the CLI's default (adaptive thinking on Sonnet 5: slower, more quota); a positive number is passed on as `MAX_THINKING_TOKENS` but is untested on Sonnet 5, whose API has no fixed thinking budget |
 | `claude.bin` / `timeoutMs` / `concurrency` / `maxStructuredOutputRetries` | `claude` / `90000` / `2` / `2` | the locked CLI call; the timeout is per call, spawn to exit |
+| `transport` | `"baileys"` | `baileys` (linked device on your own number) or `cloud-api` (official Cloud API, see "Official WhatsApp Cloud API"); anything else stops the start |
+| `cloudApi.phoneNumberId` / `accessToken` / `appSecret` / `verifyToken` / `ownerNumber` | `null` | required with `cloud-api` (set them in `config.local.json` only); `ownerNumber` is your personal number (`0812…`, `62812…`, `+62 812…`) |
+| `cloudApi.port` / `webhookPath` / `graphVersion` | `3000` / `/webhook` / `v26.0` | the webhook server (on `127.0.0.1`) and the Graph API version (v26.0 was the newest on 2026-09-28) |
 | `whatsapp.selfChatJid` | `null` | force the "Message yourself" JID if auto-detection picks the wrong form; it must be your own PN or LID, anything else is refused |
 | `whatsapp.caughtUpWatchdogMs` / `maxReconnectAttempts` / `stableConnectionMs` | `180000` / `10` / `120000` | #2810 watchdog; give up after this many connections in a row that open and drop again before staying caught up and open for `stableConnectionMs`. A network outage (no connection opens at all) is retried every ≤ 60 s for as long as it lasts, and an outage of 5 min or more is reported in "Message yourself" once the connection is back |
 | `timezone` | `Asia/Jakarta` | the `now:` line given to Claude |
@@ -542,8 +617,8 @@ src/knowledge.js            knowledge.md parser       src/brain/claude.js    the
 src/brain/prompt.js         escaped stdin user turn   src/brain/fake.js      keyword brain for demos
 src/transport/whatsapp.js   Baileys adapter           src/transport/wa-normalize.js  pure message helpers
 src/transport/console.js    REPL transport            prompts/               system prompt + schema
-src/chat-lists.js           blocklist, allowChats
-scripts/selftest.js, scripts/eval.js, eval/fixtures.json, test/ (node:test, no network)
+src/transport/cloud-api.js  Cloud API adapter         src/chat-lists.js      blocklist, allowChats
+scripts/selftest.js, scripts/eval.js, scripts/tunnel.js, eval/fixtures.json, test/ (node:test, no network)
 ```
 
 ## Known limits and open questions

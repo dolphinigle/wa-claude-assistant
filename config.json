@@ -57,6 +57,17 @@
     "concurrency": 2,
     "maxStructuredOutputRetries": 2
   },
+  "transport": "baileys",
+  "cloudApi": {
+    "phoneNumberId": null,
+    "accessToken": null,
+    "appSecret": null,
+    "verifyToken": null,
+    "ownerNumber": null,
+    "port": 3000,
+    "webhookPath": "/webhook",
+    "graphVersion": "v26.0"
+  },
   "whatsapp": {
     "selfChatJid": null,
     "caughtUpWatchdogMs": 180000,

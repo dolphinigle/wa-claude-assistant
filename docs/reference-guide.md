@@ -127,6 +127,15 @@ false`); most were added or tightened after a review or the live run found the f
 - **Link previews:** send `{text, linkPreview: null}`. With `linkPreview` unset, rc14 fetches the first URL in any
   outgoing text from your machine to build a preview; a notice that quotes a spammer's link would reveal your IP and
   that the bot is live. It only failed in the live test because the optional `link-preview-js` is not installed.
+- **Cloud API transport (2026-09-28, built, not yet run against Meta) [doc]:** `src/transport/cloud-api.js`, chosen
+  by `"transport": "cloud-api"`. Webhook GET check (`hub.mode`, `hub.verify_token`, `hub.challenge`); POSTs verified
+  by `X-Hub-Signature-256` (HMAC-SHA256 of the raw body with the app secret) before anything is read; Meta needs a
+  valid TLS certificate (a cloudflared quick tunnel gives one) and retries for up to 7 days. There is no "Message
+  yourself": the owner's personal number writing to the business number is the owner channel. Free-form messages
+  only reach a number within 24 h of its last message (131047, sometimes only as a later `failed` status), so owner
+  notices wait in the outbox until the owner writes. The send response only means "accepted"; delivery comes as
+  status webhooks. A user with a WhatsApp username may arrive with no `from` (business-scoped `user_id` only): skipped.
+  Graph API v26.0 (released 2026-07-29). Sources are listed at the top of the file.
 
 ## 5. Secrets: what leaked and how it is kept out
 
@@ -397,6 +406,8 @@ placeholder shipped after the test and has not been seen live yet.
 - Whether a linked device receives 1:1 call events; whether pairing by code works (#2832).
 - Whether `ENABLE_CLAUDEAI_MCP_SERVERS=false` and `--disallowedTools "mcp__*"` work on their own (only tested together).
 - Whether Baileys merges #2765 / #2825 and cuts an rc15 before v8's auth-format change.
+- Everything about the Cloud API transport live: Meta's verification through the tunnel, real signed payloads, the
+  24 h window handling for owner notices, and how the test number treats messages from numbers not on its list.
 
 ## 15. What to copy
 

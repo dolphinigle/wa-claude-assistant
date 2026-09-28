@@ -2,7 +2,7 @@
   "name": "wa-claude-assistant",
   "version": "0.1.0",
   "private": true,
-  "description": "EXPERIMENTAL: WhatsApp triage assistant on your own account (Baileys linked device) using the official Claude Code CLI headless.",
+  "description": "EXPERIMENTAL: WhatsApp triage assistant (Baileys linked device or the official Cloud API) using the official Claude Code CLI headless.",
   "type": "module",
   "engines": {
     "node": ">=22.12"
@@ -13,7 +13,8 @@
     "pair": "node src/pair.js",
     "test": "node --test \"test/*.test.js\"",
     "eval": "node scripts/eval.js",
-    "selftest": "node scripts/selftest.js"
+    "selftest": "node scripts/selftest.js",
+    "tunnel": "node scripts/tunnel.js"
   },
   "dependencies": {
     "baileys": "7.0.0-rc14",
