@@ -74,21 +74,24 @@ test('a JID entry must be in a form a chat has, or it would silently match nothi
   }
 })
 
-test('placeholder: on by default with both texts; a malformed setting stops the start instead of reaching customers', t => {
-  assert.deepEqual(loadConfig({ rootDir: rootWith(t) }).placeholder, { enabled: true, text: { id: '🤖 Halo Kak, tunggu sebentar ya 🙏', en: '🤖 Hi! One moment please 🙏' } })
+test('placeholder and greetingReply: switches only, on by default; a malformed one stops the start instead of reaching customers', t => {
+  const config = loadConfig({ rootDir: rootWith(t) })
+  assert.deepEqual([config.placeholder, config.greetingReply], [{ enabled: true }, { enabled: true }])
   assert.equal(loadConfig({ rootDir: rootWith(t, { placeholder: { enabled: false } }) }).placeholder.enabled, false)
-  assert.equal(loadConfig({ rootDir: rootWith(t, { placeholder: { text: { en: '🤖 Just a moment 🙏' } } }) }).placeholder.text.id, '🤖 Halo Kak, tunggu sebentar ya 🙏', 'deep-merged')
-  for (const placeholder of [null, false, 'on', { enabled: 'yes' }, { text: null }, { text: { id: '' } }, { text: { en: '   ' } }, { text: { id: 5 } }]) {
-    assert.throws(() => loadConfig({ rootDir: rootWith(t, { placeholder }) }), /config\.placeholder must be/, JSON.stringify(placeholder))
+  assert.equal(loadConfig({ rootDir: rootWith(t, { greetingReply: { enabled: false } }) }).greetingReply.enabled, false)
+  for (const key of ['placeholder', 'greetingReply']) {
+    for (const section of [null, false, 'on', { enabled: 'yes' }, { enabled: 'false' }, { enabled: 1 }]) {
+      assert.throws(() => loadConfig({ rootDir: rootWith(t, { [key]: section }) }), new RegExp(`config\\.${key} must be \\{"enabled": true or false\\}`), `${key}: ${JSON.stringify(section)}`)
+    }
   }
 })
 
-test('greetingReply: on by default with both texts; a malformed setting stops the start instead of reaching customers', t => {
-  assert.deepEqual(loadConfig({ rootDir: rootWith(t) }).greetingReply, { enabled: true, text: { id: 'Halo Kak, ada yang bisa saya bantu? 🙏', en: 'Hi! How can I help you? 🙏' } })
-  assert.equal(loadConfig({ rootDir: rootWith(t, { greetingReply: { enabled: false } }) }).greetingReply.enabled, false)
-  for (const greetingReply of [null, 'on', { enabled: 'false' }, { text: { id: '' } }, { text: { en: 5 } }]) {
-    assert.throws(() => loadConfig({ rootDir: rootWith(t, { greetingReply }) }), /config\.greetingReply must be/, JSON.stringify(greetingReply))
-  }
+// Owner decision (2026-09-28): no fixed customer-facing texts; a leftover text must not look as if it were still sent.
+test('a leftover placeholder.text or greetingReply.text stops the start with a clear message', t => {
+  assert.throws(() => loadConfig({ rootDir: rootWith(t, { placeholder: { text: { id: '🤖 Halo Kak, tunggu sebentar ya 🙏' } } }) }),
+    /config placeholder\.text is no longer supported \(the placeholder is now Claude's holding reply, written for each sender.*remove it from config\.local\.json/)
+  assert.throws(() => loadConfig({ rootDir: rootWith(t, { greetingReply: { enabled: true, text: 'Halo Kak' } }) }),
+    /config greetingReply\.text is no longer supported \(the greeting-back is now Claude's own reply to each sender.*remove it from config\.local\.json/)
 })
 
 test('demo mode: off by default, an exact boolean, and it refuses to start without testers in allowChats', t => {

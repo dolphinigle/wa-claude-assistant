@@ -3,7 +3,8 @@ import os from 'node:os'
 // Deterministic checks on a reply before it may be auto-sent. They do not judge meaning; they make sure every
 // concrete detail (number, price, time, duration, percentage, phone, URL, email) is copied from the facts the reply
 // cites in `facts_used`, so a model slip becomes a draft instead of a wrong promise. When unsure they fail, which
-// only means the owner sees a draft. Demo mode (`demo.enabled`, testers only) invents details on purpose: there only
+// only means the owner sees a draft. The holding reply and the greeting-back cite no fact, so they may state nothing
+// concrete at all (checkHoldingReply, guardGreeting). Demo mode (`demo.enabled`, testers only) invents details on purpose: there only
 // payment details are checked in place of the facts (checkReply).
 
 const THOUSANDS = /^\d{1,3}(?:[.,]\d{3})+$/
@@ -307,7 +308,7 @@ export const isThanks = input => readThanks(input) !== undefined
 export const thanksAgrees = input => readThanks(input)?.agrees === true
 
 // The escalation placeholder is withheld from a thanks (policy.js), where the error runs the other way: a missed thanks
-// tells someone who waits for nothing to wait, and a false match only withholds a fixed text. So there a thanks may
+// tells someone who waits for nothing to wait, and a false match only withholds a holding reply. So there a thanks may
 // also be spelled the chat way ("makasiii", "trimakasih", "thank u", "matur nuwun", "makasih bgt kak", send-path-r1-3):
 // a word the vocabulary does not know is read without its doubled letters, then as its usual spelling or dropped as a
 // softener, and what is left must still be a thanks for readThanks. The skip keeps the narrow isThanks.
@@ -360,7 +361,7 @@ export const isLooseThanks = input => isThanks(input) ||
     readThanks(normalizeText(input).toLowerCase().replace(REPEATED, '$1 $1').replace(DONE_FOR_US, ' ').replace(/\p{L}+/gu, chatSpelling),
       LOOSE_VOCABULARY, { anyEmoji: true }) !== undefined)
 
-// isGreetingOnly lets the fixed greeting-back out (policy.js, owner decision 2026-09-27): the customer only greets, with
+// isGreetingOnly lets Claude's greeting-back out (policy.js, owner decisions 2026-09-27/28): the customer only greets, with
 // at most honorifics, punctuation and friendly emoji around it ("Hai", "Halo kak!", "Pagi kak 🙏", "Selamat siang",
 // "P", "Permisi kak", "Assalamualaikum"). Strict, since anything more ("halo kak mau pesan", "pagi kak, sudah buka?",
 // "halo?") is a message to answer and goes the normal way; a missed greeting only costs a draft. Words are compared
@@ -645,13 +646,50 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
   }
   // No value in the reason: it lands in the audit log and in eval reports.
   if (findPrivateDetails(text, identifiers).length > 0) reasons.push('private_detail')
+  reasons.push(...languageReasons(incomingText, text))
+  return { ok: reasons.length === 0, reasons }
+}
 
-  // Voice says mirror the sender's language; an auto-reply in the other language goes to the owner instead.
-  if (incomingText !== undefined) {
-    const incoming = detectLanguage(incomingText)
-    const replied = detectLanguage(text)
-    if (incoming !== 'unknown' && replied !== 'unknown' && incoming !== replied) reasons.push(`language_mismatch:${incoming}->${replied}`)
-  }
+/** Voice says mirror the sender's language; a text in the other language goes to the owner instead. */
+function languageReasons (incomingText, text) {
+  if (incomingText === undefined) return []
+  const incoming = detectLanguage(incomingText)
+  const replied = detectLanguage(text)
+  return incoming !== 'unknown' && replied !== 'unknown' && incoming !== replied ? [`language_mismatch:${incoming}->${replied}`] : []
+}
+
+/** Anything concrete in a text that cites no fact: the kinds extractDetails found, and `day` for a day word. */
+const concreteKinds = text => [
+  ...Object.entries(extractDetails(text)).filter(([, value]) => (Array.isArray(value) ? value.length > 0 : value === true)).map(([kind]) => kind),
+  ...(DAY_WORDS.test(text) ? ['day'] : [])
+]
+
+// Owner decision (2026-09-28): the automated texts a customer gets are Claude's, written for that sender, never one
+// fixed text: an account was restricted after the same reply went to ~100 users (Baileys #2800, docs/research.md), and
+// identical automated texts look like bulk messaging. They go out without the owner reading them, so they may say
+// nothing the owner has not: the holding reply only acknowledges, the greeting-back only asks.
+export const MAX_HOLDING_CHARS = 200
+export const MAX_GREETING_REPLY_CHARS = 200
+
+/**
+ * Claude's holding reply (`holding_reply`), sent as "🤖 " + it to an escalated customer who waits (policy.js): not
+ * empty, at most 200 characters, nothing concrete (no number, price, time, day, link, contact or number word), no yes up
+ * front, no sensitive term (no fact licenses one here), no private identifier, no placeholder or fact id, and in the
+ * customer's language. A failure only means no placeholder: the owner still gets the draft.
+ * @returns {{ok: boolean, reasons: string[]}}
+ */
+export function checkHoldingReply ({ reply, incomingText }, { sensitiveTerms = [], privateIdentifiers: identifiers } = {}) {
+  const text = normalizeText(reply).trim()
+  if (!text) return { ok: false, reasons: ['empty'] }
+  const reasons = []
+  if (text.length > MAX_HOLDING_CHARS) reasons.push(`too_long:${text.length}>${MAX_HOLDING_CHARS}`)
+  if (/\[F\d+\]/i.test(text)) reasons.push('fact_id_in_reply')
+  else if (PLACEHOLDERS.some(pattern => pattern.test(text))) reasons.push('placeholder')
+  reasons.push(...concreteKinds(text).map(kind => `concrete:${kind}`))
+  if (YES_OPENING.test(text)) reasons.push('yes_opening')
+  for (const term of sensitiveTerms) if (containsTerm(text, term)) reasons.push(`sensitive_term:${term}`)
+  if (findPrivateDetails(text, identifiers).length > 0) reasons.push('private_detail')
+  reasons.push(...languageReasons(incomingText, text))
   return { ok: reasons.length === 0, reasons }
 }
 
@@ -669,8 +707,7 @@ function factReasons (text, factsUsed, { knowledge, sensitiveTerms }) {
   // Owner decision (2026-09-27, live test): a customer-service reply may cite no fact when it only asks ("Halo Kak, mau
   // pesan apa, berapa banyak, dan untuk tanggal berapa?"): a question, nothing concrete (no number, price, time, link,
   // contact, number word or day) and no yes up front. Everything else without a cited fact is a draft.
-  const concrete = Object.values(details).some(value => (Array.isArray(value) ? value.length > 0 : value === true)) || DAY_WORDS.test(text)
-  const onlyAsks = /[?¿]/.test(text) && !concrete && !YES_OPENING.test(text)
+  const onlyAsks = /[?¿]/.test(text) && concreteKinds(text).length === 0 && !YES_OPENING.test(text)
   if (cited.length === 0 && !onlyAsks) reasons.push('no_facts_used')
   const check = (kind, values, allowed) => {
     const missing = [...new Set(values.filter(value => !allowed.has(value)))]
@@ -707,4 +744,23 @@ export function guardTriage (triage, { knowledge, config, incomingText }) {
   if (triage?.decision !== 'answer') return undefined
   return checkReply({ reply: triage.reply, factsUsed: triage.facts_used, incomingText },
     { knowledge, ...config.guards, privateIdentifiers: privateIdentifiersFor(config), demo: config.demo?.enabled === true })
+}
+
+/** The holding reply's check for the placeholder (checkHoldingReply), whatever Claude decided; undefined without a triage. */
+export function guardHolding (triage, { config, incomingText }) {
+  if (!triage) return undefined
+  return checkHoldingReply({ reply: typeof triage.holding_reply === 'string' ? triage.holding_reply : '', incomingText },
+    { sensitiveTerms: config.guards?.sensitiveTerms, privateIdentifiers: privateIdentifiersFor(config) })
+}
+
+/**
+ * The greeting-back is Claude's own reply to a greeting alone (owner decision 2026-09-28), whatever it decided: it may
+ * go out only if it just asks, as a reply citing no fact may (checkReply: a `?`, nothing concrete, no yes up front),
+ * checked against no fact and outside demo mode, in at most 200 characters. Undefined unless the message only greets.
+ */
+export function guardGreeting (triage, { knowledge, config, incomingText }) {
+  if (!triage || !isGreetingOnly(incomingText)) return undefined
+  const maxReplyChars = Math.min(config.guards?.maxReplyChars ?? MAX_GREETING_REPLY_CHARS, MAX_GREETING_REPLY_CHARS)
+  return checkReply({ reply: triage.reply, factsUsed: [], incomingText },
+    { knowledge, ...config.guards, maxReplyChars, privateIdentifiers: privateIdentifiersFor(config), demo: false })
 }

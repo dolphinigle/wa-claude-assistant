@@ -162,7 +162,7 @@ test('every send carries linkPreview: null, so Baileys never fetches a link: rep
   const { sockets: wired, createSocket } = fakeSockets()
   const brain = createFakeBrain(({ messages }) => (/jam/.test(messages[0].text)
     ? { ok: true, triage: { decision: 'answer', reply: 'Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya Kak.', facts_used: ['F1'], reason: 'hours', summary: 'hours', customer_waiting: true }, rateLimit: { status: 'allowed', fiveHourUtilization: 0.1, sevenDayUtilization: 0.1 }, meta: {} }
-    : { ok: true, triage: { decision: 'escalate', reply: 'Baik Kak, saya cek dulu ya.', facts_used: [], reason: 'custom', summary: 'custom cake, see https://example.com/ref', customer_waiting: true }, meta: {} }))
+    : { ok: true, triage: { decision: 'escalate', reply: 'Baik Kak, saya cek dulu ya.', facts_used: [], reason: 'custom', summary: 'custom cake, see https://example.com/ref', customer_waiting: true, holding_reply: 'Baik Kak Sari, pertanyaan soal kue custom-nya saya teruskan ke pemilik ya 🙏' }, meta: {} }))
   let assistant
   const whatsapp = createWhatsAppTransport({ config, store, logger: silent, createSocket, onMessage: message => assistant.handleMessage(message) })
   assistant = createAssistant({ config, store, brain, transport: whatsapp, knowledge, logger: silent })
@@ -177,7 +177,7 @@ test('every send carries linkPreview: null, so Baileys never fetches a link: rep
   await assistant.idle()
   const sent = wired[0].sent.map(item => [item.jid, item.content.text.split('\n')[0]])
   assert.deepEqual(sent, [
-    [CUSTOMER, '🤖 Halo Kak, tunggu sebentar ya 🙏'],
+    [CUSTOMER, '🤖 Baik Kak Sari, pertanyaan soal kue custom-nya saya teruskan ke pemilik ya 🙏'],
     [OWNER_PN, '🤖 📝 DRAFT #1 · Sari (+6282222222222)'],
     ['6283333333333@s.whatsapp.net', '🤖 Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya Kak.'],
     [OWNER_PN, '🤖 ✅ Auto-replied to Sari (+6283333333333): "Kami buka Senin–Sabtu pukul 08.00–17.00 WIB ya Kak."']

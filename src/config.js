@@ -26,7 +26,11 @@ function readJson (file) {
 // Keys that no longer do anything. A stricter value set in config.local.json must not be dropped without a word, so
 // the start is refused until the owner removes it.
 const REMOVED_KEYS = [
-  ['autoSend.minConfidence', 'the confidence gate was removed with the answer/escalate decision; see "Safety defaults" in the README for the gates that apply']
+  ['autoSend.minConfidence', 'the confidence gate was removed with the answer/escalate decision; see "Safety defaults" in the README for the gates that apply'],
+  // Owner decision (2026-09-28): no fixed customer-facing texts. The same automated text to many chats looks like bulk
+  // messaging (docs/research.md), so a leftover text must not look as if it were still sent.
+  ['placeholder.text', 'the placeholder is now Claude\'s holding reply, written for each sender and checked by the guards; see "Escalation placeholder" in the README'],
+  ['greetingReply.text', 'the greeting-back is now Claude\'s own reply to each sender, sent only if it just asks; see "Greeting-back" in the README']
 ]
 
 const CLOUD_API_REQUIRED = ['phoneNumberId', 'accessToken', 'appSecret', 'verifyToken', 'ownerNumber']
@@ -66,13 +70,13 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
       throw new Error(`config.${key} must be a list of JIDs or phone numbers (e.g. ["081234567890"]; a JID as WhatsApp writes it: "6281234567890@s.whatsapp.net" or "123456789012345@lid"), got ${JSON.stringify(config[key])}`)
     }
   }
-  // Sent to customers as they are: a typo must stop the start, not reach them, and a missing text must not go out empty.
+  for (const [key, why] of REMOVED_KEYS) {
+    if (key.split('.').reduce((node, part) => node?.[part], config) !== undefined) throw new Error(`config ${key} is no longer supported (${why}); remove it from config.local.json`)
+  }
+  // Switches only: their texts are Claude's, written per sender (owner decision 2026-09-28).
   for (const key of ['placeholder', 'greetingReply']) {
     const section = config[key]
-    if (!isPlainObject(section) || typeof section.enabled !== 'boolean' || !isPlainObject(section.text) ||
-      !['id', 'en'].every(language => typeof section.text[language] === 'string' && section.text[language].trim())) {
-      throw new Error(`config.${key} must be {"enabled": true or false, "text": {"id": "…", "en": "…"}} with both texts set, got ${JSON.stringify(section)}`)
-    }
+    if (!isPlainObject(section) || typeof section.enabled !== 'boolean') throw new Error(`config.${key} must be {"enabled": true or false}, got ${JSON.stringify(section)}`)
   }
   // The switches for what reaches customers on its own are read as truthy: a quoted "false" would leave them on, and
   // `autoSend.enabled` false is the owner's "drafts only" switch (correctness-r1-4).
@@ -87,9 +91,6 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
   if (demo.enabled && config.allowChats.length === 0) throw new Error('demo mode invents answers: list the testers in allowChats (config.demo.enabled is true, allowChats is empty)')
   if (demo.enabled && !(Number.isInteger(demo.maxPerChatPerHour) && demo.maxPerChatPerHour >= 0)) throw new Error(`config.demo.maxPerChatPerHour must be a whole number >= 0, got ${JSON.stringify(demo.maxPerChatPerHour)}`)
   checkTransport(config)
-  for (const [key, why] of REMOVED_KEYS) {
-    if (key.split('.').reduce((node, part) => node?.[part], config) !== undefined) throw new Error(`config ${key} is no longer supported (${why}); remove it from config.local.json`)
-  }
   config.rootDir = rootDir
   config.paths = {
     auth: path.resolve(rootDir, config.paths.auth),

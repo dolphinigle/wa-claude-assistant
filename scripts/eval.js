@@ -1,14 +1,15 @@
 // `npm run eval`: every fixture through the REAL brain (claude -p) + guards + policy, evaluated as if live.
 // The numbers that matter are FORBIDDEN cases that would have auto-sent, escalations the policy skipped, and placeholders
-// ("🤖 Halo Kak, tunggu sebentar ya 🙏") that would have gone to a FORBIDDEN case (family, spam, a thanks …); all must be 0.
-// The fixed greeting-back to a greeting alone ("Halo Kak, ada yang bisa saya bantu? 🙏") is an auto-send like any other.
+// ("🤖 " + Claude's holding reply) that would have gone to a FORBIDDEN case (family, spam, a thanks …); all must be 0.
+// Claude's greeting-back to a greeting alone is an auto-send like any other. The report lists every holding reply
+// Claude wrote, whether it passed its guard, and how many were distinct (owner decision 2026-09-28: no fixed texts).
 // Each fixture is one claude call. --only=id1,id2 re-runs a subset (written to last-run-partial.*).
 // --rescore=eval/last-run.json re-applies the CURRENT guards and policy to saved triage results: no claude calls.
 import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { createClaudeBrain, DECISIONS } from '../src/brain/claude.js'
 import { loadConfig, ROOT_DIR } from '../src/config.js'
-import { guardTriage } from '../src/guards.js'
+import { guardGreeting, guardHolding, guardTriage } from '../src/guards.js'
 import { loadKnowledge } from '../src/knowledge.js'
 import { excerpt } from '../src/owner.js'
 import { decide } from '../src/policy.js'
@@ -29,6 +30,9 @@ if (saved?.results.some(item => item.result.triage && !('decision' in item.resul
 // Results saved before customer_waiting existed count as "not waiting": no placeholder is ever sent, which is safe but says nothing.
 const predatesPlaceholder = Boolean(saved?.results.some(item => item.result.triage && !('customer_waiting' in item.result.triage)))
 if (predatesPlaceholder) console.warn(`${rescoreFile} predates customer_waiting: every placeholder counts as withheld\n`)
+// Results saved before holding_reply existed have none: no placeholder can go out (holding_reply:empty).
+const predatesHolding = Boolean(saved?.results.some(item => item.result.triage && !('holding_reply' in item.result.triage)))
+if (predatesHolding) console.warn(`${rescoreFile} predates holding_reply: every placeholder counts as withheld (holding_reply:empty)\n`)
 
 const config = loadConfig()
 // config.local.json may cut the history for a live test (contextMessages 0); the fixtures' histories must still reach
@@ -81,12 +85,16 @@ const historyNote = contextMessages === undefined ? 'fixture history given to Cl
 const rows = fixtures.map(fixture => {
   const { result } = results.find(item => item.id === fixture.id)
   const guard = guardTriage(result.triage, { knowledge, config, incomingText: fixture.text })
+  const holdingGuard = guardHolding(result.triage, { config, incomingText: fixture.text })
+  const greetingGuard = guardGreeting(result.triage, { knowledge, config, incomingText: fixture.text })
   // A quiet day: only the triage, the guards, the fixture's history and closing, and the quota can stop an auto-send
   // (or skip a thanks that follows a closing).
   const now = Date.now()
   const decision = decide(result, {
     config,
     guard,
+    holdingGuard,
+    greetingGuard,
     incomingText: fixture.text,
     attachments: [],
     quoted: [],
@@ -104,6 +112,8 @@ const rows = fixtures.map(fixture => {
     fixture,
     result,
     guard,
+    holdingGuard,
+    greetingGuard,
     decision,
     got,
     decisionOk: got === fixture.expect,
@@ -134,6 +144,10 @@ const flaggedForbidden = rows.filter(row => row.fixture.placeholder === 'forbidd
 // An allowed case that auto-sends gets its answer instead: only its escalation should get a placeholder.
 const placeholdersExpected = rows.filter(row => row.fixture.placeholder === 'allowed' && row.decision.action === 'escalate').length
 const placeholdersActual = rows.filter(row => row.allowedPlaceholder).length
+// Escalations Claude flagged waiting: each should carry a holding reply for this sender that passes its guard.
+const waitingEscalations = rows.filter(row => row.decision.action === 'escalate' && row.result.triage?.customer_waiting === true)
+const holdingTexts = waitingEscalations.map(row => row.result.triage.holding_reply?.trim()).filter(Boolean)
+const holdingPassed = waitingEscalations.filter(row => row.holdingGuard?.ok).length
 const errors = rows.filter(row => !row.result.ok)
 const latencies = rows.map(row => row.result.meta?.durationMs).filter(Number.isFinite)
 const avgLatency = latencies.length ? Math.round(latencies.reduce((sum, ms) => sum + ms, 0) / latencies.length) : 0
@@ -156,10 +170,11 @@ const summary = [
   `- Decision accuracy: **${decisionCorrect}/${total}**`,
   `- FORBIDDEN cases that would have auto-sent: **${forbidden.length}** ${forbidden.length === 0 ? '(pass)' : `(FAIL: ${forbidden.map(row => row.fixture.id).join(', ')})`}`,
   `- Escalations the policy skipped (nobody would see them): **${skippedEscalations.length}** ${skippedEscalations.length === 0 ? '(pass)' : `(FAIL: ${skippedEscalations.map(row => row.fixture.id).join(', ')})`}`,
-  `- ALLOWED cases that did auto-send: **${allowedActual}/${allowedExpected}** (a miss is safe: it becomes a draft), ${greetingBacks} of all auto-sends the fixed greeting-back`,
+  `- ALLOWED cases that did auto-send: **${allowedActual}/${allowedExpected}** (a miss is safe: it becomes a draft), ${greetingBacks} of all auto-sends a greeting-back`,
   `- Placeholders that would have gone to FORBIDDEN cases: **${forbiddenPlaceholders.length}** ${forbiddenPlaceholders.length === 0 ? '(pass)' : `(FAIL: ${forbiddenPlaceholders.map(row => row.fixture.id).join(', ')})`}`,
   `- ALLOWED cases that got a placeholder: **${placeholdersActual}/${placeholdersExpected}** escalated (a miss is safe: the customer waits in silence, as before)${predatesPlaceholder ? ' (the saved results predate customer_waiting)' : ''}`,
   `- FORBIDDEN cases Claude flagged \`customer_waiting\` (before the policy's backstops): **${flaggedForbidden.length}**${flaggedForbidden.length ? ` (${flaggedForbidden.map(row => row.fixture.id).join(', ')})` : ''}`,
+  `- Holding replies on escalations Claude flagged waiting: ${holdingTexts.length}/${waitingEscalations.length} written, **${holdingPassed}** passed the guard, ${new Set(holdingTexts).size} distinct${predatesHolding ? ' (the saved results predate holding_reply)' : ''}`,
   `- Skipped (a thanks after a closing: no reply, no draft): ${rows.filter(row => row.decision.action === 'skip').length}`,
   `- Triage errors: ${errors.length}${errors.length ? ` (${errors.map(row => `${row.fixture.id}: ${row.result.error}`).join('; ')})` : ''}`,
   `- Latency (spawn → exit): avg ${(avgLatency / 1000).toFixed(1)} s, max ${(maxLatency / 1000).toFixed(1)} s, with concurrency ${config.claude.concurrency}`,
@@ -176,6 +191,8 @@ const details = rows.map(row => [
   `- customer_waiting ${row.result.triage?.customer_waiting ?? '-'}; placeholder ${row.decision.placeholder ? '**sent**' : row.decision.action === 'escalate' ? `withheld (${row.decision.placeholderWithheld.join(', ')})` : 'none (not an escalation)'}`,
   row.guard ? `- guards: ${row.guard.ok ? 'pass' : row.guard.reasons.join(', ')}` : '- guards: not run (escalated)',
   `- reply: ${cell(row.result.triage?.reply || '(empty)')}`,
+  ...(row.greetingGuard ? [`- greeting-back check: ${row.greetingGuard.ok ? 'pass' : row.greetingGuard.reasons.join(', ')}`] : []),
+  `- holding_reply: ${cell(row.result.triage?.holding_reply || '(empty)')}${row.holdingGuard && row.result.triage?.holding_reply ? ` (guard: ${row.holdingGuard.ok ? 'pass' : row.holdingGuard.reasons.join(', ')})` : ''}`,
   `- reason: ${cell(row.result.triage?.reason ?? row.result.error)}`,
   `- summary: ${cell(row.result.triage?.summary ?? '-')}`,
   ''

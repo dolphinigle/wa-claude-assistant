@@ -45,8 +45,9 @@ test('console REPL end to end with the keyword brain: echoes are loop-guarded, /
   await settle()
 
   assert.match(printed, /── to alice ──\n {2}│ 🤖 Kami buka/)
-  assert.match(printed, /── to bob ──\n {2}│ 🤖 Halo Kak, tunggu sebentar ya 🙏\n[\s\S]*📝 DRAFT #1 · bob \(bob@console\)\n {2}│ They wrote: "bisa bikin kue custom\?"\n {2}│ ↩️ They got: 🤖 Halo Kak, tunggu sebentar ya 🙏/,
-    'a waiting customer hears something before the owner is told')
+  const holding = '🤖 Baik Kak Bob, pertanyaan soal pesanannya saya teruskan ke pemilik ya 🙏'
+  assert.match(printed, new RegExp(`── to bob ──\\n {2}│ ${holding}\\n[\\s\\S]*📝 DRAFT #1 · bob \\(bob@console\\)\\n {2}│ They wrote: "bisa bikin kue custom\\?"\\n {2}│ ↩️ They got: ${holding}`),
+    'a waiting customer hears something, by name, before the owner is told')
   assert.match(printed, /── to bob ──\n {2}│ Terima kasih Kak, saya cek dulu ya\./)
   assert.match(printed, /✅ Sent to bob \(bob@console\) \(draft #1\)/)
   assert.match(printed, /📝 DRAFT #2 · carol \(carol@console\)[\s\S]*Not auto-sent: no_question/, 'a thanks asks nothing: never auto-sent')

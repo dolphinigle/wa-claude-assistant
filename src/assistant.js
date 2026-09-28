@@ -1,5 +1,5 @@
 // Orchestrator: dedupe, loop guard, takeover, debounce, triage, policy, and the ONE send gate.
-import { detectLanguage, findPrivateDetails, guardTriage, isThanks, privateIdentifiersFor } from './guards.js'
+import { findPrivateDetails, guardGreeting, guardHolding, guardTriage, isThanks, privateIdentifiersFor } from './guards.js'
 import { isAllowedChat, listNamesChat, phoneEntry } from './chat-lists.js'
 import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice, placeholderLine } from './owner.js'
 import { decide } from './policy.js'
@@ -51,13 +51,6 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   const chatAutoSendsLastHour = chatId => store.linkedChatIds(chatId).reduce((sum, id) => sum + store.countChatAutoSends(id, HOUR_MS), 0)
   /** Epoch ms of a burst's newest message: a closing is dated by the thanks it closes, not by when it was handled. */
   const lastMessageAt = batch => Math.max(...batch.map(message => message.timestamp)) * 1000
-  /**
-   * A fixed text (placeholder, greeting-back) in the sender's language: a greeting alone is often too short to tell
-   * ("Hi!", "Good morning"), and then Claude's draft, which the prompt writes in the sender's language, tells it;
-   * Indonesian when neither does (correctness-r2-3).
-   */
-  const fixedText = (texts, batch, reply) =>
-    texts[[batch.map(message => message.text).join('\n'), reply].map(text => detectLanguage(text)).find(found => found !== 'unknown') === 'en' ? 'en' : 'id']
 
   // A LID chat's phone number is known only from an alt JID (its messages, or WhatsApp's LID mapping), which is kept
   // on the chat record (chat-lists.js).
@@ -446,9 +439,15 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     // start: its time is kept on the record, so a thanks after it is not skipped past it (skip-safety-r3-1).
     if (!closing) store.updateChat(chatId, { lastOpenedAt: Math.max(store.chat(chatId).lastOpenedAt ?? 0, lastMessageAt(batch)) })
     const guard = guardTriage(triage, { knowledge, config, incomingText })
+    // What a customer may get without the owner reading it besides an answer: Claude's holding reply and its reply to a
+    // greeting alone, written for this sender (owner decision 2026-09-28: no fixed texts).
+    const holdingGuard = guardHolding(triage, { config, incomingText })
+    const greetingGuard = guardGreeting(triage, { knowledge, config, incomingText })
     const decision = decide(result, {
       config,
       guard,
+      holdingGuard,
+      greetingGuard,
       incomingText,
       attachments,
       quoted: batch.filter(message => message.quotedId || message.quotedText !== undefined)
@@ -486,7 +485,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       guard,
       action: decision.action,
       reasons: decision.reasons,
-      ...(decision.action === 'escalate' && { placeholder: decision.placeholder, placeholderWithheld: decision.placeholderWithheld }),
+      ...(decision.action === 'escalate' && { placeholder: decision.placeholder, placeholderWithheld: decision.placeholderWithheld, holdingReply: triage?.holding_reply, holdingGuard }),
+      ...(greetingGuard && { greetingGuard }),
       ...(decision.greetingHeld && { greetingHeld: decision.greetingHeld }),
       mode: config.mode,
       rateLimit: result.rateLimit,
@@ -505,9 +505,10 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     const disclosureKey = live ? 'lastDisclosureAt' : 'shadowDisclosureAt'
     const chat = store.chat(chatId)
     const needsDisclosure = config.disclosure?.enabled && now() - (chat[disclosureKey] ?? 0) > config.disclosure.sessionGapHours * HOUR_MS
-    // A greeting alone gets the fixed greeting-back (policy.js), never Claude's words, and quotes nothing: it answers
-    // no question. Recorded before the send, like the slot, and kept if the send fails: the session's greeting is spent.
-    const reply = decision.greeting ? fixedText(config.greetingReply.text, batch, triage.reply) : triage.reply
+    // A greeting alone gets Claude's reply as the greeting-back once it passed guardGreeting (policy.js), and quotes
+    // nothing: it answers no question. Recorded before the send, like the slot, and kept if the send fails: the
+    // session's greeting is spent.
+    const reply = triage.reply
     if (decision.greeting) store.updateChat(chatId, { lastGreetingReplyAt: now() })
     // The owner's choice (2026-09-27): the disclosure is a short prefix on the first reply of a session, 🤖 by default.
     const text = needsDisclosure ? `${config.disclosure.text} ${reply}` : reply
@@ -565,7 +566,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       privateDetails: findPrivateDetails(triage?.reply ?? '', privateIdentifiersFor(config))
     })
     if (decision.placeholder) {
-      await sendPlaceholder(chatId, batch, draft, triage.reply) // before the notice, which says it went out
+      await sendPlaceholder(chatId, draft, triage.holding_reply) // before the notice, which says it went out
       // Your reply on the phone during that send cancelled the draft (startTakeover, which said so): no /ok to offer,
       // only what the customer got (send-path-r1-5).
       const { status, placeholder } = store.getDraft(draft.id)
@@ -579,17 +580,18 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
   }
 
   /**
-   * Owner decision (2026-09-27): a customer whose message waits for the owner is not left in silence. The text is fixed,
-   * never Claude's, in the sender's language (fixedText). It quotes nothing and marks nothing read, since the owner has
-   * not seen the message yet. It counts toward the auto-send caps and, when it starts with the disclosure text (🤖), as
-   * the session's AI disclosure. It is recorded on the draft, and the contact's other open drafts join its period,
+   * Owner decision (2026-09-27): a customer whose message waits for the owner is not left in silence. The text is
+   * "🤖 " + Claude's holding reply for this sender, which passed guardHolding (owner decision 2026-09-28: never one
+   * fixed text for everyone, which looks like bulk messaging). It quotes nothing and marks nothing read, since the owner
+   * has not seen the message yet. It counts toward the auto-send caps and, when it starts with the disclosure text (🤖),
+   * as the session's AI disclosure. It is recorded on the draft, and the contact's other open drafts join its period,
    * before the first await, so an escalation of the same contact triaged meanwhile sees it and gets none. A send that
    * certainly failed (`notSent`) is undone but for lastSentAt, so the next escalation may try again; one that failed in
    * flight may have been delivered, so its period and cap slot stand (status `unknown`), since a missed retry is the
    * safe way round.
    */
-  async function sendPlaceholder (chatId, batch, draft, reply) {
-    const text = fixedText(config.placeholder.text, batch, reply)
+  async function sendPlaceholder (chatId, draft, holdingReply) {
+    const text = `${BOT_PREFIX} ${holdingReply.trim()}`
     store.updateDraft(draft.id, { placeholder: { text, status: 'sending' } })
     for (const open of openDrafts(chatId)) if (open.id !== draft.id) store.updateDraft(open.id, { placeholderCovered: draft.id })
     const slot = store.recordAutoSend(chatId)

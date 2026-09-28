@@ -4,9 +4,10 @@
 // "everything reaches the owner" is a thanks right after a closing this session: it is skipped, since another
 // "sama-sama" or another draft only adds volume. Shadow mode is not decided here: the send gate in assistant.js turns
 // an approved send into a notice.
-// An escalation also says whether the customer gets a short fixed placeholder ("🤖 Halo Kak, tunggu sebentar ya 🙏",
-// owner decisions 2026-09-27), so a waiting customer does not wait in silence; see placeholderWithheld. A waiting
-// customer's greeting alone gets a fixed greeting-back instead, as an auto-send (see greetingHeld).
+// An escalation also says whether the customer gets a placeholder (owner decisions 2026-09-27), so a waiting customer
+// does not wait in silence: "🤖 " + Claude's holding reply, written for that sender and checked by
+// guards.checkHoldingReply, never a fixed text (owner decision 2026-09-28); see placeholderWithheld. A waiting
+// customer's greeting alone gets Claude's own greeting-back instead, as an auto-send, if it only asks (greetingHeld).
 // Demo mode (`demo.enabled`, owner decision 2026-09-27; config.js requires allowChats) answers what a real shop would
 // know, inventing it where the facts are silent: an answer to a message that asks nothing is not held (a thanks gets
 // Claude's thanks-back), and `demo.maxPerChatPerHour` replaces the per-chat cap. Every other gate stays.
@@ -84,6 +85,10 @@ const isDemo = config => config.demo?.enabled === true
  * @param {object} ctx
  * @param {object} ctx.config
  * @param {{ok: boolean, reasons: string[]}} [ctx.guard]  guards.checkReply() output for the reply
+ * @param {{ok: boolean, reasons: string[]}} [ctx.holdingGuard]  guards.guardHolding() output for the holding reply;
+ *   unset, no placeholder
+ * @param {{ok: boolean, reasons: string[]}} [ctx.greetingGuard]  guards.guardGreeting() output for a greeting alone;
+ *   unset, no greeting-back
  * @param {string} [ctx.incomingText]  the new messages' text, joined; unset, it asks nothing
  * @param {string[]} [ctx.attachments]  kinds of the files attached to the new messages (image, video, …)
  * @param {(string|{id?: string, text?: string})[]} [ctx.quoted]  the earlier messages the new ones reply to (WhatsApp
@@ -100,8 +105,9 @@ const isDemo = config => config.demo?.enabled === true
  * @param {{status?: string, fiveHourUtilization?: number, sevenDayUtilization?: number}} [ctx.rateLimit]
  * @param {boolean} ctx.isBacklog
  * @returns {{action: 'auto_send'|'escalate'|'skip', reasons: string[], greeting?: true, placeholder: boolean, placeholderWithheld: string[]}}
- *   `greeting`: the auto-send is the fixed greeting-back, not Claude's reply; `placeholder`: send the customer the fixed
- *   placeholder (escalations only); `placeholderWithheld`: why an escalation gets none, for the audit
+ *   `greeting`: the auto-send is Claude's reply to a greeting alone, which passed guardGreeting, not checkReply against
+ *   its facts; `placeholder`: send the customer "🤖 " + the holding reply (escalations only); `placeholderWithheld`: why
+ *   an escalation gets none, for the audit
  */
 export function decide (result, ctx) {
   const routed = route(result, ctx)
@@ -140,13 +146,14 @@ function quotaBlockers ({ config, rateLimit }) {
 
 /**
  * Owner decision (2026-09-27, live test): like customer service, a waiting customer's greeting alone ("Hai", "Pagi
- * kak") gets the fixed `greetingReply.text` at once, instead of a draft and "tunggu sebentar"; their next message goes
- * the normal way. Claude's `customer_waiting` decides who is a customer (never family, friends, spam or a manipulator,
- * as for the placeholder); the words are ours, never Claude's. Held, so the message goes the way it would have, by
- * what holds any auto-send but the guards (which check Claude's reply, not ours), always by backlog (it comes late, as
- * for the placeholder), by a file or a quote, and unless the greeting opens the conversation: once per session, and
- * not after anything of ours this session, a draft still open or an earlier message in the history this session (a
- * "Pagi kak" may answer our "mau diambil kapan?"). Empty: send it.
+ * kak") gets a greeting-back at once, instead of a draft and a holding reply; their next message goes the normal way.
+ * Claude's `customer_waiting` decides who is a customer (never family, friends, spam or a manipulator, as for the
+ * placeholder). The words are Claude's reply, written for that sender (owner decision 2026-09-28: no fixed texts), and
+ * go out only if it just asks (guardGreeting: a question, nothing concrete, no yes up front, at most 200 characters).
+ * Held, so the message goes the way it would have, by that check, by what holds any auto-send, always by backlog (it
+ * comes late, as for the placeholder), by a file or a quote, and unless the greeting opens the conversation: once per
+ * session, and not after anything of ours this session, a draft still open or an earlier message in the history this
+ * session (a "Pagi kak" may answer our "mau diambil kapan?"). Empty: send it.
  */
 function greetingHeld (result, ctx) {
   const { config, chat = {} } = ctx
@@ -155,6 +162,8 @@ function greetingHeld (result, ctx) {
   if (config.greetingReply?.enabled !== true) held.push('greeting_reply_disabled')
   if (!config.autoSend?.enabled) held.push('auto_send_disabled')
   if (result.triage.customer_waiting !== true) held.push('customer_not_waiting')
+  if (!ctx.greetingGuard) held.push('greeting_reply_unchecked')
+  else if (!ctx.greetingGuard.ok) held.push(...ctx.greetingGuard.reasons.map(reason => `greeting_reply:${reason}`))
   if ((ctx.attachments ?? []).length > 0) held.push('attachment')
   if ((ctx.quoted ?? []).length > 0) held.push('quote')
   if (chat.lastGreetingReplyAt > ctx.now - GREETING_REPEAT_MS) held.push('greeted_recently')
@@ -166,10 +175,12 @@ function greetingHeld (result, ctx) {
 /**
  * Why an escalation gets no placeholder; empty means it gets one. Only Claude's `customer_waiting: true` (a customer
  * waiting for the owner, a customer's greeting alone included: not family, friends, spam, a scam or a manipulation
- * attempt) lets one out, since a family emergency must never get "tunggu sebentar". With auto-replies off
+ * attempt) lets one out, since a family emergency must never get "tunggu sebentar". Its text is Claude's holding
+ * reply, which must pass guardHolding (owner decision 2026-09-28); it is checked only once nothing else withholds the
+ * placeholder, so an empty one from someone who waits for nothing adds no noise to the audit. With auto-replies off
  * (`autoSend.enabled` false, "drafts only") nothing automated reaches a customer, so neither does this (owner decision
  * 2026-09-27). A thanks never gets one, whatever Claude says: it waits for nothing. It is read loosely here
- * (isLooseThanks: "makasih bgt kak", "thank u"), since a false match only withholds a fixed text. As for the skip, a
+ * (isLooseThanks: "makasih bgt kak", "thank u"), since a false match only withholds a holding reply. As for the skip, a
  * thanks has no file: a "makasih kak 🙏" on a transfer screenshot may be a payment to confirm (consistency-r2-1). Nor
  * does a text without a letter or digit (😡😡, 🙏, ?) that comes without a file: it does not say what the sender wants.
  * Nor does text that looks like a tag (TAG_LIKE), file or not, in the message or in a message it quotes: a manipulator
@@ -192,6 +203,10 @@ function placeholderWithheld (result, ctx) {
   withheld.push(...chatBlockers(ctx))
   if (ctx.isBacklog) withheld.push('backlog')
   if (chat.placeholderSent) withheld.push('placeholder_already_sent')
+  if (withheld.length === 0) {
+    if (!ctx.holdingGuard) withheld.push('holding_reply:unchecked')
+    else if (!ctx.holdingGuard.ok) withheld.push(...ctx.holdingGuard.reasons.map(reason => `holding_reply:${reason}`))
+  }
   return withheld
 }
 
