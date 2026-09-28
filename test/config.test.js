@@ -108,3 +108,13 @@ test('demo mode: off by default, an exact boolean, and it refuses to start witho
     assert.throws(() => loadConfig({ rootDir: rootWith(t, { demo, allowChats: ['081293850000'] }) }), /config\.demo\.enabled must be true or false/, JSON.stringify(demo))
   }
 })
+
+test('the cloud-api transport refuses to start without its fields, naming the keys and never a value', t => {
+  assert.equal(loadConfig({ rootDir: rootWith(t) }).transport, 'baileys')
+  assert.throws(() => loadConfig({ rootDir: rootWith(t, { transport: 'cloud' }) }), /config\.transport must be "baileys" or "cloud-api"/)
+  assert.throws(() => loadConfig({ rootDir: rootWith(t, { transport: 'cloud-api', cloudApi: { accessToken: 'SECRET-TOKEN', phoneNumberId: '' } }) }),
+    error => /cloudApi\.phoneNumberId, cloudApi\.appSecret, cloudApi\.verifyToken, cloudApi\.ownerNumber/.test(error.message) && !error.message.includes('SECRET-TOKEN'))
+  const complete = { phoneNumberId: 106540352242922, accessToken: 'a', appSecret: 'b', verifyToken: 'c', ownerNumber: '+62 811-1111-1111' }
+  assert.equal(loadConfig({ rootDir: rootWith(t, { transport: 'cloud-api', cloudApi: complete }) }).cloudApi.phoneNumberId, '106540352242922')
+  assert.throws(() => loadConfig({ rootDir: rootWith(t, { transport: 'cloud-api', cloudApi: { ...complete, ownerNumber: 'me' } }) }), /cloudApi\.ownerNumber must be your personal WhatsApp number/)
+})

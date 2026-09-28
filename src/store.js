@@ -25,7 +25,8 @@ const emptyState = () => ({
   ownerNoticeCounter: 0,
   inbox: {},
   claudeCodeVersion: null,
-  lastRateLimit: null
+  lastRateLimit: null,
+  ownerLastMessageAt: 0
 })
 
 /** Temp file + fsync + rename: `file` holds either the old or the new contents, never a partial write. */
@@ -123,6 +124,17 @@ export class Store {
   /** `at` (epoch ms) is when the owner typed the command, so a replayed older /pause or /resume can be refused. */
   get pauseChangedAt () { return this.state.pauseChangedAt }
   setPaused (paused, at = this.now()) { Object.assign(this.state, { paused, pauseChangedAt: at }); this.save() }
+
+  /**
+   * Epoch ms of the owner's newest message to the business number (Cloud API transport): WhatsApp lets the business
+   * write to a number only within 24 h of that number's last message, notices to the owner included.
+   */
+  get ownerLastMessageAt () { return this.state.ownerLastMessageAt ?? 0 }
+  setOwnerLastMessageAt (at) {
+    if (!(at > this.ownerLastMessageAt)) return
+    this.state.ownerLastMessageAt = at
+    this.save()
+  }
 
   get claudeCodeVersion () { return this.state.claudeCodeVersion }
   setClaudeCodeVersion (version) { this.state.claudeCodeVersion = version; this.save() }

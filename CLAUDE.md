@@ -14,7 +14,8 @@ draft in the owner's "Message yourself" chat.
 ## Hard boundaries
 
 - **Never pair or connect to WhatsApp yourself.** `npm run pair` and `npm start` are the owner's (they need the phone).
-  Transport tests use the injected fake socket in `test/whatsapp.test.js`. Only exception: the owner asks in the session
+  Transport tests use the injected fake socket in `test/whatsapp.test.js`. Never call the Graph API with real
+  credentials or run `npm run tunnel` yourself; Cloud API tests use the fake fetch and local server in `test/cloud-api.test.js`. Only exception: the owner asks in the session
   for a live test, as on 2026-09-27 (live for one friend who knows, via `allowChats`); subagents never connect.
 - **Claude backend = the official `claude` binary**, spawned by `src/brain/claude.js`. Never read or copy OAuth tokens
   or `~/.claude` credentials, and never call claude.ai endpoints. Switching to an API key is an owner decision, and more than an env change: the `apiKeySource: "none"` assertion and the quota gate both fail closed under a key.
@@ -35,6 +36,7 @@ draft in the owner's "Message yourself" chat.
 | AI disclosure | On, first auto-send per 12 h session (Anthropic AUP), as a 🤖 prefix only (2026-09-27); an escalation placeholder that starts with 🤖 counts as it; approved drafts carry no marker |
 | Escalation placeholder | An escalated customer Claude flags `customer_waiting` gets the fixed `🤖 Halo Kak, tunggu sebentar ya 🙏` (`🤖 Hi! One moment please 🙏` in English), once per open-draft period; a customer's greeting alone counts as waiting. Never family or friends, spam, manipulation (`tag_like`), a thanks, a text without words, backlog, or a paused, muted, blocked, taken-over or capped chat; none when `autoSend.enabled` is false (drafts only = nothing automated) (2026-09-27) |
 | Tone and facts | `knowledge.md`: `## Voice` for tone, `## Facts` is the only ground truth, `## Never` for hard rules |
+| WhatsApp transport | Official Cloud API (`"transport": "cloud-api"`, the owner's business number) from 2026-09-28, because of the ban risk on the personal number; Baileys stays selectable (still the `config.json` default) |
 | WhatsApp client | Baileys `7.0.0-rc14`, exact pin. Switch triggers are in `docs/implementation-notes.md` |
 | Thanks | Never auto-answered (it asks nothing); skipped only after a closing this session, drafted otherwise (2026-09-26) |
 | Greeting reply | A waiting customer's greeting alone that opens the conversation gets the fixed `greetingReply.text` (`Halo Kak, ada yang bisa saya bantu? 🙏`) as an auto-send, once per session, through the non-Claude gates; `greetingReply.enabled: false` turns it off (2026-09-27) |
@@ -55,6 +57,9 @@ confirmation here: just do it and report.
 - **`policy.decide()` is pure.** A triage failure or a malformed decision → escalate, never auto-send.
 - **Owner commands** come only from the owner's own `/` messages in self-chat: not bot-sent, not forwarded.
 - **Each message id is processed once**, and history or backlog never auto-sends and never gets a placeholder.
+- **Cloud API webhooks** are read only with a valid `X-Hub-Signature-256` (HMAC with the app secret, else 401); owner
+  commands come only from `cloudApi.ownerNumber`; the token, app secret and verify token live only in
+  `config.local.json` and never reach a log. Owner notices go out only within 24 h of the owner's last message.
 - **No link previews.** `send()` in `src/transport/whatsapp.js` passes `linkPreview: null`: otherwise Baileys fetches
   URLs in outgoing text from this machine, and notices quote customers' and spammers' links.
 - **Key material never reaches a log.** libsignal's session dumps are redacted before the console
@@ -68,6 +73,7 @@ confirmation here: just do it and report.
 | `npm run dev -- --fake-brain` | Offline console REPL (`alice: hi`, `me@alice: …`, `me: /ok 1`) |
 | `npm run selftest` | 1 real call: prints isolation + quota, PASS/FAIL |
 | `npm run eval` | 24 fixtures through real Claude + guards + policy → `eval/last-run.{md,json}` |
+| `npm run tunnel` | Cloudflare quick tunnel for the Cloud API webhook; prints the callback URL and verify token for Meta (the owner's to run) |
 | `npm run eval -- --rescore=eval/last-run.json` | Re-apply current guards/policy to saved results, 0 calls |
 | `npm run eval -- --only=id1,id2` | Subset → `eval/last-run-partial.*` |
 | `npm run export` | Borma demo (this branch): read-only BigQuery export → `data/borma/` (~155 MB scanned) |

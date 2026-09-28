@@ -44,6 +44,10 @@ export function seedHistoryFloorOnPairing (dataDir, nowMs = Date.now()) {
 
 function main () {
   const config = loadConfig()
+  if (config.transport !== 'baileys') {
+    console.log(`npm run pair links the Baileys device only; config.transport is "${config.transport}", which needs no pairing. Nothing done.`)
+    process.exit(1)
+  }
   const authDir = config.paths.auth
   const alreadyLinked = existsSync(path.join(authDir, 'creds.json'))
   const guard = checkExistingLink({ alreadyLinked, force: process.argv.includes('--force'), authDir })

@@ -1,4 +1,5 @@
-// Wires config, store, brain, assistant and transport. `npm start` = WhatsApp, `npm run dev` = console REPL.
+// Wires config, store, brain, assistant and transport. `npm start` = WhatsApp (config.transport: Baileys linked device
+// or the official Cloud API), `npm run dev` = console REPL.
 import path from 'node:path'
 import { createAssistant } from './assistant.js'
 import { createClaudeBrain } from './brain/claude.js'
@@ -35,9 +36,35 @@ const onlyListed = allowChatsSummary(config)
 const demo = `${config.demo.enabled ? ' · DEMO: answers may be invented' : ''}${lookup ? ' · BORMA data' : ''}`
 const announce = () => assistant.announce(`${BOT_PREFIX} Assistant online · mode: ${config.mode}${demo}${store.paused ? ' · PAUSED' : ''}${onlyListed ? ` · ${onlyListed}` : ''} · brain: ${brain.name}. Send /help for commands.`)
 
+const onFatal = verdict => {
+  console.error(`\n[${transport?.name ?? 'transport'}] STOPPED: ${verdict.reason}. ${verdict.advice ?? ''}`)
+  shutdown(1)
+}
+
 let transport
 if (useConsole) {
   transport = createConsoleTransport({ onMessage, onEnd: async () => { await assistant.idle(); await shutdown(0) } })
+} else if (config.transport === 'cloud-api') {
+  const { createCloudApiTransport } = await import('./transport/cloud-api.js')
+  transport = createCloudApiTransport({
+    config,
+    store,
+    // WhatsApp delivers notices to the owner only within 24 h of the owner's last message, so any message the owner
+    // sends is the moment to deliver what waited in the outbox.
+    onMessage: async message => {
+      await onMessage(message)
+      if (message.isSelfChat && message.fromMe) await assistant.flushOwnerOutbox()
+    },
+    onUntriaged: item => assistant.noteUntriaged(item),
+    onReady: () => { announce().catch(() => {}) },
+    onConnected: () => { assistant.flushOwnerOutbox().catch(() => {}) },
+    // Meta accepted a notice, then reported it undelivered: it waits in the outbox like one that failed to send.
+    onSelfSendFailed: text => {
+      store.queueOwnerNotice(text)
+      store.audit('owner_notice_failed', { error: 'delivery failed after the send', queued: true })
+    },
+    onFatal
+  })
 } else {
   const { createWhatsAppTransport } = await import('./transport/whatsapp.js')
   transport = createWhatsAppTransport({
@@ -53,10 +80,7 @@ if (useConsole) {
       }
       assistant.flushOwnerOutbox().catch(() => {})
     },
-    onFatal: verdict => {
-      console.error(`\n[whatsapp] STOPPED: ${verdict.reason}. ${verdict.advice ?? ''}`)
-      shutdown(1)
-    }
+    onFatal
   })
 }
 assistant = createAssistant({ config, store, brain, transport, knowledge, lookup })
@@ -64,7 +88,7 @@ assistant.recoverInbox()
 
 console.log(`wa-claude-assistant · transport: ${transport.name} · brain: ${brain.name} · mode: ${config.mode.toUpperCase()}${demo}${onlyListed ? ` · ${onlyListed}` : ''} · data: ${config.paths.data}`)
 if (config.mode === 'live') console.log('LIVE MODE: auto-replies WILL be sent to customers. Set "mode": "shadow" to stop.')
-else console.log('Shadow mode: nothing is sent to anyone except your own "Message yourself" chat.')
+else console.log(`Shadow mode: nothing is sent to anyone except ${transport.name === 'cloud-api' ? 'your own number (cloudApi.ownerNumber)' : 'your own "Message yourself" chat'}.`)
 
 let shuttingDown = false
 async function shutdown (code = 0) {

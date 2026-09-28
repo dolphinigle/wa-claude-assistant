@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { isChatEntry } from './chat-lists.js'
+import { isChatEntry, phoneEntry } from './chat-lists.js'
 
 export const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -28,6 +28,24 @@ function readJson (file) {
 const REMOVED_KEYS = [
   ['autoSend.minConfidence', 'the confidence gate was removed with the answer/escalate decision; see "Safety defaults" in the README for the gates that apply']
 ]
+
+const CLOUD_API_REQUIRED = ['phoneNumberId', 'accessToken', 'appSecret', 'verifyToken', 'ownerNumber']
+
+// The Cloud API's secrets live only in config.local.json; errors name the keys, never their values.
+function checkTransport (config) {
+  if (!['baileys', 'cloud-api'].includes(config.transport)) throw new Error(`config.transport must be "baileys" or "cloud-api", got ${JSON.stringify(config.transport)}`)
+  if (config.transport !== 'cloud-api') return
+  const cloud = isPlainObject(config.cloudApi) ? config.cloudApi : {}
+  const present = value => (typeof value === 'string' ? value.trim() !== '' : typeof value === 'number')
+  const missing = CLOUD_API_REQUIRED.filter(key => !present(cloud[key]))
+  if (missing.length > 0) throw new Error(`transport "cloud-api" needs ${missing.map(key => `cloudApi.${key}`).join(', ')} in config.local.json (see "Official WhatsApp Cloud API" in the README)`)
+  if (!/^\d+$/.test(String(cloud.phoneNumberId).trim())) throw new Error('config.cloudApi.phoneNumberId must be the numeric Phone number ID from the Meta app\'s API Setup page')
+  if (!phoneEntry(cloud.ownerNumber)) throw new Error('config.cloudApi.ownerNumber must be your personal WhatsApp number (e.g. "0812…", "62812…" or "+62 812…")')
+  if (!(Number.isInteger(cloud.port) && cloud.port > 0 && cloud.port < 65536)) throw new Error(`config.cloudApi.port must be a port number, got ${JSON.stringify(cloud.port)}`)
+  if (typeof cloud.webhookPath !== 'string' || !cloud.webhookPath.startsWith('/')) throw new Error(`config.cloudApi.webhookPath must start with "/", got ${JSON.stringify(cloud.webhookPath)}`)
+  if (!/^v\d+\.\d+$/.test(cloud.graphVersion ?? '')) throw new Error(`config.cloudApi.graphVersion must look like "v26.0", got ${JSON.stringify(cloud.graphVersion)}`)
+  config.cloudApi = { ...cloud, phoneNumberId: String(cloud.phoneNumberId).trim() }
+}
 
 /**
  * config.json (committed defaults) deep-merged with config.local.json (gitignored), then `overrides`.
@@ -73,6 +91,7 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
   if (borma !== undefined && (!isPlainObject(borma) || typeof borma.enabled !== 'boolean')) throw new Error(`config.borma.enabled must be true or false (no quotes), got ${JSON.stringify(borma?.enabled ?? borma)}`)
   // The order lookup is on unless it is exactly false (lookup.js), so a quoted "false" would leave it on.
   if (borma?.orders !== undefined && typeof borma.orders !== 'boolean') throw new Error(`config.borma.orders must be true or false (no quotes), got ${JSON.stringify(borma.orders)}`)
+  checkTransport(config)
   for (const [key, why] of REMOVED_KEYS) {
     if (key.split('.').reduce((node, part) => node?.[part], config) !== undefined) throw new Error(`config ${key} is no longer supported (${why}); remove it from config.local.json`)
   }
