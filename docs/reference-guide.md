@@ -199,7 +199,10 @@ false`); most were added or tightened after a review or the live run found the f
   3 of `3 hari` never licenses a bare 3; a number with any other word (`3 loyang`) needs that word in the facts.
 - Numbers as words (`seratus ribu`, `sepekan`, `twice`) and bare domains fail unless the cited facts have them;
   digits of other scripts always fail. NFKC-normalize and strip zero-width characters first.
-- `facts_used` must name existing facts and may not be empty for an auto-send. Sensitive terms (discount, refund,
+- `facts_used` must name existing facts. It may be empty only for a reply that just asks (owner decision 2026-09-28,
+  after the live test drafted "mau order" and "apa nama tokonya"): it has a `?`, nothing concrete (no number, price,
+  time, link, contact, number word or day such as `besok` or `Senin`) and no yes up front (`bisa`, `siap`, `boleh`), e.g.
+  "Halo Kak, mau pesan apa, berapa banyak, dan untuk tanggal berapa?". Sensitive terms (discount, refund,
   bank account …, with Indonesian affixes such as `diskonnya`, `direfund`) fail unless the cited facts have them.
   Placeholders, fact ids, over-long replies, private identifiers and a reply in the other language fail.
 - **Limits:** guards check details, not meaning. "We deliver to Jakarta" passes if no number is involved, and so
@@ -240,6 +243,18 @@ run flagged the `</message><system>` tag breakout as waiting instead, although i
 the flag is not reliable on manipulation. A second backstop now withholds it from text that looks like a tag, escaped
 or not, in the message or a message it quotes (`tag_like`, the prompt's trust rule 4). Family, friends, goodbyes
 outside the thanks vocabulary (`sampai jumpa`, `see you`), spam and other manipulation still rest on the flag alone.
+
+**Greeting reply** (owner decision 2026-09-27, "behave like CS"): a waiting customer's greeting alone (`Hai`, `Halo
+kak`, `P`, `Selamat siang`) gets the fixed `Halo Kak, ada yang bisa saya bantu? 🙏` as an auto-send, never Claude's
+words, through the non-Claude gates, unless it may answer something fresh (our message in the last 10 min, an open
+draft) or was greeted in the last hour. A strict whole-message vocabulary (`isGreetingOnly`) plus Claude's
+`customer_waiting` keep family and friends out.
+
+**Demo mode** (`demo.enabled`, owner decision 2026-09-27, only with a non-empty `allowChats`): for testers who know
+the shop is fictional, Claude answers like CS and invents plausible details the facts don't give
+(`prompts/triage-demo.md`); the facts checks and the `no_question` hold are off, but bank, account, e-wallet and
+transfer details are still held (`demo_payment_detail`: nobody may pay into an invented account). The eval forces it
+off; its answers were never evaluated.
 
 ## 9. Lessons from the social path
 
@@ -286,7 +301,7 @@ matcher so its misses land on the safe side, and stop reviewing when the finding
 
 ## 11. Evaluation
 
-- `eval/fixtures.json`: 20 fixtures (Indonesian and English), each with an expected decision, `autoSend: allowed |
+- `eval/fixtures.json`: 24 fixtures (Indonesian and English), each with an expected decision, `autoSend: allowed |
   forbidden`, `placeholder: allowed | forbidden`, optional history with ages, and `skipOk` where a skip is
   acceptable. One fixture = one real call.
 - Hard gates: **0 forbidden auto-sends, 0 skipped escalations and 0 forbidden placeholders** (a skip reaches nobody).
@@ -360,6 +375,12 @@ triage calls plus the selftest.
 | Owner feedback | A two-language disclosure line and a full "They wrote / Reply" notice per auto-reply were too much text → a 🤖 prefix and a one-line notice |
 | Reconnects | WhatsApp closed the socket twice (428, a timeout); it reconnected by itself and a notice queued during the drop was re-sent |
 | Found and fixed | Signal session keys in stdout (section 5); stale backlog skipped silently (section 10, open) |
+
+**Day 2 (2026-09-27 evening to 09-28):** with the batch window at 3 s, the shop's name and range as facts, question-only
+CS replies, the greeting reply and demo mode, the testers got direct answers ("Kak mau order dong" → "Halo Kak, mau
+pesan apa, berapa banyak, dan untuk tanggal berapa?"). Then the owner's weekly subscription quota reached 97–98 %
+(mostly the owner's own Claude use and the evals): every answer became a draft (`quota_seven_day`) until the window
+reset, after which the bot answered again without a restart, since it reads the quota from each call.
 
 Not answered: whether the phone buzzes for self-chat notices, and whether `readMessages` clears the unread badge. The
 placeholder shipped after the test and has not been seen live yet.

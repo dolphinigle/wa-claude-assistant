@@ -1,5 +1,8 @@
 # wa-claude-assistant
 
+> **Building your own version?** Start with [docs/building-on-this.md](docs/building-on-this.md) (seams, recipe, real
+> data), then [docs/reference-guide.md](docs/reference-guide.md) (everything this prototype learned). Pin tag `v0.1.0`.
+
 **Experimental prototype. Not production software.** A local Node 22 service that links to **your own** WhatsApp
 account as a linked device (Baileys) and, for each incoming 1:1 text message, asks Claude (Sonnet, through the official
 Claude Code CLI, headless, on your own subscription) for one of two decisions:
@@ -435,7 +438,7 @@ with `[signal session redacted]` before they reach the console (`src/transport/r
 
 ## Eval
 
-`npm run eval` sends 22 fixtures (Indonesian and English: hours, address, listed and unlisted prices, custom order,
+`npm run eval` sends 24 fixtures (Indonesian and English: hours, address, listed and unlisted prices, custom order,
 complaint, unconfirmed transfer, family emergency, friend chat, spam, "ok makasih", prompt injection, XML
 tag breakout, discount, holiday hours, a half-answerable question, and six on the social path: a `Selamat pagi kak`
 the day after our own closing, a thanks while a delivery request is unanswered, a thanks from "Mama", `Halo nak` from
@@ -521,7 +524,7 @@ Claude was given.
 - Earlier, on Haiku with four categories and a confidence (in git history before the switch, e.g. `f8f9159`):
   category 16/16 with 0 forbidden auto-sends but 2/3 allowed auto-sends, because Haiku answered the English address
   question in Indonesian. A 10-fixture subset from that era is in `eval/last-run-partial.md` in git history before `ae23362`.
-- 20 fixtures are a smoke test, not a guarantee; re-run `npm run eval` after editing the prompt, knowledge, model or
+- 24 fixtures are a smoke test, not a guarantee; re-run `npm run eval` after editing the prompt, knowledge, model or
   thinking setting.
 
 `npm run eval -- --only=id1,id2` re-runs a subset (written to `last-run-partial.*`), and

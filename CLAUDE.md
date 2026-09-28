@@ -8,7 +8,7 @@ draft in the owner's "Message yourself" chat.
 - **Working document:** issue #1 (`gh issue view 1`). Keep it current by editing its **body**, not by adding comments.
 - **Spec for users:** `README.md`. **Verified library/CLI facts:** `docs/implementation-notes.md`.
 - **Evidence and sources:** `docs/research.md` (a 2026-09-26 snapshot; don't rewrite it, add dated notes instead).
-- **For other projects:** `docs/reference-guide.md` records everything learned (verified facts, design and why, what
+- **For other projects:** `docs/building-on-this.md` (seams, recipe, real data) and `docs/reference-guide.md` record everything learned (verified facts, design and why, what
   reviews kept finding, live results). The owner wants it complete: update it whenever something is learned or changed.
 
 ## Hard boundaries
@@ -20,7 +20,7 @@ draft in the owner's "Message yourself" chat.
   or `~/.claude` credentials, and never call claude.ai endpoints. Switching to an API key is an owner decision, and more than an env change: the `apiKeySource: "none"` assertion and the quota gate both fail closed under a key.
 - **No ban evasion** (anti-detection, fingerprint spoofing), no bulk or outbound messaging, no messages to new
   contacts, no groups.
-- **Real Claude calls only via `npm run selftest` (1 call) and `npm run eval` (22 calls).** They spend the owner's
+- **Real Claude calls only via `npm run selftest` (1 call) and `npm run eval` (24 calls).** They spend the owner's
   subscription quota, which is shared with their day job. Say how many calls you used.
 - Downloads and clones go to `~/copilot/research/wa-claude-assistant/`, never `/tmp` (it is RAM on this machine). Delete them when done.
 
@@ -66,7 +66,7 @@ confirmation here: just do it and report.
 | `npm test` | Unit tests; no network, fake claude binary, fake socket |
 | `npm run dev -- --fake-brain` | Offline console REPL (`alice: hi`, `me@alice: …`, `me: /ok 1`) |
 | `npm run selftest` | 1 real call: prints isolation + quota, PASS/FAIL |
-| `npm run eval` | 22 fixtures through real Claude + guards + policy → `eval/last-run.{md,json}` |
+| `npm run eval` | 24 fixtures through real Claude + guards + policy → `eval/last-run.{md,json}` |
 | `npm run eval -- --rescore=eval/last-run.json` | Re-apply current guards/policy to saved results, 0 calls |
 | `npm run eval -- --only=id1,id2` | Subset → `eval/last-run-partial.*` |
 
