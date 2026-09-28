@@ -4,8 +4,8 @@ import os from 'node:os'
 // concrete detail (number, price, time, duration, percentage, phone, URL, email) is copied from the facts the reply
 // cites in `facts_used`, so a model slip becomes a draft instead of a wrong promise. When unsure they fail, which
 // only means the owner sees a draft. The holding reply and the greeting-back cite no fact, so they may state nothing
-// concrete at all (checkHoldingReply, guardGreeting). Demo mode (`demo.enabled`, testers only) invents details on purpose: there only
-// payment details are checked in place of the facts (checkReply).
+// concrete at all (checkHoldingReply, guardGreeting). Demo mode (`demo.enabled`, testers only) invents details on
+// purpose: there only payment details are checked in place of the facts (checkReply).
 
 const THOUSANDS = /^\d{1,3}(?:[.,]\d{3})+$/
 const MULTIPLIERS = { rb: 1e3, ribu: 1e3, k: 1e3, jt: 1e6, juta: 1e6 }
@@ -673,14 +673,16 @@ export const MAX_GREETING_REPLY_CHARS = 200
 
 /**
  * Claude's holding reply (`holding_reply`), sent as "🤖 " + it to an escalated customer who waits (policy.js): not
- * empty, at most 200 characters, nothing concrete (no number, price, time, day, link, contact or number word), no yes up
- * front, no sensitive term (no fact licenses one here), no private identifier, no placeholder or fact id, and in the
- * customer's language. A failure only means no placeholder: the owner still gets the draft.
+ * empty, with a letter, at most 200 characters, nothing concrete (no number, price, time, day, link, contact or number
+ * word), no yes up front, no sensitive term (no fact licenses one here), no private identifier, no placeholder or fact
+ * id, and in the customer's language. A failure only means no placeholder: the owner still gets the draft.
  * @returns {{ok: boolean, reasons: string[]}}
  */
 export function checkHoldingReply ({ reply, incomingText }, { sensitiveTerms = [], privateIdentifiers: identifiers } = {}) {
   const text = normalizeText(reply).trim()
   if (!text) return { ok: false, reasons: ['empty'] }
+  // Sonnet once wrote the two characters `""` for "no holding reply" (eval 2026-09-28): a text without a letter says nothing.
+  if (!/\p{L}/u.test(text)) return { ok: false, reasons: ['no_words'] }
   const reasons = []
   if (text.length > MAX_HOLDING_CHARS) reasons.push(`too_long:${text.length}>${MAX_HOLDING_CHARS}`)
   if (/\[F\d+\]/i.test(text)) reasons.push('fact_id_in_reply')

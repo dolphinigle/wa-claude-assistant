@@ -563,6 +563,8 @@ test('checkHoldingReply: anything concrete, a yes, another language, nothing or 
     ['', ['empty']],
     ['   ', ['empty']],
     [undefined, ['empty']],
+    ['""', ['no_words']], // Sonnet's "no holding reply" once (eval 2026-09-28)
+    ['🙏', ['no_words']],
     [`Baik Kak Budi, ${'pertanyaan soal kue ulang tahunnya '.repeat(6)}saya teruskan ke pemilik ya`, ['too_long:252>200']]
   ]
   for (const [reply, reasons] of cases) assert.deepEqual(holding(reply), { ok: false, reasons }, String(reply))
