@@ -165,10 +165,26 @@ export function buildAllowList (knowledge, factIds) {
   return allow
 }
 
-// A day is a commitment or a claim even without a digit: "besok dikirim ya", "buka Senin–Sabtu".
-const DAY_WORDS = /\b(?:besok|lusa|hari ini|malam ini|minggu depan|bulan depan|hari minggu|senin|selasa|rabu|kamis|jum'?at|sabtu|tomorrow|today|tonight|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i
-// A reply without facts may only ask; opening with a yes would agree to whatever was asked ("Siap Kak", "Bisa kak").
-const YES_OPENING = /^[^\p{L}]*(?:bisa|boleh|siap|oke?|okay|iya|ya|tentu|pasti|sure|yes|can)\b/iu
+// A day is a commitment or a claim even without a digit: "besok dikirim ya", "buka Senin–Sabtu". So is a part of a
+// day, a vague span or a month ("nanti sore", "setelah maghrib", "dalam beberapa menit", "akhir pekan", "awal Mei");
+// "Selamat pagi" and "shortly" are neither. A month needs a word before it: Mei, Juli and April are also first names.
+const DAY_WORDS = new RegExp('\\b(?:besok|lusa|hari ini|malam ini|minggu depan|bulan depan|hari minggu|senin|selasa|rabu|kamis|jum\'?at|sabtu|' +
+  'tomorrow|today|tonight|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|' +
+  '(?:nanti|tadi)\\s+(?:pagi|siang|sore|malam)|(?:pagi|siang|sore)\\s+ini|(?:minggu|bulan|tahun)\\s+ini|akhir\\s+pekan|kemarin|' +
+  'setelah\\s+(?:maghrib|magrib|isya|subuh|dzuhur|zuhur|ashar|asar)|beberapa\\s+(?:menit|jam|hari)|' +
+  'this\\s+(?:morning|afternoon|evening|week|month)|weekend|yesterday|next\\s+month|few\\s+(?:minutes|hours|days)|an\\s+hour|' +
+  '(?:awal|akhir|pertengahan|bulan|early|late|mid|in)\\s+(?:januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|' +
+  'november|desember|january|february|march|may|june|july|august|october|december))\\b', 'i')
+// A reply without facts may only ask; opening with a yes would agree to whatever was asked ("Siap Kak", "Bisa kak"),
+// stretched spellings ("Siapp", "Okee") and chat yeses ("Sip", "Yup", "Noted") included.
+const YES_OPENING = /^[^\p{L}]*(?:bisa+|boleh+|siap+|si+p+|ok+e*y?|okay|iya+|ya+|yes+|yup|yep|yeah|tentu|pasti|sure|can|of course|absolutely|definitely|certainly|noted|beres)\b/iu
+// Nor may a holding reply or a greeting-back say that something is done: "pembayarannya sudah kami terima", "kuenya
+// sudah siap", "pesanannya dikirim" (knowledge.md: never confirm a payment). A thanks for what the customer did
+// ("terima kasih sudah menghubungi") and "sudah saya teruskan ke pemilik" claim nothing and are taken out first, and
+// so is a yes up front, which yes_opening already reports ("Siap Kak").
+const NOT_A_CLAIM = /\b(?:terima\s*kasih|makasih|trims)\s+(?:sudah|udah|telah)\b|\b(?:sudah|udah|telah)\s+(?:saya|kami|aku)\s+(?:teruskan|sampaikan)\b/giu
+const STATUS_CLAIM = /\b(?:sudah|udah|telah|already|siap|ready|beres|selesai|done|terima(?!\s*kasih)|diterima|received|masuk|arrived|lunas|paid|dibayar|dikirim|terkirim|sent|shipped|delivered|diproses|processed|dicatat|tercatat|noted|confirmed|terkonfirmasi)\b/iu
+const claimsStatus = text => STATUS_CLAIM.test(text.replace(YES_OPENING, ' ').replace(NOT_A_CLAIM, ' '))
 
 const PLACEHOLDERS = [
   /\{\{|\}\}/,
@@ -670,12 +686,14 @@ const concreteKinds = text => [
 // nothing the owner has not: the holding reply only acknowledges, the greeting-back only asks.
 export const MAX_HOLDING_CHARS = 200
 export const MAX_GREETING_REPLY_CHARS = 200
+export const MAX_GREETING_REPLY_WORDS = 12
 
 /**
  * Claude's holding reply (`holding_reply`), sent as "🤖 " + it to an escalated customer who waits (policy.js): not
  * empty, with a letter, at most 200 characters, nothing concrete (no number, price, time, day, link, contact or number
- * word), no yes up front, no sensitive term (no fact licenses one here), no private identifier, no placeholder or fact
- * id, and in the customer's language. A failure only means no placeholder: the owner still gets the draft.
+ * word), no yes up front, no status claim ("sudah kami terima"), no sensitive term (no fact licenses one here), no
+ * private identifier, no placeholder or fact id, and in the customer's language. A failure only means no placeholder:
+ * the owner still gets the draft.
  * @returns {{ok: boolean, reasons: string[]}}
  */
 export function checkHoldingReply ({ reply, incomingText }, { sensitiveTerms = [], privateIdentifiers: identifiers } = {}) {
@@ -689,6 +707,7 @@ export function checkHoldingReply ({ reply, incomingText }, { sensitiveTerms = [
   else if (PLACEHOLDERS.some(pattern => pattern.test(text))) reasons.push('placeholder')
   reasons.push(...concreteKinds(text).map(kind => `concrete:${kind}`))
   if (YES_OPENING.test(text)) reasons.push('yes_opening')
+  if (claimsStatus(text)) reasons.push('status_claim')
   for (const term of sensitiveTerms) if (containsTerm(text, term)) reasons.push(`sensitive_term:${term}`)
   if (findPrivateDetails(text, identifiers).length > 0) reasons.push('private_detail')
   reasons.push(...languageReasons(incomingText, text))
@@ -758,11 +777,23 @@ export function guardHolding (triage, { config, incomingText }) {
 /**
  * The greeting-back is Claude's own reply to a greeting alone (owner decision 2026-09-28), whatever it decided: it may
  * go out only if it just asks, as a reply citing no fact may (checkReply: a `?`, nothing concrete, no yes up front),
- * checked against no fact and outside demo mode, in at most 200 characters. Undefined unless the message only greets.
+ * checked against no fact and outside demo mode, in at most 200 characters. It is a greeting and one question, so it
+ * also ends with the question, has at most 12 words and claims no status: Claude sees the chat's history, and an
+ * escalated draft may mention an open order ("Pagi Kak Rina, kuenya sudah siap ya, mau diambil kapan?"), which must
+ * not go out unread. Undefined unless the message only greets.
  */
 export function guardGreeting (triage, { knowledge, config, incomingText }) {
   if (!triage || !isGreetingOnly(incomingText)) return undefined
   const maxReplyChars = Math.min(config.guards?.maxReplyChars ?? MAX_GREETING_REPLY_CHARS, MAX_GREETING_REPLY_CHARS)
-  return checkReply({ reply: triage.reply, factsUsed: [], incomingText },
+  const { reasons } = checkReply({ reply: triage.reply, factsUsed: [], incomingText },
     { knowledge, ...config.guards, maxReplyChars, privateIdentifiers: privateIdentifiersFor(config), demo: false })
+  const text = normalizeText(triage.reply).trim()
+  if (text) {
+    // Without any `?` checkReply already says no_facts_used.
+    if (/[?¿]/.test(text) && !/[?¿][^\p{L}\p{N}]*$/u.test(text)) reasons.push('question_not_last')
+    const words = text.match(/[\p{L}\p{N}]+/gu)?.length ?? 0
+    if (words > MAX_GREETING_REPLY_WORDS) reasons.push(`too_many_words:${words}>${MAX_GREETING_REPLY_WORDS}`)
+    if (claimsStatus(text)) reasons.push('status_claim')
+  }
+  return { ok: reasons.length === 0, reasons }
 }

@@ -149,7 +149,8 @@ function quotaBlockers ({ config, rateLimit }) {
  * kak") gets a greeting-back at once, instead of a draft and a holding reply; their next message goes the normal way.
  * Claude's `customer_waiting` decides who is a customer (never family, friends, spam or a manipulator, as for the
  * placeholder). The words are Claude's reply, written for that sender (owner decision 2026-09-28: no fixed texts), and
- * go out only if it just asks (guardGreeting: a question, nothing concrete, no yes up front, at most 200 characters).
+ * go out only if it just asks (guardGreeting: a question last, nothing concrete, no yes up front, no status claim, at
+ * most 12 words and 200 characters).
  * Held, so the message goes the way it would have, by that check, by what holds any auto-send, always by backlog (it
  * comes late, as for the placeholder), by a file or a quote, and unless the greeting opens the conversation: once per
  * session, and not after anything of ours this session, a draft still open or an earlier message in the history this

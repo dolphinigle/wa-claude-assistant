@@ -216,7 +216,8 @@ false`); most were added or tightened after a review or the live run found the f
   digits of other scripts always fail. NFKC-normalize and strip zero-width characters first.
 - `facts_used` must name existing facts. It may be empty only for a reply that just asks (owner decision 2026-09-28,
   after the live test drafted "mau order" and "apa nama tokonya"): it has a `?`, nothing concrete (no number, price,
-  time, link, contact, number word or day such as `besok` or `Senin`) and no yes up front (`bisa`, `siap`, `boleh`), e.g.
+  time, link, contact, number word or day such as `besok`, `Senin` or `nanti sore`) and no yes up front (`bisa`,
+  `siap`, `boleh`, `sip`, `okee`, `yup`), e.g.
   "Halo Kak, mau pesan apa, berapa banyak, dan untuk tanggal berapa?". Sensitive terms (discount, refund,
   bank account …, with Indonesian affixes such as `diskonnya`, `direfund`) fail unless the cited facts have them.
   Placeholders, fact ids, over-long replies, private identifiers and a reply in the other language fail.
@@ -246,8 +247,9 @@ that starts with it counts); drafts the owner approves carry none.
 wait in silence. Until 2026-09-28 it was one fixed text (`🤖 Halo Kak, tunggu sebentar ya 🙏`); now it is written per
 sender (by name, naming the topic in general words: `🤖 Baik Kak Sari, soal konfirmasi pembayarannya saya teruskan ke
 pemilik ya 🙏`), and since it goes out unread it must pass `checkHoldingReply`: a letter in it, at most 200
-characters, nothing concrete (the same extractors and day words as above), no yes up front, no sensitive term, no
-private identifier, no placeholder or fact id, the customer's language. A failure or an empty one sends nothing (no
+characters, nothing concrete (the same extractors and day words as above, `nanti sore`, `akhir pekan` and `awal Mei`
+included), no yes up front, no status claim (`sudah kami terima`, `dikirim`, `lunas`, `received`), no sensitive
+term, no private identifier, no placeholder or fact id, the customer's language. A failure or an empty one sends nothing (no
 fixed fallback) and is audited as `holding_reply:<reason>`; the draft reaches the owner as always. Its other gates in
 `decide()`: the triage succeeded, the flag is exactly `true`, the message is no
 thanks (read more loosely than for the skip, chat spellings, a `2` repeat, any emoji next to the words and a greeting
@@ -268,7 +270,9 @@ outside the thanks vocabulary (`sampai jumpa`, `see you`), spam and other manipu
 greeting alone (`Hai`, `Halo kak`, `P`, `Selamat siang`) gets Claude's own reply as an auto-send (`Pagi juga Kak Dewi,
 ada yang bisa dibantu?`; until 2026-09-28 the fixed `Halo Kak, ada yang bisa saya bantu? 🙏`), if it only asks
 (`guardGreeting`: `checkReply` against no fact, so a `?`, nothing concrete, no yes up front, in at most 200
-characters), through the other gates, unless it may answer something fresh (our message in the last 10 min, an open
+characters; and a greeting plus one question: it ends with the `?`, has at most 12 words and no status claim, since
+Claude sees an open order in the history and `Pagi Kak Rina, kuenya sudah siap ya, mau diambil kapan?` must not go
+out unread), through the other gates, unless it may answer something fresh (our message in the last 10 min, an open
 draft) or was greeted in the last hour; otherwise it is drafted with the holding reply. A strict whole-message
 vocabulary (`isGreetingOnly`) plus Claude's `customer_waiting` keep family and friends out. **[eval]** The first prompt
 that asked Claude for the greeting-back flagged `Hai bro` from a friend as a customer: the flag, not the text, is the

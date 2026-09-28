@@ -399,9 +399,11 @@ cancelled.
   kue ulang tahunnya saya teruskan ke pemilik ya 🙏`. There is no fixed text, not even as a fallback: an account was
   restricted after the same reply went to ~100 users (Baileys #2800, 2026-09-27), and identical automated texts look
   like bulk messaging. It goes out without you reading it, so a guard (`checkHoldingReply` in `src/guards.js`) must
-  pass: not empty, a letter in it, at most 200 characters, nothing concrete (no number, price, time, day word such as `besok` or
-  `Senin`, link, contact or number word such as `satu`), no yes up front (`siap`, `bisa`, `oke`), no sensitive term,
-  no private identifier, no placeholder or fact id, and the customer's language. If it fails or is empty, the customer
+  pass: not empty, a letter in it, at most 200 characters, nothing concrete (no number, price, time, day word such as `besok`,
+  `Senin`, `nanti sore` or `akhir pekan`, link, contact or number word such as `satu`), no yes up front (`siap`, `bisa`,
+  `oke`, `sip`, `okee`), no status claim (`sudah kami terima`, `dikirim`, `lunas`; a `terima kasih sudah menghubungi`
+  or `sudah saya teruskan` is none), no sensitive term, no private identifier, no placeholder or fact id, and the
+  customer's language. If it fails or is empty, the customer
   gets nothing and the audit says why (`holding_reply:<reason>` in `placeholderWithheld`); the draft reaches you as
   always. It also needs all of: the triage succeeded,
   Claude set `customer_waiting` (a required schema field: a customer waiting for an answer or an action from you, and
@@ -439,8 +441,9 @@ cancelled.
   Claude's own reply at once (`Pagi juga Kak Dewi, ada yang bisa dibantu?`), written for that sender, never a fixed
   text, as an auto-reply (🤖 on the session's first reply, blue ticks, caps, loop guard, one-line notice) with no
   draft; their next message goes the normal way. The reply must only ask, as a reply citing no fact must (a `?`,
-  nothing concrete, no yes up front), checked against no fact whatever Claude cited, in at most 200 characters
-  (`guardGreeting`); otherwise the greeting is drafted, with the holding reply, and the audit says why
+  nothing concrete, no yes up front), checked against no fact whatever Claude cited, in at most 200 characters, and
+  be a greeting and one question: it ends with the question, has at most 12 words and claims no status, since Claude
+  sees yesterday's order in the history (`guardGreeting`); otherwise the greeting is drafted, with the holding reply, and the audit says why
   (`greeting_reply:<reason>` in `greetingHeld`). It needs Claude's `customer_waiting`, no file or
   quote, and a greeting that answers nothing fresh (no greeting-back in the last hour, nothing of ours in the last 10
   min, no open draft: a `Pagi kak` may answer `mau diambil kapan?`). Drafts only, pause, mute, blocklist,

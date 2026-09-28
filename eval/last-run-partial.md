@@ -1,6 +1,8 @@
-# Eval: partial re-run
+# Eval: partial re-run, rescored
 
-Run 2026-09-28T12:37:37.843Z (subset: greeting-after-old-closing-id, friend-greeting-id) · model `claude-sonnet-5` (alias `sonnet`, thinking off) · claude 2.1.283 · 2 real `claude -p` results from `src/brain/claude.js`, then `guards.js` and `policy.js` evaluated as live mode on a fresh chat (quota limit 0.8); fixture history given to Claude: up to 4 message(s).
+> Rescore of the saved run: 2026-09-28T12:58:06.688Z, the current guards and policy applied to the saved triage results of 2026-09-28T12:37:37.843Z (no new claude calls).
+
+Run 2026-09-28T12:37:37.843Z (subset: greeting-after-old-closing-id, friend-greeting-id) · model `claude-sonnet-5` (alias `sonnet`, thinking off) · claude 2.1.283 · 2 saved `claude -p` results from `src/brain/claude.js`, then `guards.js` and `policy.js` evaluated as live mode on a fresh chat (quota limit 0.8); fixture history given to Claude: up to 4 message(s).
 
 ## Summary
 
@@ -27,7 +29,7 @@ Run 2026-09-28T12:37:37.843Z (subset: greeting-after-old-closing-id, friend-gree
 
 ## Details
 
-### greeting-after-old-closing-id — a greeting the day after a closing opens a new conversation: escalate, never skip; a waiting customer's greeting alone gets the fixed greeting-back
+### greeting-after-old-closing-id — a greeting the day after a closing opens a new conversation: escalate, never skip; a waiting customer's greeting alone gets Claude's greeting-back
 
 Message: Selamat pagi kak
 
