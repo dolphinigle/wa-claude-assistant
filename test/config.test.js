@@ -33,6 +33,15 @@ test('the auto-send switches must be true or false: a quoted "false" would leave
   }
 })
 
+test('borma.orders must be true or false: a quoted "false" would leave the real order lookup on (customer-privacy-r1-1)', t => {
+  const config = loadConfig({ rootDir: rootWith(t, { borma: { enabled: true, orders: false } }) })
+  assert.equal(config.borma.orders, false)
+  assert.equal(loadConfig({ rootDir: rootWith(t) }).borma.orders, true, 'the committed default')
+  for (const value of ['false', 'true', 0, 1, null, 'off']) {
+    assert.throws(() => loadConfig({ rootDir: rootWith(t, { borma: { enabled: true, orders: value } }) }), /config\.borma\.orders must be true or false/, JSON.stringify(value))
+  }
+})
+
 test('a phone number written with the trunk 0 after +62 names the chat, in the blocklist and in allowChats (consistency-r3-1)', t => {
   const PN = '6281234567890@s.whatsapp.net'
   const store = { linkedChatIds: (chatId, chatIdAlt) => [chatId, chatIdAlt].filter(Boolean) }

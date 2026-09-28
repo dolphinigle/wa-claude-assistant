@@ -71,6 +71,8 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
   // The Borma demo reads real shop data and looks up the sender's orders: on only when the owner says so, exactly.
   const borma = config.borma
   if (borma !== undefined && (!isPlainObject(borma) || typeof borma.enabled !== 'boolean')) throw new Error(`config.borma.enabled must be true or false (no quotes), got ${JSON.stringify(borma?.enabled ?? borma)}`)
+  // The order lookup is on unless it is exactly false (lookup.js), so a quoted "false" would leave it on.
+  if (borma?.orders !== undefined && typeof borma.orders !== 'boolean') throw new Error(`config.borma.orders must be true or false (no quotes), got ${JSON.stringify(borma.orders)}`)
   for (const [key, why] of REMOVED_KEYS) {
     if (key.split('.').reduce((node, part) => node?.[part], config) !== undefined) throw new Error(`config ${key} is no longer supported (${why}); remove it from config.local.json`)
   }
