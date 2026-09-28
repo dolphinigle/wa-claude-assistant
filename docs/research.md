@@ -462,3 +462,42 @@ These were left for the builder and for re-checking greps. Delete them when done
 - https://jdih.komdigi.go.id/produk_hukum/view/id/883/t/surat+edaran+menteri+komunikasi+dan+informatika+nomor+9+tahun+2023 (2023-12-19) [doc]
 - https://www.hukumonline.com/pusatdata/detail/lt6a9164bf1e96a/peraturan-pemerintah-nomor-33-tahun-2026/analysis/ (2026-07) [2nd]
 - https://www.antaranews.com/berita/5377558/kemkomdigi-siapkan-aturan-konten-buatan-ai-wajib-diberi-label (2026-01-26) [2nd]
+
+---
+
+## Dated note 2026-09-28: ban likelihood, risk reduction, Cloud API pricing
+
+Three read-only research tracks, each re-checked by a skeptic against primary pages (retrieved 2026-09-28).
+
+**Ban likelihood (unofficial linked device):**
+- No base rate exists for a low-volume, reply-only bot. WhatsApp publishes only totals ("over two million accounts per
+  month for bulk or automated behavior — over 75% without a recent user report", 2019 white paper; monthly India
+  reports of ~5 M bans, all causes). Operator self-reports ("out of 700 instances, I got two alerts", Baileys #2658)
+  are unverifiable and self-selected.
+- Help center: linking an unofficial app "now or in the past, may result in a temporary or permanent account ban"
+  (faq.whatsapp.com/378279804439436, /1217634902127718, /1064395290901991). The ToS bans auto-messaging and non-personal
+  use (whatsapp.com/legal/terms-of-service).
+- WhatsApp's own advice matches a reply-only bot ("Only send messages to those who have contacted you first",
+  faq.whatsapp.com/361005896189245), but reply-only and low-volume accounts were also restricted or banned in 2024–2026
+  enforcement waves (e.g. Baileys #2800 on 2026-09-27: customers started every chat, the same reply went to ~100 users).
+- Baileys rc14 emits `connection.update.reachoutTimeLock` when an account is restricted; this repo does not read it.
+
+**Legitimate risk reducers:** reply only to people who wrote first (done per message); low volume (caps 3/chat/h,
+30/day); no link or media spam (text only, `linkPreview: null`); honour stop requests (no customer-side stop keyword
+yet); a separate number to contain the blast radius. Anti-detection tricks are out of scope (CLAUDE.md).
+
+**WhatsApp Cloud API pricing, Indonesia** (developers.facebook.com/documentation/business-messaging/whatsapp/pricing,
+"Updated Sep 10, 2026"):
+- Per delivered message since 2025-07-01. Templates: marketing USD 0.0411 (IDR 586.33), utility and authentication
+  USD 0.025 (IDR 356.65) since 2026-07-01.
+- **Until 2026-09-30 replies inside the 24 h customer-service window are free. From 2026-10-01 they cost USD 0.025
+  (IDR 356.65) each, after 1,000 free delivered service messages per business number per month** (no rollover). Owner
+  notices and approved drafts sent from the business number count too. whatsappbusiness.com's pricing page still says
+  service messages are free (stale as of 2026-09-28).
+- Direct access needs no provider ("no additional fee to access our platform directly"), a number not in use on
+  WhatsApp (delete it from the app first), a 2FA PIN, a display name, a valid-TLS HTTPS webhook and a payment method.
+  Keeping the number on the WhatsApp Business app (coexistence) goes through a Solution Partner or Tech Provider;
+  Indonesia is not named in Meta's coexistence country changelog entries.
+- Business Messaging Policy (2026-09-23): automation needs "prompt, clear, and direct escalation paths", a business
+  profile with support contact info and a published privacy policy. Meta Terms §4.7 bars providers whose primary
+  function is a general-purpose AI assistant; customer-service replies are allowed.
