@@ -110,7 +110,7 @@
   },
   {
     "id": "greeting-after-old-closing-id",
-    "note": "a greeting the day after a closing opens a new conversation: escalate, never skip; a waiting customer's greeting alone gets the fixed greeting-back",
+    "note": "a greeting the day after a closing opens a new conversation: escalate, never skip; a waiting customer's greeting alone gets Claude's greeting-back",
     "name": "Dewi",
     "history": [
       {

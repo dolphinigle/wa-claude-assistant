@@ -34,12 +34,13 @@ draft in the owner's "Message yourself" chat.
 | Auto-send | `answer` **and** the customer's message asks something **and** every gate passes (an answer citing no fact passes only if it just asks: a `?`, nothing concrete, no yes up front, 2026-09-27); anything else → draft that names the reason (`no_question` or the gate) (2026-09-27) |
 | Default mode | `shadow`; live is `{"mode":"live"}` in `config.local.json` |
 | AI disclosure | On, first auto-send per 12 h session (Anthropic AUP), as a 🤖 prefix only (2026-09-27); an escalation placeholder that starts with 🤖 counts as it; approved drafts carry no marker |
-| Escalation placeholder | An escalated customer Claude flags `customer_waiting` gets the fixed `🤖 Halo Kak, tunggu sebentar ya 🙏` (`🤖 Hi! One moment please 🙏` in English), once per open-draft period; a customer's greeting alone counts as waiting. Never family or friends, spam, manipulation (`tag_like`), a thanks, a text without words, backlog, or a paused, muted, blocked, taken-over or capped chat; none when `autoSend.enabled` is false (drafts only = nothing automated) (2026-09-27) |
+| Escalation placeholder | An escalated customer Claude flags `customer_waiting` gets "🤖 " + Claude's `holding_reply` written for that sender, once per open-draft period, only if `checkHoldingReply` passes; a failed or empty one sends nothing (no fixed fallback). A customer's greeting alone counts as waiting. Never family, friends, spam, manipulation (`tag_like`), a thanks, a text without words, backlog, or a paused, muted, blocked, taken-over or capped chat; none when `autoSend.enabled` is false (2026-09-27; per sender since 2026-09-28) |
 | Tone and facts | `knowledge.md`: `## Voice` for tone, `## Facts` is the only ground truth, `## Never` for hard rules |
-| WhatsApp transport | Official Cloud API (`"transport": "cloud-api"`, the owner's business number) from 2026-09-28, because of the ban risk on the personal number; Baileys stays selectable (still the `config.json` default) |
+| WhatsApp transport | The web route: Baileys linked device on the owner's number (`"transport": "baileys"`, the default). The official Cloud API (`src/transport/cloud-api.js`) stays selectable but unused: rejected 2026-09-28, because from 2026-10-01 every message it sends is billed after 1,000 free a month per number (AI replies, approved drafts, owner notices, human CS replies unless the number uses coexistence), and coexistence only works through a Meta partner, with Indonesia unconfirmed |
 | WhatsApp client | Baileys `7.0.0-rc14`, exact pin. Switch triggers are in `docs/implementation-notes.md` |
 | Thanks | Never auto-answered (it asks nothing); skipped only after a closing this session, drafted otherwise (2026-09-26) |
-| Greeting reply | A waiting customer's greeting alone that opens the conversation gets the fixed `greetingReply.text` (`Halo Kak, ada yang bisa saya bantu? 🙏`) as an auto-send, once per session, through the non-Claude gates; `greetingReply.enabled: false` turns it off (2026-09-27) |
+| Greeting reply | A waiting customer's greeting alone that opens the conversation gets Claude's own reply for that sender as an auto-send, once per session, only if `guardGreeting` passes (it only asks: a `?`, nothing concrete, no yes up front); otherwise it is drafted with the holding reply. `greetingReply.enabled: false` turns it off (2026-09-27; per sender since 2026-09-28) |
+| Customer-facing texts | None fixed: every automated message a customer gets is written by Claude for that sender and guarded, since identical automated texts look like bulk messaging (Baileys #2800); `placeholder.text` and `greetingReply.text` are removed keys (2026-09-28) |
 | Demo mode | Opt-in `"demo": {"enabled": true}` in `config.local.json`, only with a non-empty `allowChats`: Claude answers like CS and may invent what the facts don't give (`prompts/triage-demo.md`); guards skip the facts checks but `demo_payment_detail` holds bank, account and transfer details; no `no_question` hold; per-chat cap `demo.maxPerChatPerHour`. The eval forces it off (2026-09-27) |
 | Borma demo | Branch `borma-demo`: `knowledge.md` is Borma's (the bakery is `eval/knowledge.md`, used by the eval and tests); `"borma": {"enabled": true}` adds per-message catalog, store and own-order facts (README "Borma demo"). In demo mode prices must still come from the cited facts (2026-09-28) |
 | Trying it live | `allowChats` in `config.local.json`: only the listed chats are handled, every other chat is untouched (2026-09-27) |
@@ -60,6 +61,8 @@ confirmation here: just do it and report.
 - **Cloud API webhooks** are read only with a valid `X-Hub-Signature-256` (HMAC with the app secret, else 401); owner
   commands come only from `cloudApi.ownerNumber`; the token, app secret and verify token live only in
   `config.local.json` and never reach a log. Owner notices go out only within 24 h of the owner's last message.
+- **No fixed customer-facing texts.** The placeholder and the greeting-back are Claude's, per sender, behind
+  `checkHoldingReply` / `guardGreeting` in `src/guards.js`, with no fallback text; only the 🤖 prefix is fixed.
 - **No link previews.** `send()` in `src/transport/whatsapp.js` passes `linkPreview: null`: otherwise Baileys fetches
   URLs in outgoing text from this machine, and notices quote customers' and spammers' links.
 - **Key material never reaches a log.** libsignal's session dumps are redacted before the console
@@ -83,6 +86,7 @@ confirmation here: just do it and report.
 - A prompt, knowledge, model or thinking change needs a full `npm run eval`. A guards or policy change needs `--rescore`.
 - Hard gate: **0 forbidden auto-sends, 0 skipped escalations and 0 forbidden placeholders**. Also read "FORBIDDEN cases
   Claude flagged `customer_waiting`": the policy's backstops hide Claude's misses from the gate.
+- A full `npm run eval` is owed for the 2026-09-28 prompt change (`holding_reply`, the greeting line); only a 10-call subset ran.
 - `npm run eval` reads `config.local.json` too; the harness raises `contextMessages` to the fixtures' histories.
 - Update `eval/last-run.md` and the README eval section after a run.
 
@@ -104,7 +108,7 @@ thanks path even had an exponential-time matcher). Both are deliberately fail-cl
   vocabulary narrow.
 - **Placeholder:** Claude's `customer_waiting` decides it; the policy only ever withholds it (`placeholderWithheld`:
   `isLooseThanks`, no letter or digit, `tag_like` on the text and its quotes). `isLooseThanks` may read loosely (a false
-  match only withholds a fixed text) but must never widen the skip, which keeps the narrow `isThanks`. With no chat
+  match only withholds a holding reply) but must never widen the skip, which keeps the narrow `isThanks`. With no chat
   history, a family member's bare "Halo" looks like a customer's and gets the placeholder.
 - Ten review rounds on 2026-09-26/27 (after `2a0c9b7`) confirmed and fixed or deferred 86 findings; the loop never ran
   dry (mostly word-list edge cases). The last round's fixes (`dd9361b`..`c2aade9`) are unreviewed.

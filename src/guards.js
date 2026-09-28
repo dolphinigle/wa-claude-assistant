@@ -3,8 +3,9 @@ import os from 'node:os'
 // Deterministic checks on a reply before it may be auto-sent. They do not judge meaning; they make sure every
 // concrete detail (number, price, time, duration, percentage, phone, URL, email) is copied from the facts the reply
 // cites in `facts_used`, so a model slip becomes a draft instead of a wrong promise. When unsure they fail, which
-// only means the owner sees a draft. Demo mode (`demo.enabled`, testers only) invents details on purpose: there only
-// payment details are checked in place of the facts (checkReply).
+// only means the owner sees a draft. The holding reply and the greeting-back cite no fact, so they may state nothing
+// concrete at all (checkHoldingReply, guardGreeting). Demo mode (`demo.enabled`, testers only) invents details on
+// purpose: there only payment details are checked in place of the facts (checkReply).
 
 const THOUSANDS = /^\d{1,3}(?:[.,]\d{3})+$/
 const MULTIPLIERS = { rb: 1e3, ribu: 1e3, k: 1e3, jt: 1e6, juta: 1e6 }
@@ -164,10 +165,26 @@ export function buildAllowList (knowledge, factIds) {
   return allow
 }
 
-// A day is a commitment or a claim even without a digit: "besok dikirim ya", "buka Senin–Sabtu".
-const DAY_WORDS = /\b(?:besok|lusa|hari ini|malam ini|minggu depan|bulan depan|hari minggu|senin|selasa|rabu|kamis|jum'?at|sabtu|tomorrow|today|tonight|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i
-// A reply without facts may only ask; opening with a yes would agree to whatever was asked ("Siap Kak", "Bisa kak").
-const YES_OPENING = /^[^\p{L}]*(?:bisa|boleh|siap|oke?|okay|iya|ya|tentu|pasti|sure|yes|can)\b/iu
+// A day is a commitment or a claim even without a digit: "besok dikirim ya", "buka Senin–Sabtu". So is a part of a
+// day, a vague span or a month ("nanti sore", "setelah maghrib", "dalam beberapa menit", "akhir pekan", "awal Mei");
+// "Selamat pagi" and "shortly" are neither. A month needs a word before it: Mei, Juli and April are also first names.
+const DAY_WORDS = new RegExp('\\b(?:besok|lusa|hari ini|malam ini|minggu depan|bulan depan|hari minggu|senin|selasa|rabu|kamis|jum\'?at|sabtu|' +
+  'tomorrow|today|tonight|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|' +
+  '(?:nanti|tadi)\\s+(?:pagi|siang|sore|malam)|(?:pagi|siang|sore)\\s+ini|(?:minggu|bulan|tahun)\\s+ini|akhir\\s+pekan|kemarin|' +
+  'setelah\\s+(?:maghrib|magrib|isya|subuh|dzuhur|zuhur|ashar|asar)|beberapa\\s+(?:menit|jam|hari)|' +
+  'this\\s+(?:morning|afternoon|evening|week|month)|weekend|yesterday|next\\s+month|few\\s+(?:minutes|hours|days)|an\\s+hour|' +
+  '(?:awal|akhir|pertengahan|bulan|early|late|mid|in)\\s+(?:januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|' +
+  'november|desember|january|february|march|may|june|july|august|october|december))\\b', 'i')
+// A reply without facts may only ask; opening with a yes would agree to whatever was asked ("Siap Kak", "Bisa kak"),
+// stretched spellings ("Siapp", "Okee") and chat yeses ("Sip", "Yup", "Noted") included.
+const YES_OPENING = /^[^\p{L}]*(?:bisa+|boleh+|siap+|si+p+|ok+e*y?|okay|iya+|ya+|yes+|yup|yep|yeah|tentu|pasti|sure|can|of course|absolutely|definitely|certainly|noted|beres)\b/iu
+// Nor may a holding reply or a greeting-back say that something is done: "pembayarannya sudah kami terima", "kuenya
+// sudah siap", "pesanannya dikirim" (knowledge.md: never confirm a payment). A thanks for what the customer did
+// ("terima kasih sudah menghubungi") and "sudah saya teruskan ke pemilik" claim nothing and are taken out first, and
+// so is a yes up front, which yes_opening already reports ("Siap Kak").
+const NOT_A_CLAIM = /\b(?:terima\s*kasih|makasih|trims)\s+(?:sudah|udah|telah)\b|\b(?:sudah|udah|telah)\s+(?:saya|kami|aku)\s+(?:teruskan|sampaikan)\b/giu
+const STATUS_CLAIM = /\b(?:sudah|udah|telah|already|siap|ready|beres|selesai|done|terima(?!\s*kasih)|diterima|received|masuk|arrived|lunas|paid|dibayar|dikirim|terkirim|sent|shipped|delivered|diproses|processed|dicatat|tercatat|noted|confirmed|terkonfirmasi)\b/iu
+const claimsStatus = text => STATUS_CLAIM.test(text.replace(YES_OPENING, ' ').replace(NOT_A_CLAIM, ' '))
 
 const PLACEHOLDERS = [
   /\{\{|\}\}/,
@@ -307,7 +324,7 @@ export const isThanks = input => readThanks(input) !== undefined
 export const thanksAgrees = input => readThanks(input)?.agrees === true
 
 // The escalation placeholder is withheld from a thanks (policy.js), where the error runs the other way: a missed thanks
-// tells someone who waits for nothing to wait, and a false match only withholds a fixed text. So there a thanks may
+// tells someone who waits for nothing to wait, and a false match only withholds a holding reply. So there a thanks may
 // also be spelled the chat way ("makasiii", "trimakasih", "thank u", "matur nuwun", "makasih bgt kak", send-path-r1-3):
 // a word the vocabulary does not know is read without its doubled letters, then as its usual spelling or dropped as a
 // softener, and what is left must still be a thanks for readThanks. The skip keeps the narrow isThanks.
@@ -360,7 +377,7 @@ export const isLooseThanks = input => isThanks(input) ||
     readThanks(normalizeText(input).toLowerCase().replace(REPEATED, '$1 $1').replace(DONE_FOR_US, ' ').replace(/\p{L}+/gu, chatSpelling),
       LOOSE_VOCABULARY, { anyEmoji: true }) !== undefined)
 
-// isGreetingOnly lets the fixed greeting-back out (policy.js, owner decision 2026-09-27): the customer only greets, with
+// isGreetingOnly lets Claude's greeting-back out (policy.js, owner decisions 2026-09-27/28): the customer only greets, with
 // at most honorifics, punctuation and friendly emoji around it ("Hai", "Halo kak!", "Pagi kak 🙏", "Selamat siang",
 // "P", "Permisi kak", "Assalamualaikum"). Strict, since anything more ("halo kak mau pesan", "pagi kak, sudah buka?",
 // "halo?") is a message to answer and goes the normal way; a missed greeting only costs a draft. Words are compared
@@ -667,13 +684,55 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
   }
   // No value in the reason: it lands in the audit log and in eval reports.
   if (findPrivateDetails(text, withoutPublic(identifiers, knowledge)).length > 0) reasons.push('private_detail')
+  reasons.push(...languageReasons(incomingText, text))
+  return { ok: reasons.length === 0, reasons }
+}
 
-  // Voice says mirror the sender's language; an auto-reply in the other language goes to the owner instead.
-  if (incomingText !== undefined) {
-    const incoming = detectLanguage(incomingText)
-    const replied = detectLanguage(text)
-    if (incoming !== 'unknown' && replied !== 'unknown' && incoming !== replied) reasons.push(`language_mismatch:${incoming}->${replied}`)
-  }
+/** Voice says mirror the sender's language; a text in the other language goes to the owner instead. */
+function languageReasons (incomingText, text) {
+  if (incomingText === undefined) return []
+  const incoming = detectLanguage(incomingText)
+  const replied = detectLanguage(text)
+  return incoming !== 'unknown' && replied !== 'unknown' && incoming !== replied ? [`language_mismatch:${incoming}->${replied}`] : []
+}
+
+/** Anything concrete in a text that cites no fact: the kinds extractDetails found, and `day` for a day word. */
+const concreteKinds = text => [
+  ...Object.entries(extractDetails(text)).filter(([, value]) => (Array.isArray(value) ? value.length > 0 : value === true)).map(([kind]) => kind),
+  ...(DAY_WORDS.test(text) ? ['day'] : [])
+]
+
+// Owner decision (2026-09-28): the automated texts a customer gets are Claude's, written for that sender, never one
+// fixed text: an account was restricted after the same reply went to ~100 users (Baileys #2800, docs/research.md), and
+// identical automated texts look like bulk messaging. They go out without the owner reading them, so they may say
+// nothing the owner has not: the holding reply only acknowledges, the greeting-back only asks.
+export const MAX_HOLDING_CHARS = 200
+export const MAX_GREETING_REPLY_CHARS = 200
+export const MAX_GREETING_REPLY_WORDS = 12
+
+/**
+ * Claude's holding reply (`holding_reply`), sent as "🤖 " + it to an escalated customer who waits (policy.js): not
+ * empty, with a letter, at most 200 characters, nothing concrete (no number, price, time, day, link, contact or number
+ * word), no yes up front, no status claim ("sudah kami terima"), no sensitive term (no fact licenses one here), no
+ * private identifier, no placeholder or fact id, and in the customer's language. A failure only means no placeholder:
+ * the owner still gets the draft.
+ * @returns {{ok: boolean, reasons: string[]}}
+ */
+export function checkHoldingReply ({ reply, incomingText }, { sensitiveTerms = [], privateIdentifiers: identifiers } = {}) {
+  const text = normalizeText(reply).trim()
+  if (!text) return { ok: false, reasons: ['empty'] }
+  // Sonnet once wrote the two characters `""` for "no holding reply" (eval 2026-09-28): a text without a letter says nothing.
+  if (!/\p{L}/u.test(text)) return { ok: false, reasons: ['no_words'] }
+  const reasons = []
+  if (text.length > MAX_HOLDING_CHARS) reasons.push(`too_long:${text.length}>${MAX_HOLDING_CHARS}`)
+  if (/\[F\d+\]/i.test(text)) reasons.push('fact_id_in_reply')
+  else if (PLACEHOLDERS.some(pattern => pattern.test(text))) reasons.push('placeholder')
+  reasons.push(...concreteKinds(text).map(kind => `concrete:${kind}`))
+  if (YES_OPENING.test(text)) reasons.push('yes_opening')
+  if (claimsStatus(text)) reasons.push('status_claim')
+  for (const term of sensitiveTerms) if (containsTerm(text, term)) reasons.push(`sensitive_term:${term}`)
+  if (findPrivateDetails(text, identifiers).length > 0) reasons.push('private_detail')
+  reasons.push(...languageReasons(incomingText, text))
   return { ok: reasons.length === 0, reasons }
 }
 
@@ -691,8 +750,7 @@ function factReasons (text, factsUsed, { knowledge, sensitiveTerms }) {
   // Owner decision (2026-09-27, live test): a customer-service reply may cite no fact when it only asks ("Halo Kak, mau
   // pesan apa, berapa banyak, dan untuk tanggal berapa?"): a question, nothing concrete (no number, price, time, link,
   // contact, number word or day) and no yes up front. Everything else without a cited fact is a draft.
-  const concrete = Object.values(details).some(value => (Array.isArray(value) ? value.length > 0 : value === true)) || DAY_WORDS.test(text)
-  const onlyAsks = /[?¿]/.test(text) && !concrete && !YES_OPENING.test(text)
+  const onlyAsks = /[?¿]/.test(text) && concreteKinds(text).length === 0 && !YES_OPENING.test(text)
   if (cited.length === 0 && !onlyAsks) reasons.push('no_facts_used')
   const check = (kind, values, allowed) => {
     const missing = [...new Set(values.filter(value => !allowed.has(value)))]
@@ -729,4 +787,36 @@ export function guardTriage (triage, { knowledge, config, incomingText }) {
   if (triage?.decision !== 'answer') return undefined
   return checkReply({ reply: triage.reply, factsUsed: triage.facts_used, incomingText },
     { knowledge, ...config.guards, privateIdentifiers: privateIdentifiersFor(config), demo: config.demo?.enabled === true, demoPrices: config.borma?.enabled === true })
+}
+
+/** The holding reply's check for the placeholder (checkHoldingReply), whatever Claude decided; undefined without a triage. */
+export function guardHolding (triage, { knowledge, config, incomingText }) {
+  if (!triage) return undefined
+  // A word the facts state is public (the shop's own name and domain), as for answers.
+  return checkHoldingReply({ reply: typeof triage.holding_reply === 'string' ? triage.holding_reply : '', incomingText },
+    { sensitiveTerms: config.guards?.sensitiveTerms, privateIdentifiers: withoutPublic(privateIdentifiersFor(config), knowledge) })
+}
+
+/**
+ * The greeting-back is Claude's own reply to a greeting alone (owner decision 2026-09-28), whatever it decided: it may
+ * go out only if it just asks, as a reply citing no fact may (checkReply: a `?`, nothing concrete, no yes up front),
+ * checked against no fact and outside demo mode, in at most 200 characters. It is a greeting and one question, so it
+ * also ends with the question, has at most 12 words and claims no status: Claude sees the chat's history, and an
+ * escalated draft may mention an open order ("Pagi Kak Rina, kuenya sudah siap ya, mau diambil kapan?"), which must
+ * not go out unread. Undefined unless the message only greets.
+ */
+export function guardGreeting (triage, { knowledge, config, incomingText }) {
+  if (!triage || !isGreetingOnly(incomingText)) return undefined
+  const maxReplyChars = Math.min(config.guards?.maxReplyChars ?? MAX_GREETING_REPLY_CHARS, MAX_GREETING_REPLY_CHARS)
+  const { reasons } = checkReply({ reply: triage.reply, factsUsed: [], incomingText },
+    { knowledge, ...config.guards, maxReplyChars, privateIdentifiers: privateIdentifiersFor(config), demo: false })
+  const text = normalizeText(triage.reply).trim()
+  if (text) {
+    // Without any `?` checkReply already says no_facts_used.
+    if (/[?¿]/.test(text) && !/[?¿][^\p{L}\p{N}]*$/u.test(text)) reasons.push('question_not_last')
+    const words = text.match(/[\p{L}\p{N}]+/gu)?.length ?? 0
+    if (words > MAX_GREETING_REPLY_WORDS) reasons.push(`too_many_words:${words}>${MAX_GREETING_REPLY_WORDS}`)
+    if (claimsStatus(text)) reasons.push('status_claim')
+  }
+  return { ok: reasons.length === 0, reasons }
 }

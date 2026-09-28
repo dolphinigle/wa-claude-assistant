@@ -66,7 +66,7 @@ export function parseCommand (input) {
 }
 
 /**
- * The fixed placeholder the customer got while the draft waits (assistant.js), as one line since it is always the same;
+ * The placeholder the customer got while the draft waits (assistant.js: "🤖 " + Claude's holding reply), as one line;
  * '' when none went out. `unknown`: the send failed in flight, so it may have been delivered.
  */
 export function placeholderLine (placeholder) {

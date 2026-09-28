@@ -21,18 +21,10 @@
     "sessionGapHours": 12
   },
   "placeholder": {
-    "enabled": true,
-    "text": {
-      "id": "🤖 Halo Kak, tunggu sebentar ya 🙏",
-      "en": "🤖 Hi! One moment please 🙏"
-    }
+    "enabled": true
   },
   "greetingReply": {
-    "enabled": true,
-    "text": {
-      "id": "Halo Kak, ada yang bisa saya bantu? 🙏",
-      "en": "Hi! How can I help you? 🙏"
-    }
+    "enabled": true
   },
   "demo": {
     "enabled": false,

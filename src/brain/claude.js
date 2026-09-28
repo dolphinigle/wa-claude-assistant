@@ -61,10 +61,15 @@ export function checkInit (init) {
 }
 
 /**
- * `customer_waiting` only lets a placeholder out (policy.js), so a missing or non-boolean value is false: no placeholder,
- * and the triage still counts. Everything else is checked by validateTriage.
+ * `customer_waiting` and `holding_reply` only let a placeholder out (policy.js), so a missing or non-boolean flag is
+ * false and a missing or non-string holding reply is "": no placeholder, and the triage still counts. Everything else
+ * is checked by validateTriage.
  */
-export const normalizeTriage = value => ({ ...value, customer_waiting: value.customer_waiting === true })
+export const normalizeTriage = value => ({
+  ...value,
+  customer_waiting: value.customer_waiting === true,
+  holding_reply: typeof value.holding_reply === 'string' ? value.holding_reply : ''
+})
 
 /** Our own check of the structured output, so a schema drift in the CLI can never reach the policy. */
 export function validateTriage (value) {

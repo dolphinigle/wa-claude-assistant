@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { asksSomething, buildAllowList, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardTriage, isGreetingOnly, isLooseThanks, isThanks, privateIdentifiers, privateIdentifiersFor, thanksAgrees } from '../src/guards.js'
+import { asksSomething, buildAllowList, checkHoldingReply, checkReply, containsTerm, detectLanguage, extractDetails, findPrivateDetails, guardGreeting, guardHolding, guardTriage, isGreetingOnly, isLooseThanks, isThanks, privateIdentifiers, privateIdentifiersFor, thanksAgrees } from '../src/guards.js'
 import { parseKnowledge } from '../src/knowledge.js'
 import { knowledge, makeConfig } from './helpers.js'
 
@@ -533,4 +533,117 @@ test('isGreetingOnly: a greeting with honorifics, punctuation and friendly emoji
   const started = performance.now()
   for (const text of ['hai '.repeat(100_000), '<' + ' '.repeat(65_000)]) assert.equal(isGreetingOnly(text), false)
   assert.ok(performance.now() - started < 100, `${Math.round(performance.now() - started)} ms`)
+})
+
+// --- the holding reply and the greeting-back (owner decision 2026-09-28: no fixed customer-facing texts) ------------
+
+const CAKE_QUESTION = 'Kak, bisa pesan kue ulang tahun untuk anak saya? Harganya berapa ya?'
+const holding = (reply, incomingText = CAKE_QUESTION, options = {}) =>
+  checkHoldingReply({ reply, incomingText }, { sensitiveTerms: guards.sensitiveTerms, privateIdentifiers: { words: ['janed'], paths: ['/home/janed'] }, ...options })
+
+test('checkHoldingReply: a short acknowledgement for this sender passes', () => {
+  assert.deepEqual(holding('Baik Kak Budi, pertanyaan soal kue ulang tahunnya saya teruskan ke pemilik ya 🙏'), { ok: true, reasons: [] })
+  assert.deepEqual(holding('Thanks Jessica, I have passed your question about the unicorn cake on to the owner, who will reply shortly.',
+    'Can you make a unicorn birthday cake for 40 people next Saturday? How much would it be?'), { ok: true, reasons: [] })
+  assert.deepEqual(holding('Halo Kak Dewi, pesannya saya teruskan ke pemilik ya 🙏', 'Selamat pagi kak'), { ok: true, reasons: [] }, 'a greeting too short to tell its language')
+})
+
+test('checkHoldingReply: anything concrete, a yes, another language, nothing or too much is withheld', () => {
+  const cases = [
+    ['Baik Kak Budi, tart ulang tahun Rp 250.000 ya, saya teruskan ke pemilik', ['concrete:amounts']],
+    ['Baik Kak Budi, besok pemilik balas ya 🙏', ['concrete:day']],
+    ['Siap Kak Budi, pertanyaannya saya teruskan ke pemilik ya 🙏', ['yes_opening']],
+    ['Baik Kak Budi, lihat katalognya di dapurkue.id ya, saya teruskan ke pemilik', ['concrete:urls']],
+    ['Baik Kak Budi, pemilik balas dalam satu jam ya', ['concrete:numberWords']],
+    ['Thanks Budi, I have passed your question about the birthday cake on to the owner.', ['language_mismatch:id->en']],
+    ['Baik Kak Budi, soal diskonnya saya teruskan ke pemilik ya', ['sensitive_term:diskon']],
+    ['Baik Kak Budi, janed akan membalas ya', ['private_detail']],
+    ['Baik Kak [NAMA], pertanyaannya saya teruskan ke pemilik ya', ['placeholder']],
+    ['Baik Kak Budi, soal [F8] saya teruskan ke pemilik ya', ['fact_id_in_reply', 'concrete:numbers']],
+    ['', ['empty']],
+    ['   ', ['empty']],
+    [undefined, ['empty']],
+    ['""', ['no_words']], // Sonnet's "no holding reply" once (eval 2026-09-28)
+    ['🙏', ['no_words']],
+    [`Baik Kak Budi, ${'pertanyaan soal kue ulang tahunnya '.repeat(6)}saya teruskan ke pemilik ya`, ['too_long:252>200']]
+  ]
+  for (const [reply, reasons] of cases) assert.deepEqual(holding(reply), { ok: false, reasons }, String(reply))
+})
+
+// holding-reply-safety-r1-2: it goes out before the owner has checked the bank (knowledge.md: never confirm a payment).
+test('checkHoldingReply: a payment or order status claim is withheld; a thanks for the message or a forward is not one', () => {
+  const PAID = 'kak saya sudah transfer ya buat pesanan brownies'
+  for (const reply of ['Baik Kak Budi, pembayarannya sudah kami terima, pemilik akan cek ya 🙏', 'Baik Kak Budi, pesanannya sudah kami catat dan akan dikirim ya 🙏',
+    'Baik Kak Budi, pembayarannya masuk ya 🙏', 'Terima kasih Kak Budi, konfirmasi transfernya sudah kami terima, pemilik akan segera cek ya 🙏',
+    'Baik Kak Budi, brownies-nya siap diambil ya, saya teruskan ke pemilik 🙏']) {
+    assert.deepEqual(holding(reply, PAID), { ok: false, reasons: ['status_claim'] }, reply)
+  }
+  assert.deepEqual(holding('Thanks Budi, your payment has been received and the owner will confirm shortly.', 'hi i already transferred for my brownies order'),
+    { ok: false, reasons: ['status_claim'] })
+  for (const reply of ['Terima kasih Kak Budi, soal pembayarannya saya teruskan ke pemilik untuk dicek ya 🙏', 'Makasih udah transfer Kak Budi, pemilik akan segera cek ya 🙏',
+    'Baik Kak Budi, konfirmasi transfernya sudah saya teruskan ke pemilik ya 🙏', 'Pagi Kak Dewi, terima kasih sudah menyapa, ada yang bisa dibantu ya 🙏']) {
+    assert.deepEqual(holding(reply, PAID), { ok: true, reasons: [] }, reply)
+  }
+})
+
+// holding-reply-safety-r1-3: a follow-up time with no digit and no day name is still a promise.
+test('checkHoldingReply: a part of a day, a vague span or a month is concrete; a greeting\'s "pagi" and a name like Mei are not', () => {
+  const CUSTOM = 'kak mau pesan kue ulang tahun custom'
+  for (const when of ['nanti sore', 'sore ini', 'nanti malam', 'setelah maghrib', 'dalam beberapa menit', 'akhir pekan ini', 'minggu ini', 'awal Mei']) {
+    assert.deepEqual(holding(`Baik Kak Budi, soal kue custom-nya pemilik akan membalas ${when} ya 🙏`, CUSTOM), { ok: false, reasons: ['concrete:day'] }, when)
+  }
+  for (const when of ['this afternoon', 'over the weekend', 'in a few hours', 'within an hour']) {
+    assert.deepEqual(holding(`Thanks Budi, the owner will get back to you about the custom cake ${when}.`, 'can i order a custom birthday cake?'),
+      { ok: false, reasons: ['concrete:day'] }, when)
+  }
+  for (const reply of ['Selamat pagi Kak Mei, soal kue custom-nya saya teruskan ke pemilik ya 🙏', 'Selamat malam Kak Juli, pemilik akan segera membalas ya 🙏']) {
+    assert.deepEqual(holding(reply, CUSTOM), { ok: true, reasons: [] }, reply)
+  }
+  assert.deepEqual(guardGreeting({ decision: 'escalate', reply: 'Pagi Kak, pemilik akan membalas nanti sore, ada yang bisa dibantu?', facts_used: [] },
+    { knowledge, config: makeConfig(), incomingText: 'Pagi kak' }).reasons, ['no_facts_used'])
+})
+
+// holding-reply-safety-r1-4: "Sip" reads as "OK, can do" to a question the owner has not answered.
+test('checkHoldingReply: chat yeses and stretched spellings up front are a yes; "Baik" is not', () => {
+  const BOGOR = 'kak bisa kirim ke Bogor?'
+  for (const opening of ['Sip', 'Sipp', 'Siapp', 'Okee', 'Bisaa', 'Iyaa', 'Noted', 'Beres']) {
+    assert.deepEqual(holding(`${opening} Kak Budi, soal pengiriman ke Bogor saya teruskan ke pemilik ya 🙏`, BOGOR), { ok: false, reasons: ['yes_opening'] }, opening)
+  }
+  for (const opening of ['Yup', 'Yep', 'Of course', 'Absolutely']) {
+    assert.deepEqual(holding(`${opening} Budi, I have passed your question about delivery to Bogor on to the owner.`, 'can you deliver to Bogor?'),
+      { ok: false, reasons: ['yes_opening'] }, opening)
+  }
+  assert.deepEqual(holding('Baik Kak Budi, soal pengiriman ke Bogor saya teruskan ke pemilik ya 🙏', BOGOR), { ok: true, reasons: [] })
+})
+
+test('guardHolding reads holding_reply from any triage, "" when missing; guardGreeting only checks a greeting alone, against no fact', () => {
+  const config = makeConfig()
+  assert.equal(guardHolding(undefined, { config, incomingText: 'x' }), undefined)
+  assert.deepEqual(guardHolding({ decision: 'escalate', holding_reply: 5 }, { config, incomingText: CAKE_QUESTION }), { ok: false, reasons: ['empty'] })
+  assert.deepEqual(guardHolding({ decision: 'answer', holding_reply: 'Baik Kak Budi, pertanyaannya saya teruskan ke pemilik ya 🙏' }, { config, incomingText: CAKE_QUESTION }), { ok: true, reasons: [] })
+  const greeting = reply => guardGreeting({ decision: 'escalate', reply, facts_used: ['F1'] }, { knowledge, config, incomingText: 'Selamat pagi kak' })
+  assert.equal(guardGreeting({ decision: 'escalate', reply: 'Halo Kak, ada yang bisa dibantu?' }, { knowledge, config, incomingText: 'halo kak mau pesan' }), undefined)
+  assert.deepEqual(greeting('Selamat pagi Kak Dewi, ada yang bisa dibantu?'), { ok: true, reasons: [] })
+  assert.deepEqual(greeting('Selamat pagi Kak Dewi 🙏').reasons, ['no_facts_used'], 'no question')
+  assert.deepEqual(greeting('Siap Kak Dewi, mau pesan apa?').reasons, ['no_facts_used'], 'a yes up front')
+  assert.deepEqual(greeting('Pagi Kak, kami buka 08.00–17.00, mau pesan apa?').reasons, ['no_facts_used', 'unsupported_time:8:00,17:00'], 'a cited fact licenses nothing here')
+  assert.deepEqual(greeting(`Selamat pagi Kak Dewi, ${'ada yang bisa dibantu, '.repeat(8)}ya?`).reasons, ['too_long:210>200', 'too_many_words:37>12'])
+})
+
+// holding-reply-safety-r1-1: Claude sees yesterday's order in the history; its greeting-back must still only greet and ask.
+test('guardGreeting: a status claim, a question that is not last or more than 12 words is no greeting-back', () => {
+  const config = makeConfig()
+  const greeting = reply => guardGreeting({ decision: 'escalate', reply, facts_used: [] }, { knowledge, config, incomingText: 'Pagi kak' })
+  for (const reply of ['Pagi juga Kak Rina, ada yang bisa dibantu?', 'Pagi juga Kak Rina, ada yang bisa dibantu? 🙏',
+    'Pagi juga Kak Rina, terima kasih sudah menyapa, ada yang bisa dibantu?', 'Selamat pagi Kak Mei, mau pesan kue apa?']) {
+    assert.deepEqual(greeting(reply), { ok: true, reasons: [] }, reply)
+  }
+  const cases = [
+    ['Pagi juga Kak Rina, kuenya sudah siap ya, mau diambil kapan?', ['status_claim']],
+    ['Pagi Kak Rina, pembayarannya sudah kami terima ya, ada lagi yang bisa dibantu?', ['too_many_words:13>12', 'status_claim']],
+    ['Pagi Kak Rina, pesanannya dikirim ya, ada yang bisa dibantu lagi?', ['status_claim']],
+    ['Pagi Kak Rina, ada yang bisa dibantu? Kuenya siap diambil', ['question_not_last', 'status_claim']],
+    ['Pagi juga Kak Rina, semoga harinya menyenangkan dan lancar semua urusannya, ada yang bisa kami bantu?', ['too_many_words:16>12']]
+  ]
+  for (const [reply, reasons] of cases) assert.deepEqual(greeting(reply), { ok: false, reasons }, reply)
 })

@@ -31,7 +31,8 @@ switch (scenario) {
   case 'waiting_string':
   case 'waiting_false': {
     const customerWaiting = { waiting: true, waiting_string: 'true', waiting_false: false }[scenario]
-    out(init); out(rateLimit); out(result({ structured_output: { ...triage, decision: 'escalate', customer_waiting: customerWaiting } }))
+    const holdingReply = { waiting: 'Baik Kak, pertanyaannya saya teruskan ke pemilik ya 🙏', waiting_string: 5 }[scenario] // waiting_false: none
+    out(init); out(rateLimit); out(result({ structured_output: { ...triage, decision: 'escalate', customer_waiting: customerWaiting, holding_reply: holdingReply } }))
     break
   }
   case 'echo':
