@@ -68,6 +68,9 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
   if (!isPlainObject(demo) || typeof demo.enabled !== 'boolean') throw new Error(`config.demo.enabled must be true or false (no quotes), got ${JSON.stringify(demo?.enabled ?? demo)}`)
   if (demo.enabled && config.allowChats.length === 0) throw new Error('demo mode invents answers: list the testers in allowChats (config.demo.enabled is true, allowChats is empty)')
   if (demo.enabled && !(Number.isInteger(demo.maxPerChatPerHour) && demo.maxPerChatPerHour >= 0)) throw new Error(`config.demo.maxPerChatPerHour must be a whole number >= 0, got ${JSON.stringify(demo.maxPerChatPerHour)}`)
+  // The Borma demo reads real shop data and looks up the sender's orders: on only when the owner says so, exactly.
+  const borma = config.borma
+  if (borma !== undefined && (!isPlainObject(borma) || typeof borma.enabled !== 'boolean')) throw new Error(`config.borma.enabled must be true or false (no quotes), got ${JSON.stringify(borma?.enabled ?? borma)}`)
   for (const [key, why] of REMOVED_KEYS) {
     if (key.split('.').reduce((node, part) => node?.[part], config) !== undefined) throw new Error(`config ${key} is no longer supported (${why}); remove it from config.local.json`)
   }

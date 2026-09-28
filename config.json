@@ -38,6 +38,14 @@
     "enabled": false,
     "maxPerChatPerHour": 30
   },
+  "borma": {
+    "enabled": false,
+    "projectId": "solvent-staging",
+    "maxProducts": 10,
+    "orders": true,
+    "orderTimeoutMs": 8000,
+    "orderCacheMs": 60000
+  },
   "notifyOwnerOnAutoSend": true,
   "draftTtlHours": 24,
   "guards": {

@@ -612,6 +612,15 @@ export function findPrivateDetails (text, { words = [], paths = [] } = {}) {
   ]
 }
 
+/**
+ * An identifier the facts state themselves is public, not the owner's: the Borma demo's shop domain (bormadago.com)
+ * is also the owner's email domain. The account's local part, the username and the paths stay private.
+ */
+export function withoutPublic (identifiers = {}, knowledge) {
+  const factWords = new Set(normalizeText(knowledge?.factsText).toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
+  return { ...identifiers, words: (identifiers.words ?? []).filter(word => !factWords.has(word)) }
+}
+
 // Demo mode invents what the facts do not say, but never how to pay: a bank or e-wallet, an account, a transfer or its
 // recipient ("a.n. Rina"), or a run of 8+ digits (spaces, dots or dashes allowed: "123-456-7890", "712.345.6789"), which
 // also holds an invented phone number that may be a stranger's. Prices ("Rp 12.500.000") and clock times
@@ -622,15 +631,22 @@ const PAYMENT_TERMS = ['rekening', 'no. rek', 'no rek', 'norek', 'account number
 const BANKS = /(?<![\p{L}\p{N}])(?:bca|bni|bri|mandiri|bsi|btn|cimb|permata|danamon|jago|seabank|ocbc|jenius|bjb|dana|ovo|go[ -]?pay|shopee[ -]?pay|linkaja)(?![\p{L}\p{N}])/iu
 const NOT_ACCOUNT = /(?<![\p{Nd}.,:])(?:\d{1,3}(?:\.\d{3})+|(?:[01]?\d|2[0-3])[.:][0-5]\d)(?![.,:]?\p{Nd})/gu
 const ACCOUNT_DIGITS = /\p{Nd}(?:[ .-]?\p{Nd}){7,}/u
-const hasPaymentDetail = text => BANKS.test(text) || ACCOUNT_DIGITS.test(text.replace(NOT_ACCOUNT, ' ')) || PAYMENT_TERMS.some(term => containsTerm(text, term))
+// A run the facts state themselves (the shop's phone number, an order number from the Borma lookup) is not invented.
+const DIGIT_RUN = /\p{Nd}(?:[ .()+-]{0,2}\p{Nd}){7,}/gu
+const knownDigitRuns = knowledge => new Set((normalizeText(knowledge?.factsText).match(DIGIT_RUN) ?? []).map(run => run.replace(/\D/g, '')))
+const withoutKnownRuns = (text, known) => (known.size ? text.replace(DIGIT_RUN, run => (known.has(run.replace(/\D/g, '')) ? ' ' : run)) : text)
+const hasPaymentDetail = (text, known = new Set()) => BANKS.test(text) || ACCOUNT_DIGITS.test(withoutKnownRuns(text, known).replace(NOT_ACCOUNT, ' ')) ||
+  PAYMENT_TERMS.some(term => containsTerm(text, term))
 
 /**
  * @param {object} options
  * @param {boolean} [options.demo]  demo mode (owner decision 2026-09-27): no check against the facts, only
  *   `demo_payment_detail` in their place; every other check stays
+ * @param {boolean} [options.demoPrices]  demo mode on real data (Borma): prices and percentages must still come from
+ *   the cited facts (`demo_unsupported_amount`), since a real shop's prices are never invented
  * @returns {{ok: boolean, reasons: string[]}}
  */
-export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, maxReplyChars = 600, sensitiveTerms = [], privateIdentifiers: identifiers, demo = false }) {
+export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, maxReplyChars = 600, sensitiveTerms = [], privateIdentifiers: identifiers, demo = false, demoPrices = false }) {
   const reasons = []
   const text = normalizeText(reply).trim()
   if (!text) return { ok: false, reasons: ['empty_reply'] }
@@ -639,12 +655,18 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
   else if (PLACEHOLDERS.some(pattern => pattern.test(text))) reasons.push('placeholder')
 
   if (demo) {
-    if (hasPaymentDetail(text)) reasons.push('demo_payment_detail')
+    if (hasPaymentDetail(text, knownDigitRuns(knowledge))) reasons.push('demo_payment_detail')
+    if (demoPrices) {
+      const allow = buildAllowList(knowledge, Array.isArray(factsUsed) ? factsUsed : [])
+      const details = extractDetails(text)
+      const missing = [...new Set([...details.amounts.filter(amount => !allow.amounts.has(amount)), ...details.percents.filter(percent => !allow.percents.has(percent)).map(percent => `${percent}%`)])]
+      if (missing.length > 0) reasons.push(`demo_unsupported_amount:${missing.join(',')}`)
+    }
   } else {
     reasons.push(...factReasons(text, factsUsed, { knowledge, sensitiveTerms }))
   }
   // No value in the reason: it lands in the audit log and in eval reports.
-  if (findPrivateDetails(text, identifiers).length > 0) reasons.push('private_detail')
+  if (findPrivateDetails(text, withoutPublic(identifiers, knowledge)).length > 0) reasons.push('private_detail')
 
   // Voice says mirror the sender's language; an auto-reply in the other language goes to the owner instead.
   if (incomingText !== undefined) {
@@ -706,5 +728,5 @@ export const privateIdentifiersFor = config => {
 export function guardTriage (triage, { knowledge, config, incomingText }) {
   if (triage?.decision !== 'answer') return undefined
   return checkReply({ reply: triage.reply, factsUsed: triage.facts_used, incomingText },
-    { knowledge, ...config.guards, privateIdentifiers: privateIdentifiersFor(config), demo: config.demo?.enabled === true })
+    { knowledge, ...config.guards, privateIdentifiers: privateIdentifiersFor(config), demo: config.demo?.enabled === true, demoPrices: config.borma?.enabled === true })
 }

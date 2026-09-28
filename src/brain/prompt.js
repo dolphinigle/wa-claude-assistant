@@ -38,10 +38,14 @@ const quotedLine = message => (message.quotedText ? `<quoted>${escapeText(trunca
  * @param {{fromMe: boolean, text: string, timestamp: number, attachment?: string}[]} input.history  older messages, oldest first
  * @param {{text: string, timestamp: number, attachment?: string, quotedText?: string}[]} input.messages  the debounced burst to triage, oldest first
  * @param {number} input.now  epoch seconds
+ * @param {{lines: string[], notes: string[]}} [input.lookup]  the Borma demo's facts for this burst (src/lookup.js): our
+ *   own data, so trusted, in its own block before the history; escaped all the same
  */
-export function buildUserTurn ({ chat = {}, history = [], messages, now, timeZone = 'Asia/Jakarta', contextMessages = 8 }) {
+export function buildUserTurn ({ chat = {}, history = [], messages, now, timeZone = 'Asia/Jakarta', contextMessages = 8, lookup }) {
   if (!messages?.length) throw new Error('buildUserTurn needs at least one message')
   const lines = [`now: ${formatLocalTime(now, timeZone, { withWeekday: true })} (${timeZone})`]
+  const looked = [...(lookup?.lines ?? []), ...(lookup?.notes ?? []).map(note => `note: ${note}`)]
+  if (looked.length > 0) lines.push('<lookup>', ...looked.map(escapeText), '</lookup>')
 
   const recent = contextMessages > 0 ? history.slice(-contextMessages) : []
   if (recent.length === 0) {

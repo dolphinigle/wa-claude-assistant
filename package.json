@@ -13,7 +13,8 @@
     "pair": "node src/pair.js",
     "test": "node --test \"test/*.test.js\"",
     "eval": "node scripts/eval.js",
-    "selftest": "node scripts/selftest.js"
+    "selftest": "node scripts/selftest.js",
+    "export": "node scripts/export-borma.js"
   },
   "dependencies": {
     "baileys": "7.0.0-rc14",

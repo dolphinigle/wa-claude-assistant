@@ -287,11 +287,12 @@ export function createClaudeBrain ({ config, knowledge, spawn = nodeSpawn, now =
     name: `claude-cli:${claude.model}`,
     systemPromptFile,
     sandboxDir,
-    async triage ({ chat, history = [], messages }) {
+    async triage ({ chat, history = [], messages, lookup }) {
       const stdinText = buildUserTurn({
         chat,
         history,
         messages,
+        lookup,
         now: Math.floor(now() / 1000),
         timeZone: config.timezone,
         contextMessages: config.contextMessages

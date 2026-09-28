@@ -15,13 +15,22 @@ const RULES = [
   { pattern: /brownies/i, decision: 'answer', reply: 'Brownies panggang loyang 20x20 cm harganya Rp 85.000 ya Kak.', facts: ['F5'] }
 ]
 
+// Borma demo: a price or stock question with a product in the lookup gets that product's first store line.
+const lookupRule = (text, lookup) => {
+  const product = [...(lookup?.facts ?? [])].find(([id]) => /^F[1-3]\d\d$/.test(id))
+  if (!product || !/harga|berapa|brp|ada|stok|ready/i.test(text)) return undefined
+  const [, title, stores] = product[1].match(/^Produk (.+?): (.+)$/) ?? []
+  if (!title) return undefined
+  return { pattern: 'a lookup product', decision: 'answer', reply: `${title} di ${stores.split(/[;(]/)[0].trim()} ya Kak.`, facts: [product[0]] }
+}
+
 export function createFakeBrain ({ delayMs = 300 } = {}) {
   return {
     name: 'fake-keyword-brain',
-    async triage ({ messages }) {
+    async triage ({ messages, lookup }) {
       await new Promise(resolve => setTimeout(resolve, delayMs))
       const text = messages.map(message => message.text).join('\n')
-      const rule = RULES.find(candidate => candidate.pattern.test(text.trim()))
+      const rule = lookupRule(text, lookup) ?? RULES.find(candidate => candidate.pattern.test(text.trim()))
       const triage = rule
         ? { decision: rule.decision, reply: rule.reply, facts_used: rule.facts, reason: `fake brain matched ${rule.pattern}`, summary: text.slice(0, 80), customer_waiting: Boolean(rule.waiting) }
         : { decision: 'escalate', reply: 'Terima kasih Kak, saya cek dulu ya.', facts_used: [], reason: 'fake brain: no rule matched', summary: text.slice(0, 80), customer_waiting: false }

@@ -1,6 +1,7 @@
 // Orchestrator: dedupe, loop guard, takeover, debounce, triage, policy, and the ONE send gate.
-import { detectLanguage, findPrivateDetails, guardTriage, isThanks, privateIdentifiersFor } from './guards.js'
+import { detectLanguage, findPrivateDetails, guardTriage, isThanks, privateIdentifiersFor, withoutPublic } from './guards.js'
 import { isAllowedChat, listNamesChat, phoneEntry } from './chat-lists.js'
+import { phoneFromChatIds, withLookup } from './lookup.js'
 import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice, placeholderLine } from './owner.js'
 import { decide } from './policy.js'
 
@@ -14,8 +15,9 @@ const DEFAULT_LIVE_WINDOW_MINUTES = 2
  * @param {object} deps
  * @param {{triage: Function}} deps.brain
  * @param {{send: Function, sendToSelf: Function, markRead?: Function, getHistory?: Function, generateId?: Function}} deps.transport
+ * @param {{forBurst: Function}} [deps.lookup]  the Borma demo's per-burst facts (src/lookup.js); none without it
  */
-export function createAssistant ({ config, store, brain, transport, knowledge, now = () => Date.now(), logger = console }) {
+export function createAssistant ({ config, store, brain, transport, knowledge, lookup, now = () => Date.now(), logger = console }) {
   const chats = new Map() // chatId → {pending: message[], timer, generation}
   const work = new Set()
   let stopped = false
@@ -359,9 +361,15 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       .filter(item => (item.text || item.attachment) && !batchIds.has(item.id))
       .slice(config.contextMessages > 0 ? -config.contextMessages : Infinity) // slice(-0) would keep everything
 
+    const found = lookup ? await lookupFacts(chatId, batch, history) : undefined
+    // An order lookup can take seconds: newer messages meanwhile have scheduled a triage of the whole burst.
+    if (lookup && (stopped || generation !== state.generation)) {
+      if (!stopped) store.audit('triage_discarded_stale', { chatId, ids: [...batchIds] })
+      return
+    }
     let result
     try {
-      result = await brain.triage({ chat: { name: contactName(chatId) }, history, messages: batch })
+      result = await brain.triage({ chat: { name: contactName(chatId) }, history, messages: batch, ...(found && { lookup: found }) })
     } catch (error) {
       result = { ok: false, error: `brain_threw: ${error.message}`, meta: {} }
     }
@@ -374,7 +382,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     state.pending = state.pending.filter(message => !batchIds.has(message.id))
     if (result.rateLimit) store.setLastRateLimit(result.rateLimit)
     try {
-      await route(chatId, batch, history, result, generation)
+      await route(chatId, batch, history, result, generation, found)
     } catch (error) {
       // A bug in the checks must not drop the customer's message with the inbox entry: it becomes a draft.
       logger.error(`[assistant] routing failed: ${error.stack ?? error.message}`)
@@ -382,6 +390,23 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       await postDraft(chatId, batch, result, { action: 'escalate', reasons: ['route_failed'] }, false)
     } finally {
       store.removeFromInbox([...batchIds])
+    }
+  }
+
+  /**
+   * The Borma demo's facts for a burst. The sender's orders are looked up only by the chat's own number (its PN JID,
+   * the alt JID its messages carried, or a linked record), never by a number in a message. A failure means no facts:
+   * the triage goes on without them and escalates what they would have answered.
+   */
+  async function lookupFacts (chatId, batch, history) {
+    try {
+      const phone = phoneFromChatIds(store.linkedChatIds(chatId, batch.map(message => message.chatIdAlt).find(Boolean)))
+      const historyText = history.filter(item => !item.fromMe && item.text).slice(-3).map(item => item.text).join('\n')
+      return await lookup.forBurst({ text: batch.map(message => message.text).join('\n'), historyText, phone })
+    } catch (error) {
+      logger.error(`[assistant] lookup failed: ${error.message}`)
+      store.audit('lookup_failed', { chatId, error: error.message })
+      return undefined
     }
   }
 
@@ -435,7 +460,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     track(sendToOwner(`${BOT_PREFIX} ⚠️ ${tooOld.length} message(s) arrived before the assistant stopped and were never triaged. Please answer them yourself:\n${lines.join('\n')}`))
   }
 
-  async function route (chatId, batch, history, result, generation) {
+  async function route (chatId, batch, history, result, generation, found) {
     const triage = result.triage
     const incomingText = batch.map(message => message.text).join('\n')
     const attachments = [...new Set(batch.map(message => message.attachment).filter(Boolean))]
@@ -445,7 +470,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
     // Anything else is new from the customer, and the history that shows it holds one addressing form since the last
     // start: its time is kept on the record, so a thanks after it is not skipped past it (skip-safety-r3-1).
     if (!closing) store.updateChat(chatId, { lastOpenedAt: Math.max(store.chat(chatId).lastOpenedAt ?? 0, lastMessageAt(batch)) })
-    const guard = guardTriage(triage, { knowledge, config, incomingText })
+    // A burst's lookup facts count as facts for its answer only.
+    const guard = guardTriage(triage, { knowledge: withLookup(knowledge, found), config, incomingText })
     const decision = decide(result, {
       config,
       guard,
@@ -482,6 +508,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       error: result.error,
       decision: triage?.decision,
       factsUsed: triage?.facts_used,
+      ...(found && { lookup: { ...found.summary, facts: [...found.facts.keys()] } }), // ids only: no order data in the log
       reply: triage?.reply,
       guard,
       action: decision.action,
@@ -562,7 +589,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, n
       // Whatever held it: the owner may /ok it, and the send gate cannot match this chat against a phone number.
       ...(blocklistUnchecked(chatId) && { blocklistUnchecked: true }),
       ...(period && { placeholderCovered: period }),
-      privateDetails: findPrivateDetails(triage?.reply ?? '', privateIdentifiersFor(config))
+      privateDetails: findPrivateDetails(triage?.reply ?? '', withoutPublic(privateIdentifiersFor(config), knowledge))
     })
     if (decision.placeholder) {
       await sendPlaceholder(chatId, batch, draft, triage.reply) // before the notice, which says it went out

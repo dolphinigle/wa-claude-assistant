@@ -1,9 +1,11 @@
 // Wires config, store, brain, assistant and transport. `npm start` = WhatsApp, `npm run dev` = console REPL.
+import path from 'node:path'
 import { createAssistant } from './assistant.js'
 import { createClaudeBrain } from './brain/claude.js'
 import { createFakeBrain } from './brain/fake.js'
 import { loadConfig } from './config.js'
 import { loadKnowledge } from './knowledge.js'
+import { createLookup, loadBormaData } from './lookup.js'
 import { allowChatsSummary, BOT_PREFIX } from './owner.js'
 import { Store } from './store.js'
 import { createConsoleTransport } from './transport/console.js'
@@ -22,12 +24,15 @@ const config = loadConfig({ overrides })
 const knowledge = loadKnowledge(config.paths.knowledge)
 const store = new Store(config.paths.data)
 const brain = useFakeBrain ? createFakeBrain() : createClaudeBrain({ config, knowledge })
+// Borma demo: per-message facts from the export in data/borma/ (the console keeps its own data dir, so it reads the
+// real one) and the sender's own orders, live from BigQuery.
+const lookup = config.borma?.enabled ? createLookup({ config, ...loadBormaData(useConsole ? path.resolve(config.rootDir, 'data') : config.paths.data) }) : undefined
 
 let assistant
 const onMessage = message => assistant.handleMessage(message)
 const onlyListed = allowChatsSummary(config)
 // Demo mode invents answers (owner decision 2026-09-27): the owner must see that it is on, wherever the bot says hello.
-const demo = config.demo.enabled ? ' · DEMO: answers may be invented' : ''
+const demo = `${config.demo.enabled ? ' · DEMO: answers may be invented' : ''}${lookup ? ' · BORMA data' : ''}`
 const announce = () => assistant.announce(`${BOT_PREFIX} Assistant online · mode: ${config.mode}${demo}${store.paused ? ' · PAUSED' : ''}${onlyListed ? ` · ${onlyListed}` : ''} · brain: ${brain.name}. Send /help for commands.`)
 
 let transport
@@ -54,7 +59,7 @@ if (useConsole) {
     }
   })
 }
-assistant = createAssistant({ config, store, brain, transport, knowledge })
+assistant = createAssistant({ config, store, brain, transport, knowledge, lookup })
 assistant.recoverInbox()
 
 console.log(`wa-claude-assistant · transport: ${transport.name} · brain: ${brain.name} · mode: ${config.mode.toUpperCase()}${demo}${onlyListed ? ` · ${onlyListed}` : ''} · data: ${config.paths.data}`)

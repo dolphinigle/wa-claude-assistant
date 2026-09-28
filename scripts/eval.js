@@ -4,12 +4,16 @@
 // The fixed greeting-back to a greeting alone ("Halo Kak, ada yang bisa saya bantu? 🙏") is an auto-send like any other.
 // Each fixture is one claude call. --only=id1,id2 re-runs a subset (written to last-run-partial.*).
 // --rescore=eval/last-run.json re-applies the CURRENT guards and policy to saved triage results: no claude calls.
-import { readFileSync, writeFileSync } from 'node:fs'
+// The fixtures are written against the made-up bakery in eval/knowledge.md, whatever knowledge.md holds.
+// --borma runs eval/fixtures-borma.json against knowledge.md and the Borma export's catalog lookup (no order lookup);
+// its reports hold real shop data, so they go to data/borma/ (gitignored), not eval/.
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { createClaudeBrain, DECISIONS } from '../src/brain/claude.js'
 import { loadConfig, ROOT_DIR } from '../src/config.js'
 import { guardTriage } from '../src/guards.js'
 import { loadKnowledge } from '../src/knowledge.js'
+import { createLookup, loadBormaData, withLookup } from '../src/lookup.js'
 import { excerpt } from '../src/owner.js'
 import { decide } from '../src/policy.js'
 
@@ -18,7 +22,8 @@ const only = argValue('only') ? new Set(argValue('only').split(',')) : null
 const rescoreFile = argValue('rescore')
 const saved = rescoreFile ? JSON.parse(readFileSync(path.resolve(rescoreFile), 'utf8')) : null
 const selected = id => (saved ? saved.results.some(item => item.id === id) : !only || only.has(id))
-const fixtures = JSON.parse(readFileSync(path.join(ROOT_DIR, 'eval', 'fixtures.json'), 'utf8')).filter(fixture => selected(fixture.id))
+const borma = process.argv.includes('--borma') || Boolean(saved?.borma)
+const fixtures = JSON.parse(readFileSync(path.join(ROOT_DIR, 'eval', borma ? 'fixtures-borma.json' : 'fixtures.json'), 'utf8')).filter(fixture => selected(fixture.id))
 if (fixtures.length === 0) throw new Error('no fixtures selected')
 const badFixture = fixtures.find(fixture => !DECISIONS.includes(fixture.expect) || !['allowed', 'forbidden'].includes(fixture.autoSend) ||
   !['allowed', 'forbidden'].includes(fixture.placeholder) ||
@@ -50,10 +55,15 @@ if (config.demo.enabled) {
   console.warn('eval: demo.enabled true (config.local.json) invents answers the fixtures expect escalated; using false\n')
   config.demo.enabled = false
 }
-const knowledge = loadKnowledge(config.paths.knowledge)
+const knowledge = loadKnowledge(borma ? config.paths.knowledge : path.join(ROOT_DIR, 'eval', 'knowledge.md'))
+// The catalog and stores only: an eval has no chat, so no phone and no order lookup. The guards run as in the demo's
+// strict mode (demo off, forced above), with the lookup's facts added.
+if (borma) config.borma = { ...config.borma, enabled: true, orders: false }
+const lookup = borma && !saved ? createLookup({ config, ...loadBormaData(config.paths.data) }) : undefined
 const startedAt = saved ? new Date(saved.runAt) : new Date()
-const baseName = saved ? path.basename(rescoreFile, '.json') : only ? 'last-run-partial' : 'last-run'
-const outDir = saved ? path.dirname(path.resolve(rescoreFile)) : path.join(ROOT_DIR, 'eval')
+const baseName = saved ? path.basename(rescoreFile, '.json') : `${borma ? 'borma-' : ''}${only ? 'last-run-partial' : 'last-run'}`
+const outDir = saved ? path.dirname(path.resolve(rescoreFile)) : borma ? path.join(config.paths.data, 'borma') : path.join(ROOT_DIR, 'eval')
+mkdirSync(outDir, { recursive: true })
 // History one minute apart, or `minutesAgo` for an older message (a closing from yesterday); `closing` marks our reply
 // sent as the owner's /ok of a thanks draft, and `closingMinutesAgo` is when the thanks it closed arrived. The same ages
 // go to Claude and, at scoring time, to the policy; Claude never sees the `closing` flags.
@@ -65,22 +75,24 @@ async function collect () {
   const nowSeconds = Math.floor(Date.now() / 1000)
   console.log(`eval: ${fixtures.length} fixture(s), ${fixtures.length} claude call(s), concurrency ${config.claude.concurrency}, model ${config.claude.model}\n`)
   return Promise.all(fixtures.map(async fixture => {
-    const result = await brain.triage({ chat: { name: fixture.name }, history: timedHistory(fixture, nowSeconds), messages: [{ text: fixture.text, timestamp: nowSeconds }] })
-    return { id: fixture.id, result }
+    const found = lookup ? await lookup.forBurst({ text: fixture.text }) : undefined
+    const result = await brain.triage({ chat: { name: fixture.name }, history: timedHistory(fixture, nowSeconds), messages: [{ text: fixture.text, timestamp: nowSeconds }], lookup: found })
+    return { id: fixture.id, result, ...(found && { lookup: { facts: [...found.facts], lines: found.lines, notes: found.notes } }) }
   }))
 }
 
 const results = saved ? saved.results : await collect()
 if (saved) console.log(`rescore: ${results.length} saved triage result(s) from ${rescoreFile}, current guards and policy, no claude calls\n`)
-else writeFileSync(path.join(outDir, `${baseName}.json`), `${JSON.stringify({ runAt: startedAt.toISOString(), contextMessages: config.contextMessages, results }, null, 1)}\n`)
+else writeFileSync(path.join(outDir, `${baseName}.json`), `${JSON.stringify({ runAt: startedAt.toISOString(), contextMessages: config.contextMessages, ...(borma && { borma: true }), results }, null, 1)}\n`)
 // How much of each fixture's history Claude was given in the run whose results these are (unknown in older saves).
 const contextMessages = saved ? saved.contextMessages : config.contextMessages
 const historyNote = contextMessages === undefined ? 'fixture history given to Claude: not recorded'
   : `fixture history given to Claude: up to ${contextMessages} message(s)${contextMessages < historyNeeded ? ` (**less than the ${historyNeeded} the fixtures have: those fixtures ran without their history**)` : ''}`
 
 const rows = fixtures.map(fixture => {
-  const { result } = results.find(item => item.id === fixture.id)
-  const guard = guardTriage(result.triage, { knowledge, config, incomingText: fixture.text })
+  const { result, lookup: looked } = results.find(item => item.id === fixture.id)
+  const found = looked && { ...looked, facts: new Map(looked.facts) }
+  const guard = guardTriage(result.triage, { knowledge: withLookup(knowledge, found), config, incomingText: fixture.text })
   // A quiet day: only the triage, the guards, the fixture's history and closing, and the quota can stop an auto-send
   // (or skip a thanks that follows a closing).
   const now = Date.now()

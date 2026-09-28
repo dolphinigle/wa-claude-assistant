@@ -5,7 +5,9 @@ import path from 'node:path'
 import { deepMerge, ROOT_DIR } from '../src/config.js'
 import { parseKnowledge } from '../src/knowledge.js'
 
-export const knowledge = parseKnowledge(readFileSync(path.join(ROOT_DIR, 'knowledge.md'), 'utf8'))
+// The made-up bakery the tests are written against (knowledge.md is the running assistant's own).
+export const KNOWLEDGE_FILE = path.join(ROOT_DIR, 'eval', 'knowledge.md')
+export const knowledge = parseKnowledge(readFileSync(KNOWLEDGE_FILE, 'utf8'))
 
 export function tempDir (t) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'wa-assistant-test-'))
@@ -16,7 +18,7 @@ export function tempDir (t) {
 export function makeConfig (overrides = {}, dataDir = '/nonexistent') {
   const base = JSON.parse(readFileSync(path.join(ROOT_DIR, 'config.json'), 'utf8'))
   const config = deepMerge(base, overrides)
-  config.paths = { auth: path.join(dataDir, 'auth'), data: dataDir, prompts: path.join(ROOT_DIR, 'prompts'), knowledge: path.join(ROOT_DIR, 'knowledge.md') }
+  config.paths = { auth: path.join(dataDir, 'auth'), data: dataDir, prompts: path.join(ROOT_DIR, 'prompts'), knowledge: KNOWLEDGE_FILE }
   return config
 }
 
