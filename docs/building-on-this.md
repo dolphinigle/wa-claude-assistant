@@ -35,18 +35,18 @@ flowchart LR
   S --> OUT
 ```
 
-Status: prototype. 386 unit tests (no network), an eval of 24 fixtures against real Claude, two days live on a
+Status: prototype. 394 unit tests (no network), an eval of 24 fixtures against real Claude, two days live on a
 personal WhatsApp account with two testers. Not reviewed by a human.
 
 ## The seams
 
 | Layer | Here | Contract | Replace it when |
 |---|---|---|---|
-| **Transport** | `src/transport/whatsapp.js` (Baileys linked device), `src/transport/cloud-api.js` (official Cloud API since 2026-09-28: signed webhook in, Graph API out, the owner's own number as the owner channel; `"transport": "cloud-api"`), `src/transport/console.js` (REPL) | `createXTransport({config, store, onMessage, onUntriaged?, onReady?, onConnected?, onFatal?})` returning `{name, start(), stop(), send(chatId, text, {quotedRaw?, messageId?}) → {id}, sendToSelf(text, opts), markRead(messages), getHistory(chatId, limit) → [{id, fromMe, text, attachment?, timestamp}], generateId()}`. `onMessage` gets `{id, chatId, chatIdAlt?, fromMe, isSelfChat, isForwarded, senderName, text, attachment?, quotedText?, quotedId?, timestamp (s), kind: 'notify' \| 'append', raw}` | You use the official **WhatsApp Cloud API** (webhook in, Graph API out), another chat channel, or a web widget. The owner channel (`sendToSelf` + owner `/commands`) must move too: the Cloud API has no "Message yourself" |
-| **Brain** | `src/brain/claude.js` (`createClaudeBrain`), `src/brain/prompt.js`, `prompts/` | `triage({chat: {name}, history, messages}) → {ok, triage: {decision, reply, facts_used, reason, summary, customer_waiting}, rateLimit?, error?, meta}`; never throws for a model failure (`ok: false` escalates) | You use an **API key** (Anthropic SDK with the same schema as a tool or structured output). Then drop the CLI-only parts (`checkInit`, the `apiKeySource: "none"` assertion) and change the quota gate (`quotaBlockers` in `src/policy.js` needs a `rateLimit`; an API has none of the subscription windows) |
+| **Transport** | `src/transport/whatsapp.js` (Baileys linked device, the one this owner runs), `src/transport/cloud-api.js` (official Cloud API: signed webhook in, Graph API out, the owner's own number as the owner channel; `"transport": "cloud-api"`; built 2026-09-28 and rejected by this owner over cost, see the recipe), `src/transport/console.js` (REPL) | `createXTransport({config, store, onMessage, onUntriaged?, onReady?, onConnected?, onFatal?})` returning `{name, start(), stop(), send(chatId, text, {quotedRaw?, messageId?}) → {id}, sendToSelf(text, opts), markRead(messages), getHistory(chatId, limit) → [{id, fromMe, text, attachment?, timestamp}], generateId()}`. `onMessage` gets `{id, chatId, chatIdAlt?, fromMe, isSelfChat, isForwarded, senderName, text, attachment?, quotedText?, quotedId?, timestamp (s), kind: 'notify' \| 'append', raw}` | You use the official **WhatsApp Cloud API** (webhook in, Graph API out), another chat channel, or a web widget. The owner channel (`sendToSelf` + owner `/commands`) must move too: the Cloud API has no "Message yourself" |
+| **Brain** | `src/brain/claude.js` (`createClaudeBrain`), `src/brain/prompt.js`, `prompts/` | `triage({chat: {name}, history, messages}) → {ok, triage: {decision, reply, facts_used, reason, summary, customer_waiting, holding_reply}, rateLimit?, error?, meta}`; never throws for a model failure (`ok: false` escalates) | You use an **API key** (Anthropic SDK with the same schema as a tool or structured output). Then drop the CLI-only parts (`checkInit`, the `apiKeySource: "none"` assertion) and change the quota gate (`quotaBlockers` in `src/policy.js` needs a `rateLimit`; an API has none of the subscription windows) |
 | **Knowledge** | `knowledge.md` → `src/knowledge.js` (`parseKnowledge`) | `{promptText, factsText, facts: Map<'F1', text>}`. `promptText` goes into the system prompt (`{{KNOWLEDGE}}`); `facts` is the only ground truth the guards accept | Your facts live in a database. See "Real data" below |
 | **Policy** | `src/policy.js` (`decide`, pure) | `decide(result, ctx) → {action: 'auto_send' \| 'escalate' \| 'skip', reasons, greeting?, placeholder, placeholderWithheld}` | Keep it. Change thresholds in config, not code |
-| **Guards** | `src/guards.js` (`checkReply`, `asksSomething`, `isGreetingOnly`, `isThanks`) | `checkReply({reply, factsUsed, incomingText}, {knowledge, …}) → {ok, reasons}` | Keep the facts-only detail checks. Retune the word lists for your language and domain (`sensitiveTerms` in config; question, greeting and thanks words in code) |
+| **Guards** | `src/guards.js` (`checkReply`, `checkHoldingReply`, `asksSomething`, `isGreetingOnly`, `isThanks`) | `checkReply({reply, factsUsed, incomingText}, {knowledge, …}) → {ok, reasons}`; `checkHoldingReply({reply, incomingText}, {sensitiveTerms, privateIdentifiers}) → {ok, reasons}`; `guardHolding`/`guardGreeting` feed `decide()`'s `holdingGuard`/`greetingGuard` | Keep the facts-only detail checks. Retune the word lists for your language and domain (`sensitiveTerms` in config; question, greeting and thanks words in code) |
 | **Owner loop** | `src/owner.js`, notices in `src/assistant.js` | Drafts with numbers, `/ok N`, `/edit N`, `/no N`, `/pause`, `/status`, `/mute` | Keep the model (every escalation is a draft someone approves); move the channel with the transport |
 | **Store** | `src/store.js` | One JSON file (`data/state.json`, atomic writes) plus `data/audit.jsonl` | More than one owner or real volume: SQLite or your database |
 
@@ -58,14 +58,17 @@ personal WhatsApp account with two testers. Not reviewed by a human.
 
    | | WhatsApp | Claude |
    |---|---|---|
-   | Personal experiment | This repo's Baileys linked device (ToS violation, whole-account ban risk) | `claude -p` on your subscription (terms ambiguous for an always-on bot) |
-   | Anything for a business | **Cloud API** on a Business number (coexistence keeps the app), via a Tech Provider/BSP | **API key** (commercial terms, no training on inputs by default) |
+   | Personal experiment | This repo's Baileys linked device, the web route (ToS violation, whole-account ban risk; free) | `claude -p` on your subscription (terms ambiguous for an always-on bot) |
+   | Anything for a business | **Cloud API** on a Business number (`src/transport/cloud-api.js`). From 2026-10-01 every message it sends costs USD 0.025 in Indonesia after 1,000 free a month per number: AI replies, approved drafts, notices to the owner, and the owner's own CS replies unless the number keeps the app through coexistence, which needs a Solution Partner or Tech Provider and is not confirmed for Indonesia | **API key** (commercial terms, no training on inputs by default) |
+
+   This owner built the Cloud API transport and rejected it on 2026-09-28 over that cost; the prototype stays on the
+   web route and keeps the Cloud API selectable. Price your volume before choosing (research.md, dated note 2026-09-28).
 
 3. **Knowledge:** write `knowledge.md` by hand (`## Facts` with `[F1]` ids, `## Voice`, `## Never`) or generate it
    (next section). Every fact the bot should state must be a fact; the shop's own name and range included (the live
    test drafted "what is this shop?" until they were).
-4. **Config** (`config.json` defaults, `config.local.json` per machine): texts of `disclosure`, `placeholder`,
-   `greetingReply`; `guards.sensitiveTerms`; `guards.ownerIdentifiers` (the account email the CLI leaks into context);
+4. **Config** (`config.json` defaults, `config.local.json` per machine): the `disclosure` text (the placeholder and
+   the greeting-back have no text to set: Claude writes them per sender); `guards.sensitiveTerms`; `guards.ownerIdentifiers` (the account email the CLI leaks into context);
    `timezone`; caps; `allowChats` for the first live runs.
 5. **Eval:** rewrite `eval/fixtures.json` for your domain. Keep the forbidden kinds: family and friends, spam,
    manipulation and tag injection, discounts, payments and transfers, unlisted items, partial coverage. Label every
@@ -76,7 +79,8 @@ personal WhatsApp account with two testers. Not reviewed by a human.
 7. **Keep the invariants** (CLAUDE.md): one send gate; notices recorded as bot-sent before sending; commands only
    from the owner's own typed `/` messages; untrusted text only on stdin, escaped; isolation fails closed; a pure
    policy where a failed triage escalates; each message id processed once; backlog never auto-sends; no link previews;
-   no key material in logs.
+   no key material in logs; no fixed customer-facing texts (every automated message is written for its sender and
+   guarded: identical automated texts look like bulk messaging, Baileys #2800).
 
 ## Real data (a production catalog, stores, prices)
 
@@ -103,7 +107,8 @@ personal WhatsApp account with two testers. Not reviewed by a human.
 
 - Claude uses the chat history to tell friends from customers: with a personal history it escalates even an easy
   question. A business number avoids this; for tests with friends, `contextMessages: 0`.
-- Silence looks broken: a customer who waits needs a placeholder, and a greeting needs a greeting back.
+- Silence looks broken: a customer who waits needs a placeholder, and a greeting needs a greeting back, each written
+  for that sender (identical automated texts look like bulk messaging).
 - The owner chatting in the same chat pauses the bot (human takeover); keep the window short for tests.
 - The owner's own Claude use and the evals share the subscription quota: at 90 % of the weekly window every reply
   became a draft. A business deployment should not share a person's quota.
