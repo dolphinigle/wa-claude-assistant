@@ -56,7 +56,7 @@ test('product matching: "harga indomie berapa" finds the Indomies, best seller f
 test('lookup facts: products with prices per store, promo, stock time and link, then the stores; F ids the guards know', async () => {
   const { lookup, calls } = bormaLookup()
   const found = await lookup.forBurst({ text: 'ada susu ultra kak?' })
-  assert.deepEqual([...found.facts.keys()], ['F100', 'F101', 'F102', 'F103', 'F401', 'F402'])
+  assert.deepEqual([...found.facts.keys()], ['F100', 'F101', 'F102', 'F103', 'F398', 'F401', 'F402'])
   assert.match(found.facts.get('F100'), /^Produk ULTRA MILK UHT COKELAT 250 ML: Borma Dago Rp 6\.500 \(promo HEMAT SUSU s\.d\. 30-09-2026 21\.30 WIB; harga normal Rp 7\.200\), stok sedikit/)
   assert.equal(found.facts.get('F101'), 'Produk ULTRA MILK UHT FULL CREAM 1000 ML: Borma Dago Rp 19.800, stok tersedia; Borma Fashion (Kopo) Rp 19.500, stok tersedia (stok per 28-09-2026 17.04 WIB). Beli online di www.bormadago.com, link produk: https://www.bormadago.com/shop/product/3/p-3')
   assert.equal(found.lines[0], `[F100] ${found.facts.get('F100')}`)
@@ -65,7 +65,7 @@ test('lookup facts: products with prices per store, promo, stock time and link, 
 
 test('suggestions: on promo and in stock first, habis everywhere last but still there; "promo apa aja?" lists the promos in stock', async () => {
   const { lookup } = bormaLookup()
-  const titles = found => [...found.facts].filter(([id]) => id < 'F400').map(([, fact]) => fact.match(/^Produk (.+?):/)[1])
+  const titles = found => [...found.facts].filter(([, fact]) => fact.startsWith('Produk ')).map(([, fact]) => fact.match(/^Produk (.+?):/)[1])
   // By relevance alone the habis Frisian Flag (a better seller) would come before Roma; it goes last instead.
   assert.deepEqual(titles(await lookup.forBurst({ text: 'ada susu?' })), ['ULTRA MILK UHT COKELAT 250 ML', 'ROMA SARI GANDUM SUSU & COKLAT 108 GR',
     'ULTRA MILK UHT FULL CREAM 1000 ML', 'FRISIAN FLAG SUSU KENTAL MANIS BIGBRO 535 GR'])
@@ -225,4 +225,15 @@ test('the lookup block: trusted and before the history, escaped all the same', (
     now: NOW
   })
   assert.match(turn, /^now: [^\n]+\n<lookup>\n\[F100\] Produk ROMA SARI GANDUM SUSU &amp; COKLAT 108 GR: Borma Dago Rp 9\.900\nnote: No order facts\.\n<\/lookup>\n<history>\n/)
+})
+
+test('a search gets the link to all online results for its own words, and a promo question the promo page', async () => {
+  const lookup = createLookup({ config: { borma: { enabled: true, orders: false } }, catalog: { products: [], stockAsOf: '2026-09-29T08:00:00Z' }, stores: [] })
+  const beras = await lookup.forBurst({ text: 'ada beras kak?' })
+  assert.equal(beras.facts.get('F398'), 'Semua hasil pencarian "beras" di toko online: https://www.bormadago.com/shop/product/list?q=beras')
+  const promo = await lookup.forBurst({ text: 'promo apa aja?' })
+  assert.equal(promo.facts.get('F399'), 'Semua promo yang sedang berlaku di toko online: https://www.bormadago.com/shop/promo')
+  assert.equal(promo.facts.has('F398'), false, 'no search words, no search link')
+  const hello = await lookup.forBurst({ text: 'makasih kak' })
+  assert.equal(hello.facts.size, 0, 'no product question, no links')
 })

@@ -15,6 +15,10 @@ const PRODUCT_BASE = 100
 const STORE_BASE = 400
 const ORDER_BASE = 900
 const MAX_ORDERS = 5
+// Links to the shop's own pages (solui routes shop/product/list?q= and shop/promo, checked 2026-09-29).
+const SEARCH_FACT = 398
+const PROMO_FACT = 399
+const SHOP_URL = 'https://www.bormadago.com/shop'
 // The recent conversation's products: its last 6 messages, the best 5 of each, 10 at most (ids stay below F400).
 const RECENT_TEXTS = 6
 const PER_RECENT_TEXT = 5
@@ -294,6 +298,12 @@ export function createLookup ({ config, catalog, stores, queryOrders, now = () =
     products = [...products, ...earlier]
     summary.recentProducts = earlier.length
     products.forEach((product, position) => facts.push([`F${PRODUCT_BASE + position}`, productFact(product, storesById, catalog.stockAsOf)]))
+    // "ada beras?": beyond the few matches, every result for the customer's own words on the online shop.
+    const searched = queryWords(text).filter(word => /\p{L}/u.test(word)).slice(0, 4).join(' ')
+    if (searched && (summary.products > 0 || PRODUCT_QUESTION.test(fold(text)))) {
+      facts.push([`F${SEARCH_FACT}`, `Semua hasil pencarian "${searched}" di toko online: ${SHOP_URL}/product/list?q=${encodeURIComponent(searched)}`])
+    }
+    if (promo) facts.push([`F${PROMO_FACT}`, `Semua promo yang sedang berlaku di toko online: ${SHOP_URL}/promo`])
     if (summary.products === 0 && PRODUCT_QUESTION.test(fold(text))) {
       notes.push(`No product in the shop's catalog snapshot matches this message: its prices and stock are unknown${earlier.length ? ' (the products above come from the earlier messages)' : ''}.`)
     }

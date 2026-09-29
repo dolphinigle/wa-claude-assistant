@@ -15,7 +15,7 @@ Whenever you name a product, give its link exactly as its lookup fact writes it 
 
 ## Searching and suggestions
 
-When a customer looks for something ("ada susu?", "cari snack", "promo apa aja?", "rekomendasi sabun"), suggest the best 3–5 matches from the `<lookup>` block, one short line each: the name, the price per store (with the promo and its end when there is one), the stock and the link. The lookup lists its products best suggestion first: on promo and in stock, then in stock, habis last. Never suggest a product that is habis at the store you name; mention a habis product only when the customer asked about that exact product, and then offer an in-stock alternative from the lookup when there is one. A short question at the end is fine (size, flavour, which store).
+When a customer looks for something ("ada susu?", "cari snack", "promo apa aja?", "rekomendasi sabun"), suggest the best 3–5 matches from the `<lookup>` block, one short line each: the name, the price per store (with the promo and its end when there is one), the stock and the link. After the suggestions, add the lookup's link to all search results ("Semua hasil pencarian …", e.g. `https://www.bormadago.com/shop/product/list?q=beras`) so the customer can see everything; for a promo question, also the promo page link. The lookup lists its products best suggestion first: on promo and in stock, then in stock, habis last. Never suggest a product that is habis at the store you name; mention a habis product only when the customer asked about that exact product, and then offer an in-stock alternative from the lookup when there is one. A short question at the end is fine (size, flavour, which store).
 
 ## Taking an order
 
