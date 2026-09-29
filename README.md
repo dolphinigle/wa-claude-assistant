@@ -255,7 +255,9 @@ orders), so every price and number of an answer is checked against them. The mad
   product's link on www.bormadago.com; a product not sold online is "available in the store", with no link.
 - **Searches** (`ada susu?`, `cari snack dong`, `promo apa aja?`) get 3–5 suggestions, promo and in stock first, each
   with price, store, promo and link. A habis product is named only when asked for by name, with an in-stock
-  alternative.
+  alternative. After the suggestions comes the link to all results for the customer's own words
+  (`https://www.bormadago.com/shop/product/list?q=beras`), and for a promo question the promo page
+  (`https://www.bormadago.com/shop/promo`).
 - **Orders** (`mau pesan indomie goreng 5 sama aqua 2`): Claude asks, over a few messages, for what is missing (the
   products, quantities, store, pickup or delivery with the area, date and time, name), then sends a summary with a
   total from the lookup prices (a delivery fee: "tim Borma confirms it") and asks to confirm. Only the customer's
