@@ -730,11 +730,12 @@ test('demo mode: a reply with payment details is held (demo_payment_detail)', ()
 
 test('demo mode: dotted account numbers, other banks and e-wallets, "TF" and "a.n." are payment details too', () => {
   for (const reply of ['Bisa ke BSI 712.345.6789 a.n. Rina ya Kak', 'Bisa TF ke Jago a.n. Toko Rina ya Kak', 'Bayarnya bisa via OVO 0812.3456.7890 ya Kak',
-    'Bisa ke DANA atas nama Rina ya Kak', 'Nanti ditransfer ke Toko Rina ya Kak', 'Bisa lewat GoPay ya Kak', 'Bisa ke 123.456.7890 ya Kak']) {
+    'Bisa ke DANA atas nama Rina ya Kak', 'Nanti ditransfer ke Toko Rina ya Kak', 'Bisa lewat GoPay ya Kak', 'Bisa ke 123.456.7890 ya Kak',
+    'Bisa ke 12-12-2012-3456 ya Kak', 'Bisa ke 30-09-2026 8123 4567 ya Kak']) {
     const guard = demoContext('Bayarnya ke mana kak?', { decision: 'answer', reply, facts_used: [] }).guard
     assert.deepEqual(guard, { ok: false, reasons: ['demo_payment_detail'] }, reply)
   }
-  for (const reply of ['Tart 3 tingkat Rp 12.500.000, jadi dalam 2 hari ya Kak', 'Kami buka jam 08.00-17.00 ya Kak']) {
+  for (const reply of ['Tart 3 tingkat Rp 12.500.000, jadi dalam 2 hari ya Kak', 'Kami buka jam 08.00-17.00 ya Kak', 'Promonya s.d. 30-09-2026, diambil 1/10/2026 ya Kak']) {
     assert.deepEqual(demoContext('Kak, tart 3 tingkat berapa? buka jam berapa?', { decision: 'answer', reply, facts_used: [] }).guard, { ok: true, reasons: [] }, reply)
   }
 })

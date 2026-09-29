@@ -199,10 +199,15 @@ reach real customers by accident. What changes:
 
 On this branch the assistant answers Borma customers from real data (docs/building-on-this.md, "Real data"):
 `knowledge.md` holds Borma's voice, rules and the facts the shop's own pages confirm; per message, `src/lookup.js`
-adds the matching products (selling price per store, current promo, a stock status with its time), the stores, and,
-for an order question, the sender's own online orders. These go to Claude in a trusted `<lookup>` block and to the
-guards as facts (`[F100]`+ products, `[F401]`/`[F402]` stores, `[F900]`+ orders), so every price and number of an
-answer is checked against them. The made-up bakery moved to `eval/knowledge.md`, which the eval and the tests use.
+adds the matching products (selling price per store, current promo, a stock status with its time, and the product's
+page `https://www.bormadago.com/shop/product/{id}/{slug}` when it is sold online), the stores, and, for an order
+question, the sender's own online orders. Matches come best suggestion first: on promo and in stock, then in stock,
+habis everywhere last (still there, so a question about that exact product is answered); a message that asks for a
+promo looks at five times as many matches for them. The products the recent conversation named follow, so a
+follow-up (`yang 1 liter?`, `ambil di Dago ya`) and an order summary still have their prices. These go to Claude in
+a trusted `<lookup>` block and to the guards as facts (`[F100]`+ products, `[F401]`/`[F402]` stores, `[F900]`+
+orders), so every price and number of an answer is checked against them. The made-up bakery moved to
+`eval/knowledge.md`, which the eval and the tests use.
 
 1. **Export** (read-only, `bq` CLI logged in to `solvent-staging`; about 155 MB scanned, 10 s):
    `npm run export` writes `data/borma/catalog.json` (the 300 best sellers of the last 30 days per store, about 460
@@ -221,23 +226,48 @@ answer is checked against them. The made-up bakery moved to `eval/knowledge.md`,
   or more than 8 s (`borma.orderTimeoutMs`) means no order facts and a note to Claude, which then escalates. In-store
   purchases (98% of sales) are not linked to any phone.
 - **Guards**: in demo mode the facts checks stay off as before, but with Borma data every price or percentage must
-  still come from the cited facts (`demo_unsupported_amount`). A digit run the facts state (an order number, the CS
-  number) is not held as an account number, and a `guards.ownerIdentifiers` word the facts state (`bormadago`, when
+  still come from the cited facts (`demo_unsupported_amount`), and every link from the burst's facts
+  (`demo_unsupported_url`: no made-up product page). An order summary's line totals and total pass only when computed
+  from cited prices and the quantities the reply states, one item per line (`5 x Indomie … @ Rp 3.200 = Rp 16.000`,
+  then `Total: Rp …`); a wrong sum or items run together on one line is held, which only means a draft. A digit run
+  the facts state (an order number, the CS number) and a real date (`30-09-2026`) are not held as an account number,
+  and a `guards.ownerIdentifiers` word the facts state (`bormadago`, when
   your email is on that domain) is not a private detail.
 - **Not in any system**: store opening hours. `## Never` forbids stating them; add them as a fact once confirmed.
 - **Risk**: this runs on your personal WhatsApp number (Baileys linked device, against WhatsApp's terms: the ban risk
   is that number), and the sender's own order details go to Claude on your subscription. Keep it to testers who know.
-- `npm run eval -- --borma` runs `eval/fixtures-borma.json` (5 fixtures) against `knowledge.md` and the export, without
-  orders, and writes to `data/borma/` (the reports hold shop data). 2026-09-28 evening, after the per-sender replies:
-  5/5 decisions, 0 forbidden auto-sends or placeholders, 3/3 holding replies written, passed the guard and distinct
-  ("Baik Kak Sari, pertanyaan soal status pengiriman pesanannya saya teruskan …").
+- `npm run eval -- --borma` runs `eval/fixtures-borma.json` (9 fixtures) against `knowledge.md` and the export, without
+  orders, and writes to `data/borma/` (the reports hold shop data). The 4 `demo: true` fixtures run as the testers see
+  it (demo prompt, guards and policy): a search, an order in progress, its summary and its confirmation.
+  2026-09-29, after the customer-service changes (three `--only` runs, 10 calls): 9/9 decisions, 0 forbidden
+  auto-sends, skipped escalations or forbidden placeholders. Auto-sent: the Indomie price with links, the snack search
+  (4 promo items in stock with links, after the date rule above), the order's next question ("tanggal dan jam berapa
+  … nama pemesannya siapa?") and its summary ("5 x Indomie Goreng Special 85 gr @ Rp 3.200 = Rp 16.000 … Total: Rp
+  20.800 … Apakah sudah sesuai, Kak?"). The confirmation escalated with the whole summary as the draft and the holding
+  reply "Terima kasih Kak Rina, pesanannya saya teruskan ke tim Borma ya 🙏". Held as drafts (safe): the strict-mode
+  Ultra Milk answer ("ada dua pilihan": a number word) and two holding replies. The first snack search was held
+  because a promo end ("30-09-2026") counted as an account number; a real date no longer does.
 
 **Testing it.** Testers (listed in `allowChats`) message your number; nobody types in their chat from your phone for
-`humanTakeoverMinutes` before. Price and stock questions (`harga indomie goreng berapa?`, `ada susu ultra di dago?`,
-`promo apa aja?`) are answered from the export; store questions from the store facts; `pesanan saya sudah sampai
-mana?` from the tester's own online orders, if their WhatsApp number has a bormadago.com account. Anything else is a
-draft for you, and a waiting customer gets Claude's own holding reply for them (no fixed text), e.g. `🤖 Baik Kak
-Sari, pertanyaan soal … saya teruskan ke tim Borma ya 🙏`.
+`humanTakeoverMinutes` before. With `demo` on (owner request 2026-09-29) the bot acts as helpful customer service:
+
+- **Products** (`harga indomie goreng berapa?`, `ada susu ultra di dago?`) are answered from the export, with the
+  product's link on www.bormadago.com; a product not sold online is "available in the store", with no link.
+- **Searches** (`ada susu?`, `cari snack dong`, `promo apa aja?`) get 3–5 suggestions, promo and in stock first, each
+  with price, store, promo and link. A habis product is named only when asked for by name, with an in-stock
+  alternative.
+- **Orders** (`mau pesan indomie goreng 5 sama aqua 2`): Claude asks, over a few messages, for what is missing (the
+  products, quantities, store, pickup or delivery with the area, date and time, name), then sends a summary with a
+  total from the lookup prices (a delivery fee: "tim Borma confirms it") and asks to confirm. Only the customer's
+  confirmation escalates: your draft is the complete order summary, and the customer gets a holding reply that the
+  order goes to tim Borma (no time). A change before that gets an updated summary. No payment details, ever.
+- **Memory**: Claude sees at most 10 earlier messages (`contextMessages`), and only those of the last 30 minutes
+  (`contextMaxAgeMinutes`); an older chat is left out entirely. A `contextMessages: 0` in `config.local.json` hides
+  all of it: set it to `10` for the order flow.
+- Store questions come from the store facts; `pesanan saya sudah sampai mana?` from the tester's own online orders,
+  if their WhatsApp number has a bormadago.com account. Complaints, payments and transfers, refunds and anything about
+  an existing order the lookup cannot answer are a draft for you, and a waiting customer gets Claude's own holding
+  reply for them (no fixed text), e.g. `🤖 Baik Kak Sari, pertanyaan soal … saya teruskan ke tim Borma ya 🙏`.
 
 ### Pairing fallback (PR #2765)
 
@@ -553,7 +583,7 @@ since 2026-09-28; delete them).
 | `humanTakeoverMinutes` | `30` | bot stays out of a chat after you type in it |
 | `debounceMs` | `3000` | wait for a burst to finish before triage |
 | `backlog.maxAgeMinutes` / `liveWindowMinutes` / `autoSend` | `60` / `2` / `false` | skip messages older than `maxAgeMinutes`; older than `liveWindowMinutes` (or offline) counts as backlog: never auto-replied (`autoSend` must be `true` or `false`, or the start stops) |
-| `contextMessages` | `8` | earlier messages sent to Claude as `<history>` |
+| `contextMessages` / `contextMaxAgeMinutes` | `10` / `30` | earlier messages sent to Claude as `<history>`: at most `contextMessages`, and only those of the last `contextMaxAgeMinutes` before the new message (older ones may be another topic; `0` = no age limit). Whole numbers only. The policy still reads the whole `contextMessages` history (closings, thanks) |
 | `blocklist` | `[]` | JIDs or phone numbers (`0812…`, `62812…`, `+62 812…`, `+62 0812…`); never sent to Claude, never replied to. A LID chat matches a phone number through the number its messages carried or WhatsApp's LID mapping; while its number is unknown and the list has phone numbers, that chat gets drafts only (its messages still reach Claude) and every draft of it, a thanks or an escalation too, shows the LID to add here. Anything but a list of phone numbers or JIDs as WhatsApp writes them (`6281…@s.whatsapp.net`, `…@lid`; not `0812…@s.whatsapp.net`, `620812…@s.whatsapp.net`, `…@c.us` or a `:device` suffix) stops the start |
 | `allowChats` | `[]` | empty = every chat. Otherwise only the chats it lists (JIDs or phone numbers, matched like `blocklist`) are handled; every other chat is ignored before anything happens to it (no Claude call, no draft, notice, blue ticks or takeover, nothing in `data/state.json`, one `skip_not_allowed` audit line without the text), and the send gate refuses it. A LID chat whose number is unknown is ignored until you list its LID or its number becomes known; your own reply there is kept in memory and becomes a takeover if the LID turns out to be a listed chat. "Message yourself" always works. Anything but a list of phone numbers or JIDs as WhatsApp writes them (`6281…@s.whatsapp.net`, `…@lid`; not `0812…@s.whatsapp.net`, `620812…@s.whatsapp.net`, `…@c.us` or a `:device` suffix) stops the start. See "Testing with one contact" |
 | `disclosure.enabled` / `text` / `sessionGapHours` | `true` / … / `12` | AI disclosure on the first auto-reply per session |
@@ -563,7 +593,7 @@ since 2026-09-28; delete them).
 | `borma.enabled` / `maxProducts` / `orders` / `orderTimeoutMs` / `orderCacheMs` | `false` / `10` / `true` / `8000` / `60000` | Borma demo: per-message facts from `data/borma/` (`npm run export`) and the sender's own orders from BigQuery. See "Borma demo" |
 | `notifyOwnerOnAutoSend` | `true` | post each auto-reply to "Message yourself", as one line: `✅ Auto-replied to Name (+62…): "…"` |
 | `draftTtlHours` | `24` | pending drafts expire |
-| `guards.maxReplyChars` / `guards.sensitiveTerms` | `600` / list | auto-reply length cap; terms that force a draft unless in the facts |
+| `guards.maxReplyChars` / `guards.sensitiveTerms` | `1000` / list | auto-reply length cap; terms that force a draft unless in the facts |
 | `guards.ownerIdentifiers` | `[]` | your details that must never reach a customer, e.g. your Claude account email; with your local username, HOME and the app's paths they force a draft (and a warning on drafts) |
 | `quota.maxFiveHourUtilization` / `maxSevenDayUtilization` | `0.8` / `0.9` | stop auto-replying above these |
 | `claude.model` | `sonnet` | CLI model alias; it floats, and the eval report shows the model id it resolved to |

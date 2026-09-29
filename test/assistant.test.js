@@ -77,6 +77,19 @@ test('contextMessages 0 gives Claude and the policy no earlier messages at all',
   assert.deepEqual(brain.calls[0].history, [])
 })
 
+test('Claude sees only the last contextMaxAgeMinutes of the chat, up to contextMessages; 0 is no age limit', async t => {
+  for (const [maxAge, expected] of [[30, ['R1', 'R2']], [0, ['OLD1', 'OLD2', 'R1', 'R2']]]) {
+    const { transport, brain, deliver } = setup(t, { config: { contextMessages: 10, contextMaxAgeMinutes: maxAge } })
+    const ts = Math.floor(Date.now() / 1000)
+    transport.remember({ id: 'OLD1', chatId: ALICE, fromMe: false, text: 'van, besok jadi main?', timestamp: ts - 3 * 3600 })
+    transport.remember({ id: 'OLD2', chatId: ALICE, fromMe: true, text: 'jadi dong', timestamp: ts - 31 * 60 })
+    transport.remember({ id: 'R1', chatId: ALICE, fromMe: false, text: 'kak mau pesan indomie 5', timestamp: ts - 29 * 60 })
+    transport.remember({ id: 'R2', chatId: ALICE, fromMe: true, text: 'Baik Kak, diambil di toko mana?', timestamp: ts - 60 })
+    await deliver(incoming(ALICE, 'Kak jam berapa buka?'))
+    assert.deepEqual(brain.calls[0].history.map(item => item.id), expected, `contextMaxAgeMinutes ${maxAge}`)
+  }
+})
+
 test('an auto-reply is not marked read while the chat still has a draft waiting for the owner', async t => {
   const { transport, deliver, owner, advance, now, audit } = setup(t)
   const live = () => ({ timestamp: Math.floor(now() / 1000) })

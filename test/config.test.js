@@ -42,6 +42,16 @@ test('borma.orders must be true or false: a quoted "false" would leave the real 
   }
 })
 
+test('the conversation window: 10 messages of the last 30 minutes by default; whole numbers only, 0 = no age limit', t => {
+  const config = loadConfig({ rootDir: rootWith(t) })
+  assert.deepEqual([config.contextMessages, config.contextMaxAgeMinutes], [10, 30])
+  assert.equal(loadConfig({ rootDir: rootWith(t, { contextMaxAgeMinutes: 0 }) }).contextMaxAgeMinutes, 0)
+  for (const value of ['30', -1, 1.5, null]) {
+    assert.throws(() => loadConfig({ rootDir: rootWith(t, { contextMaxAgeMinutes: value }) }), /config\.contextMaxAgeMinutes must be a whole number >= 0/, JSON.stringify(value))
+  }
+  assert.throws(() => loadConfig({ rootDir: rootWith(t, { contextMessages: '10' }) }), /config\.contextMessages must be a whole number >= 0/)
+})
+
 test('a phone number written with the trunk 0 after +62 names the chat, in the blocklist and in allowChats (consistency-r3-1)', t => {
   const PN = '6281234567890@s.whatsapp.net'
   const store = { linkedChatIds: (chatId, chatIdAlt) => [chatId, chatIdAlt].filter(Boolean) }

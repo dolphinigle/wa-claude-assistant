@@ -33,6 +33,19 @@ const attachmentAttribute = items => {
 const quotedLine = message => (message.quotedText ? `<quoted>${escapeText(truncate(String(message.quotedText), MAX_HISTORY_CHARS))}</quoted>\n` : '')
 
 /**
+ * The earlier messages Claude may see: only those of the last `maxAgeMinutes` before the burst (0 = no age limit).
+ * Owner request (2026-09-29): an older message may be another topic, or a tester's personal chat, so it is left out
+ * entirely; `contextMessages` still caps the count (buildUserTurn).
+ * @param {{timestamp: number}[]} history  oldest first, epoch seconds
+ * @param {{since: number, maxAgeMinutes?: number}} options  `since`: the burst's first message, epoch seconds
+ */
+export function recentHistory (history, { since, maxAgeMinutes = 0 }) {
+  if (!(maxAgeMinutes > 0)) return history
+  const from = since - maxAgeMinutes * 60
+  return history.filter(item => Number(item.timestamp) >= from)
+}
+
+/**
  * @param {object} input
  * @param {{name?: string}} input.chat
  * @param {{fromMe: boolean, text: string, timestamp: number, attachment?: string}[]} input.history  older messages, oldest first

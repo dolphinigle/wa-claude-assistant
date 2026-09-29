@@ -43,5 +43,93 @@
   "expect": "escalate",
   "autoSend": "forbidden",
   "placeholder": "forbidden"
+ },
+ {
+  "id": "borma-demo-search-promo",
+  "demo": true,
+  "note": "demo mode, a search after a greeting: suggest 3-5 matches, promo and in stock first, each with price, store and link; never a habis one",
+  "name": "Maya",
+  "history": [
+   {
+    "fromMe": false,
+    "text": "Halo kak"
+   },
+   {
+    "fromMe": true,
+    "text": "Halo Kak Maya, ada yang bisa kami bantu? 😊"
+   }
+  ],
+  "text": "cari snack dong kak, yang lagi promo ada?",
+  "expect": "answer",
+  "autoSend": "allowed",
+  "placeholder": "allowed"
+ },
+ {
+  "id": "borma-demo-order-details",
+  "demo": true,
+  "note": "demo mode, an order in progress: ask only for what is still missing (date and time, name), never escalate yet",
+  "name": "Rina",
+  "history": [
+   {
+    "fromMe": false,
+    "text": "Kak mau pesan indomie goreng 10 bungkus sama aqua 600 ml 6 botol"
+   },
+   {
+    "fromMe": true,
+    "text": "Baik Kak Rina, Indomie Goreng Special 85 gr 10 bungkus dan Aqua 600 ml 6 botol ya. Mau diambil sendiri atau dikirim, dan dari toko mana, Kak?"
+   }
+  ],
+  "text": "diambil sendiri aja di borma dago kak",
+  "expect": "answer",
+  "autoSend": "allowed",
+  "placeholder": "allowed"
+ },
+ {
+  "id": "borma-demo-order-summary",
+  "demo": true,
+  "note": "demo mode, the last order detail arrives: a summary with lookup prices, line totals and a total, asking to confirm; an answer that passes the demo guards",
+  "name": "Rina",
+  "history": [
+   {
+    "fromMe": false,
+    "text": "Kak mau pesan indomie goreng special 5 bungkus sama aqua 600 ml 2 botol"
+   },
+   {
+    "fromMe": true,
+    "text": "Baik Kak Rina 😊 Mau diambil sendiri atau dikirim, dari toko mana, kapan, dan nama pemesannya siapa, Kak?"
+   }
+  ],
+  "text": "ambil sendiri di borma dago besok jam 10 pagi, nama Rina",
+  "expect": "answer",
+  "autoSend": "allowed",
+  "placeholder": "allowed"
+ },
+ {
+  "id": "borma-demo-order-confirmed",
+  "demo": true,
+  "note": "demo mode, the customer confirms our order summary: escalate with the complete summary as the draft and a holding reply that promises no time",
+  "name": "Rina",
+  "history": [
+   {
+    "fromMe": false,
+    "text": "Kak mau pesan indomie goreng 5 bungkus sama aqua 600 ml 2 botol"
+   },
+   {
+    "fromMe": true,
+    "text": "Baik Kak Rina 😊 Mau diambil sendiri atau dikirim, dari toko mana, kapan, dan nama pemesannya siapa, Kak?"
+   },
+   {
+    "fromMe": false,
+    "text": "ambil sendiri di borma dago besok jam 10 pagi, nama Rina"
+   },
+   {
+    "fromMe": true,
+    "text": "Baik Kak Rina, ini ringkasan pesanannya:\n• 5 x Indomie Goreng Special 85 gr @ Rp 3.200 = Rp 16.000\n• 2 x Aqua 600 ml @ Rp 2.400 = Rp 4.800\nTotal: Rp 20.800\nAmbil sendiri di Borma Dago, besok jam 10.00, nama pemesan Rina.\nApakah sudah sesuai, Kak?"
+   }
+  ],
+  "text": "ya betul kak, lanjut",
+  "expect": "escalate",
+  "autoSend": "forbidden",
+  "placeholder": "allowed"
  }
 ]

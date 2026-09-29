@@ -7,7 +7,8 @@
 // --rescore=eval/last-run.json re-applies the CURRENT guards and policy to saved triage results: no claude calls.
 // The fixtures are written against the made-up bakery in eval/knowledge.md, whatever knowledge.md holds.
 // --borma runs eval/fixtures-borma.json against knowledge.md and the Borma export's catalog lookup (no order lookup);
-// its reports hold real shop data, so they go to data/borma/ (gitignored), not eval/.
+// its reports hold real shop data, so they go to data/borma/ (gitignored), not eval/. A Borma fixture with `demo: true`
+// runs as the testers see it: demo prompt, demo guards and policy (the order and suggestion flows exist only there).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { createClaudeBrain, DECISIONS } from '../src/brain/claude.js'
@@ -28,8 +29,9 @@ const fixtures = JSON.parse(readFileSync(path.join(ROOT_DIR, 'eval', borma ? 'fi
 if (fixtures.length === 0) throw new Error('no fixtures selected')
 const badFixture = fixtures.find(fixture => !DECISIONS.includes(fixture.expect) || !['allowed', 'forbidden'].includes(fixture.autoSend) ||
   !['allowed', 'forbidden'].includes(fixture.placeholder) ||
-  !['boolean', 'undefined'].includes(typeof fixture.skipOk) || !['number', 'undefined'].includes(typeof fixture.closingMinutesAgo))
-if (badFixture) throw new Error(`fixture ${badFixture.id}: expect must be one of ${DECISIONS.join('/')}, autoSend and placeholder allowed/forbidden, skipOk a boolean and closingMinutesAgo a number if set`)
+  !['boolean', 'undefined'].includes(typeof fixture.skipOk) || !['number', 'undefined'].includes(typeof fixture.closingMinutesAgo) ||
+  !['boolean', 'undefined'].includes(typeof fixture.demo) || (fixture.demo && !borma))
+if (badFixture) throw new Error(`fixture ${badFixture.id}: expect must be one of ${DECISIONS.join('/')}, autoSend and placeholder allowed/forbidden, skipOk and demo booleans (demo only with --borma) and closingMinutesAgo a number if set`)
 // Results saved before the binary decision have no `decision`; rescoring them would report every case as escalated.
 if (saved?.results.some(item => item.result.triage && !('decision' in item.result.triage))) throw new Error(`${rescoreFile} predates the answer/escalate schema; run npm run eval instead`)
 // Results saved before customer_waiting existed count as "not waiting": no placeholder is ever sent, which is safe but says nothing.
@@ -64,6 +66,9 @@ const knowledge = loadKnowledge(borma ? config.paths.knowledge : path.join(ROOT_
 // strict mode (demo off, forced above), with the lookup's facts added.
 if (borma) config.borma = { ...config.borma, enabled: true, orders: false }
 const lookup = borma && !saved ? createLookup({ config, ...loadBormaData(config.paths.data) }) : undefined
+// The testers' demo mode, for the fixtures that ask for it (their guards and policy too).
+const demoConfig = { ...config, demo: { ...config.demo, enabled: true } }
+const configFor = fixture => (fixture.demo ? demoConfig : config)
 const startedAt = saved ? new Date(saved.runAt) : new Date()
 const baseName = saved ? path.basename(rescoreFile, '.json') : `${borma ? 'borma-' : ''}${only ? 'last-run-partial' : 'last-run'}`
 const outDir = saved ? path.dirname(path.resolve(rescoreFile)) : borma ? path.join(config.paths.data, 'borma') : path.join(ROOT_DIR, 'eval')
@@ -76,11 +81,13 @@ const timedHistory = (fixture, nowSeconds) =>
 
 async function collect () {
   const brain = createClaudeBrain({ config, knowledge })
+  const demoBrain = fixtures.some(fixture => fixture.demo) ? createClaudeBrain({ config: demoConfig, knowledge }) : undefined
   const nowSeconds = Math.floor(Date.now() / 1000)
   console.log(`eval: ${fixtures.length} fixture(s), ${fixtures.length} claude call(s), concurrency ${config.claude.concurrency}, model ${config.claude.model}\n`)
   return Promise.all(fixtures.map(async fixture => {
-    const found = lookup ? await lookup.forBurst({ text: fixture.text }) : undefined
-    const result = await brain.triage({ chat: { name: fixture.name }, history: timedHistory(fixture, nowSeconds), messages: [{ text: fixture.text, timestamp: nowSeconds }], lookup: found })
+    // As live: the recent conversation's products too (an order summary names them several messages on).
+    const found = lookup ? await lookup.forBurst({ text: fixture.text, recentTexts: (fixture.history ?? []).map(item => item.text) }) : undefined
+    const result = await (fixture.demo ? demoBrain : brain).triage({ chat: { name: fixture.name }, history: timedHistory(fixture, nowSeconds), messages: [{ text: fixture.text, timestamp: nowSeconds }], lookup: found })
     return { id: fixture.id, result, ...(found && { lookup: { facts: [...found.facts], lines: found.lines, notes: found.notes } }) }
   }))
 }
@@ -96,6 +103,7 @@ const historyNote = contextMessages === undefined ? 'fixture history given to Cl
 const rows = fixtures.map(fixture => {
   const { result, lookup: looked } = results.find(item => item.id === fixture.id)
   const found = looked && { ...looked, facts: new Map(looked.facts) }
+  const config = configFor(fixture)
   const guard = guardTriage(result.triage, { knowledge: withLookup(knowledge, found), config, incomingText: fixture.text })
   const holdingGuard = guardHolding(result.triage, { knowledge: withLookup(knowledge, found), config, incomingText: fixture.text })
   const greetingGuard = guardGreeting(result.triage, { knowledge: withLookup(knowledge, found), config, incomingText: fixture.text })
@@ -194,7 +202,7 @@ const summary = [
   `- Quota after the run: 5 h ${lastRate?.fiveHourUtilization ?? '?'}, 7 d ${lastRate?.sevenDayUtilization ?? '?'} (${lastRate?.status ?? 'no rate_limit_event'})`
 ]
 const details = rows.map(row => [
-  `### ${row.fixture.id} — ${row.fixture.note}`,
+  `### ${row.fixture.id}${row.fixture.demo ? ' (demo mode)' : ''} — ${row.fixture.note}`,
   '',
   `Message: ${cell(excerpt(row.fixture.text, 240))}`,
   '',

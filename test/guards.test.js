@@ -166,7 +166,8 @@ test('unsupported details fail with a reason', () => {
 
 test('structural checks: empty, length, placeholders, fact ids, facts_used', () => {
   assert.deepEqual(check('  '), { ok: false, reasons: ['empty_reply'] })
-  assert.ok(check('a'.repeat(601)).reasons.includes('too_long:601>600'))
+  const max = guards.maxReplyChars
+  assert.ok(check('a'.repeat(max + 1)).reasons.includes(`too_long:${max + 1}>${max}`))
   assert.ok(check('Halo [NAMA], siap').reasons.includes('placeholder'))
   assert.ok(check('Harga {{price}}').reasons.includes('placeholder'))
   assert.ok(check('Halo <nama pelanggan>').reasons.includes('placeholder'))

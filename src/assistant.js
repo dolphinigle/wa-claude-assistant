@@ -2,6 +2,7 @@
 import { detectLanguage, findPrivateDetails, guardGreeting, guardHolding, guardTriage, isThanks, privateIdentifiersFor, withoutPublic } from './guards.js'
 import { isAllowedChat, listNamesChat, phoneEntry } from './chat-lists.js'
 import { phoneFromChatIds, withLookup } from './lookup.js'
+import { recentHistory } from './brain/prompt.js'
 import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice, placeholderLine } from './owner.js'
 import { decide } from './policy.js'
 
@@ -353,8 +354,11 @@ export function createAssistant ({ config, store, brain, transport, knowledge, l
     const history = (transport.getHistory?.(chatId, config.contextMessages + batch.length) ?? [])
       .filter(item => (item.text || item.attachment) && !batchIds.has(item.id))
       .slice(config.contextMessages > 0 ? -config.contextMessages : Infinity) // slice(-0) would keep everything
+    // Claude and the lookup see only the recent conversation (`contextMaxAgeMinutes`); the policy keeps the whole
+    // history, which its closing and thanks checks read.
+    const recent = recentHistory(history, { since: Math.min(...batch.map(message => message.timestamp)), maxAgeMinutes: config.contextMaxAgeMinutes })
 
-    const found = lookup ? await lookupFacts(chatId, batch, history) : undefined
+    const found = lookup ? await lookupFacts(chatId, batch, recent) : undefined
     // An order lookup can take seconds: newer messages meanwhile have scheduled a triage of the whole burst.
     if (lookup && (stopped || generation !== state.generation)) {
       if (!stopped) store.audit('triage_discarded_stale', { chatId, ids: [...batchIds] })
@@ -362,7 +366,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, l
     }
     let result
     try {
-      result = await brain.triage({ chat: { name: contactName(chatId) }, history, messages: batch, ...(found && { lookup: found }) })
+      result = await brain.triage({ chat: { name: contactName(chatId) }, history: recent, messages: batch, ...(found && { lookup: found }) })
     } catch (error) {
       result = { ok: false, error: `brain_threw: ${error.message}`, meta: {} }
     }
@@ -394,8 +398,8 @@ export function createAssistant ({ config, store, brain, transport, knowledge, l
   async function lookupFacts (chatId, batch, history) {
     try {
       const phone = phoneFromChatIds(store.linkedChatIds(chatId, batch.map(message => message.chatIdAlt).find(Boolean)))
-      const historyText = history.filter(item => !item.fromMe && item.text).slice(-3).map(item => item.text).join('\n')
-      return await lookup.forBurst({ text: batch.map(message => message.text).join('\n'), historyText, phone })
+      const recentTexts = history.map(item => item.text).filter(Boolean)
+      return await lookup.forBurst({ text: batch.map(message => message.text).join('\n'), recentTexts, phone })
     } catch (error) {
       logger.error(`[assistant] lookup failed: ${error.message}`)
       store.audit('lookup_failed', { chatId, error: error.message })

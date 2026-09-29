@@ -640,27 +640,55 @@ export function withoutPublic (identifiers = {}, knowledge) {
 
 // Demo mode invents what the facts do not say, but never how to pay: a bank or e-wallet, an account, a transfer or its
 // recipient ("a.n. Rina"), or a run of 8+ digits (spaces, dots or dashes allowed: "123-456-7890", "712.345.6789"), which
-// also holds an invented phone number that may be a stranger's. Prices ("Rp 12.500.000") and clock times
-// ("08.00-17.00") are left out before digits are counted. Bank and wallet names as whole words only ("Brian" is no
+// also holds an invented phone number that may be a stranger's. Prices ("Rp 12.500.000"), clock times
+// ("08.00-17.00") and dates ("30-09-2026") are left out before digits are counted. Bank and wallet names as whole words only ("Brian" is no
 // BRI); the ordinary words among them (dana, jago, permata, mandiri) and an order's "atas nama siapa?" are held too,
 // which only means a draft. The terms match with affixes ("rekeningnya", "ditransfer").
 const PAYMENT_TERMS = ['rekening', 'no. rek', 'no rek', 'norek', 'account number', 'transfer', 'tf', 'a.n', 'a/n', 'atas nama']
 const BANKS = /(?<![\p{L}\p{N}])(?:bca|bni|bri|mandiri|bsi|btn|cimb|permata|danamon|jago|seabank|ocbc|jenius|bjb|dana|ovo|go[ -]?pay|shopee[ -]?pay|linkaja)(?![\p{L}\p{N}])/iu
 const NOT_ACCOUNT = /(?<![\p{Nd}.,:])(?:\d{1,3}(?:\.\d{3})+|(?:[01]?\d|2[0-3])[.:][0-5]\d)(?![.,:]?\p{Nd})/gu
 const ACCOUNT_DIGITS = /\p{Nd}(?:[ .-]?\p{Nd}){7,}/u
+// A date is no account number either (owner request 2026-09-29: suggestions give a promo's end, an order summary its
+// pickup date): "30-09-2026", "1/10/2026", with a real day and month and nothing glued on either side.
+const DATE = /(?<![\p{Nd}.,:/-])(?:0?[1-9]|[12]\d|3[01])([-/.])(?:0?[1-9]|1[0-2])\1(?:19|20)\d{2}(?![-/.,:]?\p{Nd})/gu
 // A run the facts state themselves (the shop's phone number, an order number from the Borma lookup) is not invented.
 const DIGIT_RUN = /\p{Nd}(?:[ .()+-]{0,2}\p{Nd}){7,}/gu
 const knownDigitRuns = knowledge => new Set((normalizeText(knowledge?.factsText).match(DIGIT_RUN) ?? []).map(run => run.replace(/\D/g, '')))
 const withoutKnownRuns = (text, known) => (known.size ? text.replace(DIGIT_RUN, run => (known.has(run.replace(/\D/g, '')) ? ' ' : run)) : text)
-const hasPaymentDetail = (text, known = new Set()) => BANKS.test(text) || ACCOUNT_DIGITS.test(withoutKnownRuns(text, known).replace(NOT_ACCOUNT, ' ')) ||
+const hasPaymentDetail = (text, known = new Set()) => BANKS.test(text) || ACCOUNT_DIGITS.test(withoutKnownRuns(text, known).replace(DATE, ' ').replace(NOT_ACCOUNT, ' ')) ||
   PAYMENT_TERMS.some(term => containsTerm(text, term))
+
+// Owner request (2026-09-29): an order summary states line totals and a grand total that no fact states. They pass
+// when computed from the cited prices and the quantities the reply itself states, one item per line ("2 x Indomie Goreng
+// Rp 3.200 = Rp 6.400"): a line with a cited price and a quantity (none = 1) gives its subtotals (every price × every
+// quantity on it), and the total must be one subtotal of every such line added up. A wrong sum, or items run together
+// on one line, stays unsupported, which only means a draft.
+const ITEM_QUANTITY = /(?<![\p{L}\p{N}.,])(\d{1,3})\s*(?:x|×|pcs|pc|buah|bh|bungkus|bks|botol|btl|kaleng|pack|dus|kotak|box|sachet|renceng|kg)(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])[x×]\s*(\d{1,3})(?![\p{N}]|[.,]\p{N})/giu
+const MAX_SUMS = 5000
+export function orderAmounts (text, citedAmounts) {
+  const derived = new Set()
+  let sums = new Set([0])
+  for (const line of text.split('\n')) {
+    const prices = [...new Set(extractDetails(line).amounts.filter(amount => citedAmounts.has(amount)))]
+    if (prices.length === 0) continue
+    const quantities = [...line.matchAll(ITEM_QUANTITY)].map(match => Number(match[1] ?? match[2])).filter(quantity => quantity > 0)
+    const subtotals = [...new Set((quantities.length ? quantities : [1]).flatMap(quantity => prices.map(price => quantity * price)))]
+    for (const subtotal of subtotals) derived.add(subtotal)
+    const next = new Set()
+    for (const sum of sums) for (const subtotal of subtotals) if (next.size < MAX_SUMS) next.add(sum + subtotal)
+    sums = next
+  }
+  for (const sum of sums) derived.add(sum)
+  return derived
+}
 
 /**
  * @param {object} options
  * @param {boolean} [options.demo]  demo mode (owner decision 2026-09-27): no check against the facts, only
  *   `demo_payment_detail` in their place; every other check stays
  * @param {boolean} [options.demoPrices]  demo mode on real data (Borma): prices and percentages must still come from
- *   the cited facts (`demo_unsupported_amount`), since a real shop's prices are never invented
+ *   the cited facts (`demo_unsupported_amount`), since a real shop's prices are never invented, or be an order
+ *   summary's totals of them (orderAmounts); links must come from the burst's facts (`demo_unsupported_url`)
  * @returns {{ok: boolean, reasons: string[]}}
  */
 export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, maxReplyChars = 600, sensitiveTerms = [], privateIdentifiers: identifiers, demo = false, demoPrices = false }) {
@@ -676,8 +704,14 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
     if (demoPrices) {
       const allow = buildAllowList(knowledge, Array.isArray(factsUsed) ? factsUsed : [])
       const details = extractDetails(text)
-      const missing = [...new Set([...details.amounts.filter(amount => !allow.amounts.has(amount)), ...details.percents.filter(percent => !allow.percents.has(percent)).map(percent => `${percent}%`)])]
+      const totals = orderAmounts(text, allow.amounts)
+      const missing = [...new Set([...details.amounts.filter(amount => !allow.amounts.has(amount) && !totals.has(amount)), ...details.percents.filter(percent => !allow.percents.has(percent)).map(percent => `${percent}%`)])]
       if (missing.length > 0) reasons.push(`demo_unsupported_amount:${missing.join(',')}`)
+      // A product link must be one the shop's data gives (lookup.js: only for what is sold online), never a made-up
+      // one; any fact of this burst will do, since demo mode does not ask Claude to cite every one.
+      const links = buildAllowList(knowledge).urls
+      const madeUp = [...new Set(details.urls.filter(url => !links.has(url)))]
+      if (madeUp.length > 0) reasons.push(`demo_unsupported_url:${madeUp.join(',')}`)
     }
   } else {
     reasons.push(...factReasons(text, factsUsed, { knowledge, sensitiveTerms }))

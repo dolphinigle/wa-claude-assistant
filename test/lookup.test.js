@@ -53,14 +53,39 @@ test('product matching: "harga indomie berapa" finds the Indomies, best seller f
   assert.deepEqual(matchProducts(index, '85'), [], 'a number alone names no product')
 })
 
-test('lookup facts: products with prices per store, promo and stock time, then the stores; F ids the guards know', async () => {
+test('lookup facts: products with prices per store, promo, stock time and link, then the stores; F ids the guards know', async () => {
   const { lookup, calls } = bormaLookup()
   const found = await lookup.forBurst({ text: 'ada susu ultra kak?' })
   assert.deepEqual([...found.facts.keys()], ['F100', 'F101', 'F102', 'F103', 'F401', 'F402'])
-  assert.equal(found.facts.get('F100'), 'Produk ULTRA MILK UHT FULL CREAM 1000 ML: Borma Dago Rp 19.800, stok tersedia; Borma Fashion (Kopo) Rp 19.500, stok tersedia (stok per 28-09-2026 17.04 WIB). Beli online di www.bormadago.com: https://www.bormadago.com/shop/product/3/p-3')
-  assert.match(found.facts.get('F101'), /Borma Dago Rp 6\.500 \(promo HEMAT SUSU s\.d\. 30-09-2026 21\.30 WIB; harga normal Rp 7\.200\), stok sedikit/)
+  assert.match(found.facts.get('F100'), /^Produk ULTRA MILK UHT COKELAT 250 ML: Borma Dago Rp 6\.500 \(promo HEMAT SUSU s\.d\. 30-09-2026 21\.30 WIB; harga normal Rp 7\.200\), stok sedikit/)
+  assert.equal(found.facts.get('F101'), 'Produk ULTRA MILK UHT FULL CREAM 1000 ML: Borma Dago Rp 19.800, stok tersedia; Borma Fashion (Kopo) Rp 19.500, stok tersedia (stok per 28-09-2026 17.04 WIB). Beli online di www.bormadago.com, link produk: https://www.bormadago.com/shop/product/3/p-3')
   assert.equal(found.lines[0], `[F100] ${found.facts.get('F100')}`)
   assert.deepEqual(calls, [], 'not an order question: no order lookup')
+})
+
+test('suggestions: on promo and in stock first, habis everywhere last but still there; "promo apa aja?" lists the promos in stock', async () => {
+  const { lookup } = bormaLookup()
+  const titles = found => [...found.facts].filter(([id]) => id < 'F400').map(([, fact]) => fact.match(/^Produk (.+?):/)[1])
+  // By relevance alone the habis Frisian Flag (a better seller) would come before Roma; it goes last instead.
+  assert.deepEqual(titles(await lookup.forBurst({ text: 'ada susu?' })), ['ULTRA MILK UHT COKELAT 250 ML', 'ROMA SARI GANDUM SUSU & COKLAT 108 GR',
+    'ULTRA MILK UHT FULL CREAM 1000 ML', 'FRISIAN FLAG SUSU KENTAL MANIS BIGBRO 535 GR'])
+  assert.ok([...(await lookup.forBurst({ text: 'susu kental manis frisian flag ada?' })).facts.values()].some(fact => /^Produk FRISIAN FLAG .* stok habis/.test(fact)), 'asked by name: still answered')
+  assert.deepEqual(titles(await lookup.forBurst({ text: 'promo apa aja kak?' })), ['ULTRA MILK UHT COKELAT 250 ML'])
+  // A search by category: no title says "snack".
+  const snack = createLookup({ config: { borma: { enabled: true, orders: false } }, stores: STORES,
+    catalog: { products: [{ ...CATALOG.products[4], category: 'MAKANAN KECIL > COOKIES, BISKUIT DAN LAIN LAIN' }, { ...CATALOG.products[7], category: 'MINUMAN > AIR MINERAL' }, product(9, 'CHITATO SAPI PANGGANG 65 GR', 100, both(8500, 8500))].map(item => ({ ...item, category: item.category ?? 'MAKANAN KECIL > KACANG DAN SNACK LAINNYA' })) } })
+  assert.deepEqual(titles(await snack.forBurst({ text: 'cari snack dong' })), ['CHITATO SAPI PANGGANG 65 GR'])
+})
+
+test('a product not sold online says so instead of a link; the recent conversation\'s products follow the message\'s own', async () => {
+  const offline = createLookup({ config: { borma: { enabled: true, orders: false } }, stores: STORES, catalog: { products: [{ ...CATALOG.products[0], url: null }, CATALOG.products[2]] } })
+  assert.match((await offline.forBurst({ text: 'indomie goreng ada?' })).facts.get('F100'), /Borma Fashion \(Kopo\) Rp 3\.400, stok tersedia\. Tidak dijual online di www\.bormadago\.com: hanya di toko\.$/)
+
+  const { lookup } = bormaLookup()
+  const found = await lookup.forBurst({ text: 'sama aqua 600 ml 2 ya kak', recentTexts: ['mau pesan indomie goreng 5 bungkus', 'Baik Kak, Indomie Goreng Special 85 gr Rp 3.500 di Borma Dago. Link: https://www.bormadago.com/shop/product/1/p-1'] })
+  assert.match(found.facts.get('F100'), /^Produk AQUA AIR MINERAL 600 ML:/)
+  assert.match(found.facts.get('F101'), /^Produk INDOMIE GORENG SPECIAL 85 GR:/)
+  assert.deepEqual(found.summary, { products: 1, recentProducts: 3, stores: 2 })
 })
 
 test('orders are looked up only for an order question, only with the chat\'s own number, never one written in the message', async t => {
@@ -136,13 +161,42 @@ test('lookup facts pass the guards: a price from a cited lookup fact passes, an 
     ['demo_payment_detail'])
 })
 
+test('a product link from the facts passes the guards; a made-up one is held, in demo mode too', async () => {
+  const found = await bormaLookup().lookup.forBurst({ text: 'harga indomie goreng berapa?' })
+  const perCall = withLookup(knowledge, found)
+  const reply = 'Indomie Goreng Special 85 gr Rp 3.500 di Borma Dago ya Kak. Bisa beli online di sini: https://www.bormadago.com/shop/product/1/p-1.'
+  assert.deepEqual(checkReply({ reply, factsUsed: ['F100'] }, { knowledge: perCall }), { ok: true, reasons: [] })
+  const madeUp = reply.replace('/1/p-1', '/1/indomie-goreng')
+  assert.deepEqual(checkReply({ reply: madeUp, factsUsed: ['F100'] }, { knowledge: perCall }).reasons, ['unsupported_url:bormadago.com/shop/product/1/indomie-goreng'])
+  const demo = { demo: true, demoPrices: true }
+  assert.deepEqual(checkReply({ reply, factsUsed: ['F100'] }, { knowledge: perCall, ...demo }), { ok: true, reasons: [] })
+  assert.deepEqual(checkReply({ reply: madeUp, factsUsed: ['F100'] }, { knowledge: perCall, ...demo }).reasons, ['demo_unsupported_url:bormadago.com/shop/product/1/indomie-goreng'])
+})
+
+test('demo mode: an order summary\'s line totals and total pass when computed from the cited prices and stated quantities', async () => {
+  const { lookup } = bormaLookup()
+  const found = await lookup.forBurst({ text: 'mau pesan indomie goreng 5 sama aqua 600 ml 2' })
+  const perCall = withLookup(knowledge, found)
+  const cited = [...found.facts.keys()].filter(id => id < 'F400')
+  const demo = { knowledge: perCall, demo: true, demoPrices: true }
+  const summary = total => `Baik Kak Rina, ini ringkasan pesanannya:
+• 5 x Indomie Goreng Special 85 gr @ Rp 3.500 = Rp 17.500
+• 2 x Aqua Air Mineral 600 ml @ Rp 3.500 = Rp 7.000
+Total: Rp ${total} (belum termasuk ongkir)
+Ambil sendiri di Borma Dago. Apakah sudah benar, Kak?`
+  assert.deepEqual(checkReply({ reply: summary('24.500'), factsUsed: cited }, demo), { ok: true, reasons: [] })
+  assert.deepEqual(checkReply({ reply: summary('25.500'), factsUsed: cited }, demo).reasons, ['demo_unsupported_amount:25500'], 'a wrong sum')
+  assert.deepEqual(checkReply({ reply: summary('24.500'), factsUsed: [] }, demo).reasons, ['demo_unsupported_amount:3500,17500,7000,24500'], 'prices from no cited fact')
+  assert.deepEqual(checkReply({ reply: 'Totalnya Rp 24.500 ya Kak (5 Indomie Rp 3.500 dan 2 Aqua Rp 3.500).', factsUsed: cited }, demo).reasons, ['demo_unsupported_amount:24500'], 'items run together on one line')
+})
+
 test('the shop\'s own domain in the facts is not the owner\'s private detail; the rest of the owner\'s email still is', async () => {
   const found = await bormaLookup().lookup.forBurst({ text: 'ada susu ultra?' })
   const perCall = withLookup(knowledge, found)
   const identifiers = { words: ['irvan', 'bormadago'], paths: [] } // privateIdentifiers() of irvan@bormadago.com
   const reply = 'Ultra Milk UHT Full Cream 1000 ml ada di Borma Dago, Rp 19.800 ya Kak. Bisa juga beli online di www.bormadago.com.'
-  assert.deepEqual(checkReply({ reply, factsUsed: ['F100'] }, { knowledge: perCall, privateIdentifiers: identifiers }), { ok: true, reasons: [] })
-  assert.deepEqual(checkReply({ reply: `${reply} Hubungi irvan ya.`, factsUsed: ['F100'] }, { knowledge: perCall, privateIdentifiers: identifiers }).reasons, ['private_detail'])
+  assert.deepEqual(checkReply({ reply, factsUsed: ['F101'] }, { knowledge: perCall, privateIdentifiers: identifiers }), { ok: true, reasons: [] })
+  assert.deepEqual(checkReply({ reply: `${reply} Hubungi irvan ya.`, factsUsed: ['F101'] }, { knowledge: perCall, privateIdentifiers: identifiers }).reasons, ['private_detail'])
   assert.deepEqual(checkReply({ reply: 'Halo Kak, dari Borma Dago ya?', factsUsed: [] }, { knowledge, privateIdentifiers: identifiers }).reasons, ['private_detail'], 'not in these facts: private')
 })
 

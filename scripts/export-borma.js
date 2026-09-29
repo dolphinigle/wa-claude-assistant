@@ -1,7 +1,9 @@
 // `npm run export`: the Borma demo's read-only snapshot from BigQuery (bq CLI) → data/borma/catalog.json and
 // stores.json. data/ is gitignored: no company data is committed. Prints counts only.
 // The best sellers of the last 30 days per store (product_stats_daily, no order rows), with every store's selling
-// price, the current promo price and a stock status; only customer-facing fields (docs: the scout's data spec).
+// price, the current promo price and a stock status; only customer-facing fields (docs: the scout's data spec). The
+// category and its parent ("MAKANAN KECIL > KERIPIK") let a search for "snack" find products whose titles don't say
+// it; the page URL (shop/product/{id}/{slug}, solui PRODUCT_DETAIL in the monorepo) is kept only for what is sold online.
 // --top=N best sellers per store (default 300), --dry-run prints the bytes each query would scan and exits.
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
@@ -27,11 +29,11 @@ const latest = (table, columns = '*') => `(SELECT ${columns} FROM \`solvent-stag
 // The promo price follows promo_product_line_calculator for per-unit discounts; a promo every n units only shows as a
 // note. Stock is a status, never the count (business data): weighed goods (upc 19xxxxx) count grams.
 const CATALOG_SQL = `
-WITH cat AS ${latest('production_append_public.catalogue_category', 'id, is_public, ancestors_are_public, datastream_metadata')},
+WITH cat AS ${latest('production_append_public.catalogue_category', 'id, path, depth, name, is_public, ancestors_are_public, datastream_metadata')},
 ppl AS ${latest('production_append_public.promo_promoproductline', 'id, promo_id, type, discount_type, discount_amount, discount_fraction, discount_price, discount_quantity_multiples, datastream_metadata')},
 promo AS ${latest('production_append_public.promo_promo', 'id, name, name_id, date_end, datastream_metadata')},
 priced AS (
-  SELECT p.id product_id, p.title, p.slug, ps.facility_id, ps.price price_normal,
+  SELECT p.id product_id, p.title, p.slug, TRIM(CONCAT(COALESCE(CONCAT(parent.name, ' > '), ''), c.name)) category, ps.facility_id, ps.price price_normal,
     CASE WHEN ppl.type = 'discount' AND ppl.discount_quantity_multiples < 2 AND ppl.discount_type = 'fixed_price' THEN GREATEST(0, ppl.discount_price)
          WHEN ppl.type = 'discount' AND ppl.discount_quantity_multiples < 2 AND ppl.discount_type = 'calculated'
            THEN GREATEST(0, ps.price - (LEAST(ppl.discount_amount, ps.price) + (ps.price - LEAST(ppl.discount_amount, ps.price)) * ppl.discount_fraction))
@@ -44,6 +46,7 @@ priced AS (
   FROM \`solvent-staging.production_merge_public.catalogue_product\` p
   JOIN \`solvent-staging.production_merge_public.price_sell_pricesell\` ps ON ps.product_id = p.id
   JOIN cat c ON c.id = p.main_category_id
+  LEFT JOIN cat parent ON parent.depth = c.depth - 1 AND parent.depth > 1 AND STARTS_WITH(c.path, parent.path)
   LEFT JOIN ppl ON ppl.id = ps.promo_product_line_active_id
   LEFT JOIN promo pr ON pr.id = ppl.promo_id
   WHERE p.is_active AND p.is_public AND ps.price > 0 AND c.is_public AND c.ancestors_are_public
@@ -60,7 +63,7 @@ chosen AS (
     SELECT pr.product_id, pr.facility_id, s.orders_30d FROM priced pr JOIN sales s USING (product_id, facility_id)
     QUALIFY ROW_NUMBER() OVER (PARTITION BY pr.facility_id ORDER BY s.orders_30d DESC, pr.product_id) <= @top)
 )
-SELECT pr.product_id, pr.title, pr.slug, pr.facility_id, CAST(pr.price_normal AS FLOAT64) price_normal, CAST(pr.price_now AS FLOAT64) price_now,
+SELECT pr.product_id, pr.title, pr.slug, pr.category, pr.facility_id, CAST(pr.price_normal AS FLOAT64) price_normal, CAST(pr.price_now AS FLOAT64) price_now,
   pr.promo_name, FORMAT_TIMESTAMP('%Y-%m-%d %H:%M', pr.promo_ends, 'Asia/Jakarta') promo_ends, pr.promo_every_n, pr.sold_online, pr.is_weighed,
   COALESCE(s.orders_30d, 0) orders_30d,
   CASE WHEN inv.product_id IS NULL THEN 'unknown'
@@ -129,6 +132,7 @@ for (const row of results.catalog) {
     products.set(id, {
       id,
       title: row.title,
+      category: row.category ?? null,
       size: yes(row.is_weighed) ? '1 KG' : sizeOf(row.title),
       // Weighed goods are priced per gram: shown per kg.
       unit: yes(row.is_weighed) ? 'kg' : null,

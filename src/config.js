@@ -95,6 +95,10 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
   if (borma !== undefined && (!isPlainObject(borma) || typeof borma.enabled !== 'boolean')) throw new Error(`config.borma.enabled must be true or false (no quotes), got ${JSON.stringify(borma?.enabled ?? borma)}`)
   // The order lookup is on unless it is exactly false (lookup.js), so a quoted "false" would leave it on.
   if (borma?.orders !== undefined && typeof borma.orders !== 'boolean') throw new Error(`config.borma.orders must be true or false (no quotes), got ${JSON.stringify(borma.orders)}`)
+  // The conversation window Claude sees (owner request 2026-09-29): a quoted or negative value would silently show all.
+  for (const key of ['contextMessages', 'contextMaxAgeMinutes']) {
+    if (!(Number.isInteger(config[key]) && config[key] >= 0)) throw new Error(`config.${key} must be a whole number >= 0 (0 = ${key === 'contextMessages' ? 'no earlier messages' : 'no age limit'}), got ${JSON.stringify(config[key])}`)
+  }
   checkTransport(config)
   config.rootDir = rootDir
   config.paths = {

@@ -12,7 +12,8 @@
     "liveWindowMinutes": 2,
     "autoSend": false
   },
-  "contextMessages": 8,
+  "contextMessages": 10,
+  "contextMaxAgeMinutes": 30,
   "blocklist": [],
   "allowChats": [],
   "disclosure": {
@@ -41,7 +42,7 @@
   "notifyOwnerOnAutoSend": true,
   "draftTtlHours": 24,
   "guards": {
-    "maxReplyChars": 600,
+    "maxReplyChars": 1000,
     "ownerIdentifiers": [],
     "sensitiveTerms": ["diskon", "discount", "disc", "potongan", "promo", "sale", "cashback", "bonus", "voucher", "kupon", "coupon", "hadiah", "gift", "murah", "hemat", "spesial", "special", "off", "refund", "uang kembali", "kembalikan", "pengembalian", "ganti rugi", "gratis", "free", "rekening", "account number", "no. rek", "norek", "garansi", "guarantee", "jamin", "janji", "promise"]
   },

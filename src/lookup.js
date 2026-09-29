@@ -4,6 +4,9 @@
 // never by a number written in a message. Each fact has an F id the guards understand: F100+ products, 400 + store id
 // for stores, F900 the order summary and F901+ orders. They go to Claude in a trusted <lookup> block (prompt.js) and
 // to the guards as extra facts (withLookup), so every price and number of an answer is checked against them.
+// Matches are ordered for suggestions (owner request 2026-09-29): on promo and in stock first, habis everywhere last
+// (still there, so a question about that exact product is answered). The products the recent conversation named follow,
+// so an order summary several messages on still has its prices.
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { runBq } from './bq.js'
@@ -12,6 +15,10 @@ const PRODUCT_BASE = 100
 const STORE_BASE = 400
 const ORDER_BASE = 900
 const MAX_ORDERS = 5
+// The recent conversation's products: its last 6 messages, the best 5 of each, 10 at most (ids stay below F400).
+const RECENT_TEXTS = 6
+const PER_RECENT_TEXT = 5
+const MAX_RECENT_PRODUCTS = 10
 
 // Case- and diacritic-insensitive words and numbers: "85gr" is "85" and "gr", as titles write "85 GR".
 const fold = text => String(text ?? '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase()
@@ -25,7 +32,12 @@ const STOPWORDS = new Set(('ada adakah apa apakah atau aja ya yaa yah kak kaka k
   'masih msh sudah udah belum blm stok stock ready ready ada tersedia habis kosong sekarang skrg hari besok kalau kalo klo saya aku sy gue gw ' +
   'kami kita halo hai hi hello pagi siang sore malam selamat terima kasih makasih thanks thank please the a an is are do does you have any ' +
   'how much price of for and or with in at toko cabang borma dago kopo fashion online jual dijual punya ' +
-  'gr g gram kg ml l lt ltr pcs pc s x isi pack pak dus box btl botol sachet').split(' '))
+  'gr g gram kg ml l lt ltr pcs pc s x isi pack pak dus box btl botol sachet ' +
+  'per wib normal total link rekomendasi rekomen saran suggest recommend lagi dong nama ambil sendiri kirim antar').split(' '))
+// Promo words ask for what is on promo: removed from the query, and alone they list the promos in stock.
+const PROMO_WORDS = new Set('promo promonya diskon diskonnya discount sale potongan cashback'.split(' '))
+// A link in a message (ours quote the product pages) names no product: its words (shop, product, slug) would.
+const withoutLinks = text => String(text ?? '').replace(/\bhttps?:\/\/\S+|\bwww\.\S+/gi, ' ')
 // A customer writes "susu" where the title says "MILK".
 const SYNONYMS = {
   susu: ['milk'], milk: ['susu'], coklat: ['cokelat', 'choco', 'chocolate'], cokelat: ['coklat', 'choco', 'chocolate'],
@@ -34,37 +46,62 @@ const SYNONYMS = {
   stroberi: ['strawberry'], strawberry: ['stroberi'], air: ['water'], tisu: ['tissue'], tissue: ['tisu']
 }
 
-/** The words of each product title. */
+/** The words of each product title, and of its category ("MAKANAN KECIL > KERIPIK") that the title lacks. */
 export function buildIndex (products) {
-  const docs = products.map(product => ({ product, words: [...new Set(words(product.title))] }))
+  const docs = products.map(product => {
+    const title = [...new Set(words(product.title))]
+    const category = [...new Set(words(product.category))].filter(word => !title.includes(word) && !STOPWORDS.has(word))
+    return { product, words: title, categoryWords: category }
+  })
   return { docs }
 }
 
+/** The words of a message that may name a product. */
+export const queryWords = text => [...new Set(words(withoutLinks(text)).map(stem).filter(word => !STOPWORDS.has(word) && !PROMO_WORDS.has(word)))]
+export const asksForPromo = text => words(text).some(word => PROMO_WORDS.has(word))
+
 /**
  * The products a message names, best first: each query word (or a synonym, or a word it starts, from 4 letters)
- * found in a title adds that word's weight, log(n / titles it is in). Ties go to the better seller. A number counts
- * only with a word ("indomie 85"), never alone.
+ * found in a title adds that word's weight, log(n / titles it is in); found only in the category ("snack", "keripik"),
+ * half of it. Ties go to the better seller. A number counts only with a word ("indomie 85"), never alone.
  */
 export function matchProducts (index, text, limit = 10) {
-  const query = [...new Set(words(text).map(stem).filter(word => !STOPWORDS.has(word)))]
+  const query = queryWords(text)
   if (query.length === 0) return []
   const n = index.docs.length
+  const found = (list, variants) => list.some(title => variants.some(variant => title === variant || (variant.length >= 4 && /[a-z]/.test(variant) && title.startsWith(variant))))
   const hits = query.map(word => {
     const variants = [word, ...(SYNONYMS[word] ?? [])]
-    const matched = new Set()
+    const inTitle = new Set()
+    const inCategory = new Set()
     index.docs.forEach((doc, position) => {
-      if (doc.words.some(title => variants.some(variant => title === variant || (variant.length >= 4 && /[a-z]/.test(variant) && title.startsWith(variant))))) matched.add(position)
+      if (found(doc.words, variants)) inTitle.add(position)
+      else if (found(doc.categoryWords, variants)) inCategory.add(position)
     })
-    return { word, matched, weight: matched.size ? Math.log(1 + n / matched.size) : 0, isNumber: /^\d/.test(word) }
+    const df = inTitle.size + inCategory.size
+    return { inTitle, inCategory, weight: df ? Math.log(1 + n / df) : 0, isNumber: /^\d/.test(word) }
   })
   const scored = []
   index.docs.forEach((doc, position) => {
-    const found = hits.filter(hit => hit.matched.has(position))
-    if (!found.some(hit => !hit.isNumber)) return
-    scored.push({ product: doc.product, score: found.reduce((sum, hit) => sum + hit.weight, 0) })
+    const matched = hits.filter(hit => hit.inTitle.has(position) || hit.inCategory.has(position))
+    if (!matched.some(hit => !hit.isNumber)) return
+    scored.push({ product: doc.product, score: matched.reduce((sum, hit) => sum + (hit.inTitle.has(position) ? hit.weight : hit.weight / 2), 0) })
   })
   return scored.sort((a, b) => b.score - a.score || (b.product.orders30d ?? 0) - (a.product.orders30d ?? 0)).slice(0, limit).map(item => item.product)
 }
+
+const IN_STOCK = new Set(['tersedia', 'sedikit'])
+const onPromo = entry => Boolean(entry.normalPrice || entry.promoEveryN)
+/** 0: on promo in a store that has it in stock, 1: in stock somewhere, 2: stock unknown, 3: habis everywhere. */
+export function suggestionRank (product) {
+  const stores = product.stores ?? []
+  if (stores.some(entry => IN_STOCK.has(entry.stock) && onPromo(entry))) return 0
+  if (stores.some(entry => IN_STOCK.has(entry.stock))) return 1
+  return stores.some(entry => entry.stock !== 'habis') ? 2 : 3
+}
+/** Best suggestions first, relevance order kept within each rank. */
+export const forSuggestion = products => products.map((product, position) => ({ product, position }))
+  .sort((a, b) => suggestionRank(a.product) - suggestionRank(b.product) || a.position - b.position).map(item => item.product)
 
 // When a message is about a store, a place or stock, the stores go with it; a product question gets them too.
 const STORE_WORDS = /\b(?:toko|cabang|alamat|alamatnya|lokasi|lokasinya|dimana|mana|where|address|store|branch|buka|tutup|jam|open|close|dago|kopo|stok|stock|ready|tersedia|habis|kosong|ambil|pickup)\b/i
@@ -106,7 +143,10 @@ export function productFact (product, storesById, stockAsOf) {
     return `${store ? storeLabel(store) : `toko ${entry.storeId}`} ${price}, ${STOCK_LABELS[entry.stock] ?? STOCK_LABELS.unknown}`
   })
   const asOf = stockAsOf ? ` (stok per ${localStamp(stockAsOf)} WIB)` : ''
-  return `Produk ${product.title}: ${perStore.join('; ')}${asOf}.${product.url ? ` Beli online di www.bormadago.com: ${product.url}` : ''}`
+  // The page on www.bormadago.com (shop/product/{id}/{slug}, solui PRODUCT_DETAIL) only for what is sold online; the
+  // guards let an answer carry a link only when it is in these facts.
+  const online = product.url ? `Beli online di www.bormadago.com, link produk: ${product.url}` : 'Tidak dijual online di www.bormadago.com: hanya di toko.'
+  return `Produk ${product.title}: ${perStore.join('; ')}${asOf}. ${online}`
 }
 
 export const storeFact = store => `Toko ${storeLabel(store)}: ${store.address ?? 'alamat belum ada di data'}.`
@@ -202,7 +242,9 @@ export function loadBormaData (dataDir) {
  * @param {{products: object[], stockAsOf?: string}} deps.catalog
  * @param {{id: number, name: string, area?: string, address?: string}[]} deps.stores
  * @param {Function} [deps.queryOrders]  (phone) → Promise<{ok, rows?, error?}>; the live bq query by default
- * @returns {{forBurst: (input: {text: string, historyText?: string, phone?: string}) => Promise<{facts: Map, lines: string[], notes: string[], summary: object}>}}
+ * @returns {{forBurst: (input: {text: string, recentTexts?: string[], phone?: string}) => Promise<{facts: Map, lines: string[], notes: string[], summary: object}>}}
+ *   `recentTexts`: the recent conversation Claude sees, oldest first, ours included (our suggestions and summaries
+ *   name the products exactly)
  */
 export function createLookup ({ config, catalog, stores, queryOrders, now = () => Date.now() }) {
   const settings = config.borma ?? {}
@@ -210,7 +252,7 @@ export function createLookup ({ config, catalog, stores, queryOrders, now = () =
   const storesById = new Map(stores.map(store => [store.id, store]))
   const timeoutMs = settings.orderTimeoutMs ?? 8000
   const cacheMs = settings.orderCacheMs ?? 60_000
-  // Product ids run from F100 and must stay below the stores' F400.
+  // Product ids run from F100 and must stay below the stores' F400, the recent conversation's products included.
   const maxProducts = Math.min(Math.max(Number(settings.maxProducts) || 10, 1), 50)
   const runOrders = queryOrders ?? (phone => runBq({ sql: ORDERS_SQL, params: phoneParams(phone), projectId: settings.projectId ?? 'solvent-staging', maxRows: MAX_ORDERS, timeoutMs }))
   const cache = new Map() // phone → {at, promise}: one query per number per minute, also while one is in flight
@@ -233,16 +275,28 @@ export function createLookup ({ config, catalog, stores, queryOrders, now = () =
     return cache.get(phone).promise
   }
 
-  async function forBurst ({ text, historyText = '', phone }) {
+  async function forBurst ({ text, recentTexts = [], phone }) {
     const facts = []
     const notes = []
     const summary = {}
-    // A follow-up ("yang 1 liter berapa?") names no product: the customer's recent messages may.
-    let products = matchProducts(index, text, maxProducts)
-    if (products.length === 0 && historyText) products = matchProducts(index, historyText, maxProducts)
-    products.forEach((product, position) => facts.push([`F${PRODUCT_BASE + position}`, productFact(product, storesById, catalog.stockAsOf)]))
+    // "snack yang lagi promo?": the promos among many more matches, since the closest few may have none.
+    const promo = asksForPromo(text)
+    let products = matchProducts(index, text, promo ? maxProducts * 5 : maxProducts)
+    // "promo apa aja?" names no product: the best sellers on promo in stock.
+    if (products.length === 0 && queryWords(text).length === 0 && promo) products = catalog.products.filter(product => suggestionRank(product) === 0)
+    products = forSuggestion(products).slice(0, maxProducts)
     summary.products = products.length
-    if (products.length === 0 && PRODUCT_QUESTION.test(fold(text))) notes.push('No product in the shop\'s catalog snapshot matches this message: its prices and stock are unknown.')
+    // A follow-up ("yang 1 liter berapa?", "ambil di Dago ya") or an order summary names no product, or not all of
+    // them: the recent messages do, each its best few.
+    const seen = new Set(products.map(product => product.id))
+    const earlier = recentTexts.slice(-RECENT_TEXTS).reverse().flatMap(recent => matchProducts(index, recent, PER_RECENT_TEXT))
+      .filter(product => !seen.has(product.id) && seen.add(product.id)).slice(0, MAX_RECENT_PRODUCTS)
+    products = [...products, ...earlier]
+    summary.recentProducts = earlier.length
+    products.forEach((product, position) => facts.push([`F${PRODUCT_BASE + position}`, productFact(product, storesById, catalog.stockAsOf)]))
+    if (summary.products === 0 && PRODUCT_QUESTION.test(fold(text))) {
+      notes.push(`No product in the shop's catalog snapshot matches this message: its prices and stock are unknown${earlier.length ? ' (the products above come from the earlier messages)' : ''}.`)
+    }
     if (products.length > 0 || STORE_WORDS.test(fold(text))) {
       for (const store of stores) facts.push([`F${STORE_BASE + store.id}`, storeFact(store)])
       summary.stores = stores.length
