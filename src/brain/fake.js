@@ -21,7 +21,7 @@ const RULES = [
 const lookupRule = (text, lookup) => {
   const product = [...(lookup?.facts ?? [])].find(([id]) => /^F[1-3]\d\d$/.test(id))
   if (!product || !/harga|berapa|brp|ada|stok|ready/i.test(text)) return undefined
-  const [, title, stores] = product[1].match(/^Produk (.+?): (.+)$/) ?? []
+  const [, title, stores] = product[1].match(/^Produk (.+?) \(id \d+[^)]*\): (.+)$/) ?? []
   if (!title) return undefined
   return { pattern: 'a lookup product', decision: 'answer', reply: `${title} di ${stores.split(/[;(]/)[0].trim()} ya Kak.`, facts: [product[0]] }
 }

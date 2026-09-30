@@ -188,6 +188,7 @@ const claimsStatus = text => STATUS_CLAIM.test(text.replace(YES_OPENING, ' ').re
 
 const PLACEHOLDERS = [
   /\{\{|\}\}/,
+  /\[\[|\]\]/, // a link tag (src/links.js) left in a text: an answer's are rendered first, a holding reply has none
   /\[(?:[A-Z_ ]{3,}|[^\]]*\b(?:nama|name|harga|price|tanggal|date|alamat|address|nomor|number|link|url)\b[^\]]*)\]/i,
   /<[^<>\n]{1,40}>/,
   /\b(?:TODO|TBD|XXX|lorem ipsum)\b/i,
@@ -688,16 +689,20 @@ export function orderAmounts (text, citedAmounts) {
  *   `demo_payment_detail` in their place; every other check stays
  * @param {boolean} [options.demoPrices]  demo mode on real data (Borma): prices and percentages must still come from
  *   the cited facts (`demo_unsupported_amount`), since a real shop's prices are never invented, or be an order
- *   summary's totals of them (orderAmounts); links must come from the burst's facts (`demo_unsupported_url`)
+ *   summary's totals of them (orderAmounts); links must be rendered tags (`allowedUrls`) or come from the burst's
+ *   facts (`demo_unsupported_url`)
+ * @param {string[]} [options.allowedUrls]  the links src/links.js rendered from Claude's tags into this reply: ours,
+ *   so allowed like a fact's, in both modes; any other URL still needs a fact
  * @returns {{ok: boolean, reasons: string[]}}
  */
-export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, maxReplyChars = 600, sensitiveTerms = [], privateIdentifiers: identifiers, demo = false, demoPrices = false }) {
+export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, maxReplyChars = 600, sensitiveTerms = [], privateIdentifiers: identifiers, demo = false, demoPrices = false, allowedUrls = [] }) {
   const reasons = []
   const text = normalizeText(reply).trim()
   if (!text) return { ok: false, reasons: ['empty_reply'] }
   if (text.length > maxReplyChars) reasons.push(`too_long:${text.length}>${maxReplyChars}`)
   if (/\[F\d+\]/i.test(text)) reasons.push('fact_id_in_reply')
   else if (PLACEHOLDERS.some(pattern => pattern.test(text))) reasons.push('placeholder')
+  const rendered = new Set(allowedUrls.map(normalizeUrl))
 
   if (demo) {
     if (hasPaymentDetail(text, knownDigitRuns(knowledge))) reasons.push('demo_payment_detail')
@@ -707,14 +712,15 @@ export function checkReply ({ reply, factsUsed, incomingText }, { knowledge, max
       const totals = orderAmounts(text, allow.amounts)
       const missing = [...new Set([...details.amounts.filter(amount => !allow.amounts.has(amount) && !totals.has(amount)), ...details.percents.filter(percent => !allow.percents.has(percent)).map(percent => `${percent}%`)])]
       if (missing.length > 0) reasons.push(`demo_unsupported_amount:${missing.join(',')}`)
-      // A product link must be one the shop's data gives (lookup.js: only for what is sold online), never a made-up
-      // one; any fact of this burst will do, since demo mode does not ask Claude to cite every one.
+      // A link must be one we built from the shop's data (a tag src/links.js rendered) or one a fact of this burst
+      // writes out (an order's detail page), never a made-up one; any fact will do, since demo mode does not ask
+      // Claude to cite every one.
       const links = buildAllowList(knowledge).urls
-      const madeUp = [...new Set(details.urls.filter(url => !links.has(url)))]
+      const madeUp = [...new Set(details.urls.filter(url => !links.has(url) && !rendered.has(url)))]
       if (madeUp.length > 0) reasons.push(`demo_unsupported_url:${madeUp.join(',')}`)
     }
   } else {
-    reasons.push(...factReasons(text, factsUsed, { knowledge, sensitiveTerms }))
+    reasons.push(...factReasons(text, factsUsed, { knowledge, sensitiveTerms, rendered }))
   }
   // No value in the reason: it lands in the audit log and in eval reports.
   if (findPrivateDetails(text, withoutPublic(identifiers, knowledge)).length > 0) reasons.push('private_detail')
@@ -771,7 +777,7 @@ export function checkHoldingReply ({ reply, incomingText }, { sensitiveTerms = [
 }
 
 /** Why the reply says more than the facts it cites: every detail and sensitive term must come from them. */
-function factReasons (text, factsUsed, { knowledge, sensitiveTerms }) {
+function factReasons (text, factsUsed, { knowledge, sensitiveTerms, rendered = new Set() }) {
   const reasons = []
   const cited = Array.isArray(factsUsed) ? factsUsed : []
   if (cited.length > 0) {
@@ -791,7 +797,7 @@ function factReasons (text, factsUsed, { knowledge, sensitiveTerms }) {
     if (missing.length > 0) reasons.push(`unsupported_${kind}:${missing.join(',')}`)
   }
   const clock = minutes => `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}`
-  check('url', details.urls, allow.urls)
+  check('url', details.urls, new Set([...allow.urls, ...rendered]))
   check('email', details.emails, allow.emails)
   check('phone', details.phones, allow.phones)
   check('time', [...details.times.map(clock), ...details.hours.filter(hour => !hourReadings(hour).some(minutes => allow.times.has(minutes))).map(hour => `jam ${hour}`)],
@@ -820,13 +826,16 @@ export const privateIdentifiersFor = config => {
 // two-item search and a tissue list as drafts (live 2026-09-30).
 export const DEMO_MAX_REPLY_CHARS = 2500
 
-/** Guards for a triage result: only an "answer" can be auto-sent, so only it is checked. */
-export function guardTriage (triage, { knowledge, config, incomingText }) {
+/**
+ * Guards for a triage result: only an "answer" can be auto-sent, so only it is checked. `allowedUrls`: the links
+ * src/links.js rendered into its reply.
+ */
+export function guardTriage (triage, { knowledge, config, incomingText, allowedUrls = [] }) {
   if (triage?.decision !== 'answer') return undefined
   const demo = config.demo?.enabled === true
   const maxReplyChars = demo ? config.demo.maxReplyChars ?? DEMO_MAX_REPLY_CHARS : config.guards?.maxReplyChars
   return checkReply({ reply: triage.reply, factsUsed: triage.facts_used, incomingText },
-    { knowledge, ...config.guards, maxReplyChars, privateIdentifiers: privateIdentifiersFor(config), demo, demoPrices: config.borma?.enabled === true })
+    { knowledge, ...config.guards, maxReplyChars, privateIdentifiers: privateIdentifiersFor(config), demo, demoPrices: config.borma?.enabled === true, allowedUrls })
 }
 
 /** The holding reply's check for the placeholder (checkHoldingReply), whatever Claude decided; undefined without a triage. */

@@ -1,6 +1,7 @@
 // Orchestrator: dedupe, loop guard, takeover, debounce, triage, policy, and the ONE send gate.
 import { detectLanguage, findPrivateDetails, guardGreeting, guardHolding, guardTriage, isThanks, privateIdentifiersFor, withoutPublic } from './guards.js'
 import { isAllowedChat, listNamesChat, phoneEntry } from './chat-lists.js'
+import { renderTriageLinks } from './links.js'
 import { phoneFromChatIds, withLookup } from './lookup.js'
 import { recentHistory } from './brain/prompt.js'
 import { BOT_PREFIX, createOwnerCommands, excerpt, formatClock, formatContact, formatDraftNotice, placeholderLine } from './owner.js'
@@ -371,8 +372,15 @@ export function createAssistant ({ config, store, brain, transport, knowledge, l
     }
     state.pending = state.pending.filter(message => !batchIds.has(message.id))
     if (result.rateLimit) store.setLastRateLimit(result.rateLimit)
+    let links
     try {
-      await route(chatId, batch, history, result, generation, found)
+      // Borma demo: Claude's link tags become the shop's exact pages before anything reads the reply (the guards, the
+      // auto-send, the owner's draft, so /ok sends real links); only these URLs count as ours (src/links.js).
+      if (lookup) {
+        links = renderTriageLinks(result, { catalog: lookup.catalog?.() })
+        result = links.result
+      }
+      await route(chatId, batch, history, result, generation, found, links)
     } catch (error) {
       // A bug in the checks must not drop the customer's message with the inbox entry: it becomes a draft.
       logger.error(`[assistant] routing failed: ${error.stack ?? error.message}`)
@@ -450,7 +458,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, l
     track(sendToOwner(`${BOT_PREFIX} ⚠️ ${tooOld.length} message(s) arrived before the assistant stopped and were never triaged. Please answer them yourself:\n${lines.join('\n')}`))
   }
 
-  async function route (chatId, batch, history, result, generation, found) {
+  async function route (chatId, batch, history, result, generation, found, links) {
     const triage = result.triage
     const incomingText = batch.map(message => message.text).join('\n')
     const attachments = [...new Set(batch.map(message => message.attachment).filter(Boolean))]
@@ -461,7 +469,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, l
     // start: its time is kept on the record, so a thanks after it is not skipped past it (skip-safety-r3-1).
     if (!closing) store.updateChat(chatId, { lastOpenedAt: Math.max(store.chat(chatId).lastOpenedAt ?? 0, lastMessageAt(batch)) })
     // A burst's lookup facts count as facts for its answer only.
-    const guard = guardTriage(triage, { knowledge: withLookup(knowledge, found), config, incomingText })
+    const guard = guardTriage(triage, { knowledge: withLookup(knowledge, found), config, incomingText, allowedUrls: links?.urls })
     // What a customer may get without the owner reading it besides an answer: Claude's holding reply and its reply to a
     // greeting alone, written for this sender (owner decision 2026-09-28: no fixed texts).
     const holdingGuard = guardHolding(triage, { knowledge: withLookup(knowledge, found), config, incomingText })
@@ -506,6 +514,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, l
       factsUsed: triage?.facts_used,
       ...(found && { lookup: { ...found.summary, facts: [...found.facts.keys()] } }), // ids only: no order data in the log
       reply: triage?.reply,
+      ...(links && (links.urls.length > 0 || links.dropped.length > 0) && { links: { rendered: links.urls.length, dropped: links.dropped } }),
       guard,
       action: decision.action,
       reasons: decision.reasons,

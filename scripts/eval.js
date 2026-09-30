@@ -9,12 +9,15 @@
 // --borma runs eval/fixtures-borma.json against knowledge.md and the Borma export's catalog lookup (no order lookup);
 // its reports hold real shop data, so they go to data/borma/ (gitignored), not eval/. A Borma fixture with `demo: true`
 // runs as the testers see it: demo prompt, demo guards and policy (the order and suggestion flows exist only there).
+// Its replies' link tags are rendered as live (src/links.js, from the current export, a rescore too) before the guards,
+// and the report shows the rendered reply and any tag that was dropped.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { createClaudeBrain, DECISIONS } from '../src/brain/claude.js'
 import { loadConfig, ROOT_DIR } from '../src/config.js'
 import { guardGreeting, guardHolding, guardTriage } from '../src/guards.js'
 import { loadKnowledge } from '../src/knowledge.js'
+import { renderTriageLinks } from '../src/links.js'
 import { createLookup, loadBormaData, withLookup } from '../src/lookup.js'
 import { excerpt } from '../src/owner.js'
 import { decide } from '../src/policy.js'
@@ -65,7 +68,8 @@ const knowledge = loadKnowledge(borma ? config.paths.knowledge : path.join(ROOT_
 // The catalog and stores only: an eval has no chat, so no phone and no order lookup. The guards run as in the demo's
 // strict mode (demo off, forced above), with the lookup's facts added.
 if (borma) config.borma = { ...config.borma, enabled: true, orders: false }
-const lookup = borma && !saved ? createLookup({ config, ...loadBormaData(config.paths.data) }) : undefined
+const bormaData = borma ? loadBormaData(config.paths.data) : undefined
+const lookup = borma && !saved ? createLookup({ config, ...bormaData }) : undefined
 // The testers' demo mode, for the fixtures that ask for it (their guards and policy too).
 const demoConfig = { ...config, demo: { ...config.demo, enabled: true } }
 const configFor = fixture => (fixture.demo ? demoConfig : config)
@@ -101,10 +105,13 @@ const historyNote = contextMessages === undefined ? 'fixture history given to Cl
   : `fixture history given to Claude: up to ${contextMessages} message(s)${contextMessages < historyNeeded ? ` (**less than the ${historyNeeded} the fixtures have: those fixtures ran without their history**)` : ''}`
 
 const rows = fixtures.map(fixture => {
-  const { result, lookup: looked } = results.find(item => item.id === fixture.id)
+  const { result: raw, lookup: looked } = results.find(item => item.id === fixture.id)
+  // As live (assistant.js): the reply's link tags rendered first, and only those URLs count as ours.
+  const links = bormaData ? renderTriageLinks(raw, { catalog: bormaData.catalog }) : undefined
+  const result = links ? links.result : raw
   const found = looked && { ...looked, facts: new Map(looked.facts) }
   const config = configFor(fixture)
-  const guard = guardTriage(result.triage, { knowledge: withLookup(knowledge, found), config, incomingText: fixture.text })
+  const guard = guardTriage(result.triage, { knowledge: withLookup(knowledge, found), config, incomingText: fixture.text, allowedUrls: links?.urls })
   const holdingGuard = guardHolding(result.triage, { knowledge: withLookup(knowledge, found), config, incomingText: fixture.text })
   const greetingGuard = guardGreeting(result.triage, { knowledge: withLookup(knowledge, found), config, incomingText: fixture.text })
   // A quiet day: only the triage, the guards, the fixture's history and closing, and the quota can stop an auto-send
@@ -131,6 +138,7 @@ const rows = fixtures.map(fixture => {
   const row = {
     fixture,
     result,
+    links,
     guard,
     holdingGuard,
     greetingGuard,
@@ -211,6 +219,7 @@ const details = rows.map(row => [
   `- customer_waiting ${row.result.triage?.customer_waiting ?? '-'}; placeholder ${row.decision.placeholder ? '**sent**' : row.decision.action === 'escalate' ? `withheld (${row.decision.placeholderWithheld.join(', ')})` : 'none (not an escalation)'}`,
   row.guard ? `- guards: ${row.guard.ok ? 'pass' : row.guard.reasons.join(', ')}` : '- guards: not run (escalated)',
   `- reply: ${cell(row.result.triage?.reply || '(empty)')}`,
+  ...(row.links && (row.links.urls.length || row.links.dropped.length) ? [`- links rendered: ${row.links.urls.length}${row.links.dropped.length ? `; dropped tags: ${cell(row.links.dropped.join(' '))}` : ''}`] : []),
   ...(row.greetingGuard ? [`- greeting-back check: ${row.greetingGuard.ok ? 'pass' : row.greetingGuard.reasons.join(', ')}`] : []),
   `- holding_reply: ${cell(row.result.triage?.holding_reply || '(empty)')}${row.holdingGuard && row.result.triage?.holding_reply ? ` (guard: ${row.holdingGuard.ok ? 'pass' : row.holdingGuard.reasons.join(', ')})` : ''}`,
   `- reason: ${cell(row.result.triage?.reason ?? row.result.error)}`,

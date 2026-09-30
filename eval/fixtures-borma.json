@@ -47,7 +47,7 @@
  {
   "id": "borma-demo-search-promo",
   "demo": true,
-  "note": "demo mode, a search after a greeting: suggest 3-5 matches, promo and in stock first, each with price, store and link; never a habis one",
+  "note": "demo mode, a search after a greeting: suggest 3-5 matches, promo and in stock first, each with price, store and its [[produk]] link; never a habis one; a [[promo]] link",
   "name": "Maya",
   "history": [
    {
@@ -135,7 +135,7 @@
  {
   "id": "hughie-oil-sugar",
   "demo": true,
-  "note": "demo mode, a tester's real two-item search (live 2026-09-30, held too_long:1030>1000): answer under the length limit, at most 3 options per item, one search link each (q=minyak, q=gula), and a plain remark that there is no 5 liter pack",
+  "note": "demo mode, a tester's real two-item search (live 2026-09-30, held too_long:1030>1000): answer under the length limit, at most 3 options per item, one [[cari]] link each in shop-search words (minyak goreng, gula), and a plain remark that there is no 5 liter pack",
   "name": "Hughie",
   "history": [
    {
@@ -216,6 +216,16 @@
    }
   ],
   "text": "Sama tisu 1",
+  "expect": "answer",
+  "autoSend": "allowed",
+  "placeholder": "allowed"
+ },
+ {
+  "id": "borma-demo-not-in-export",
+  "demo": true,
+  "note": "demo mode, products outside the export (no organic or red rice among the best sellers): a helpful answer that says so and gives a [[cari]] link per item, not an escalation",
+  "name": "Nina",
+  "text": "ada beras organik atau beras merah kak?",
   "expect": "answer",
   "autoSend": "allowed",
   "placeholder": "allowed"

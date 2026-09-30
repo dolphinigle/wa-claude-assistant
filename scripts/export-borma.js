@@ -4,6 +4,8 @@
 // price, the current promo price and a stock status; only customer-facing fields (docs: the scout's data spec). The
 // category and its parent ("MAKANAN KECIL > KERIPIK") let a search for "snack" find products whose titles don't say
 // it; the page URL (shop/product/{id}/{slug}, solui PRODUCT_DETAIL in the monorepo) is kept only for what is sold online.
+// The category and parent ids and slugs (shop/category/detail/{id}/{slug}) and an advertised promo's id
+// (shop/promo/detail/{id}) let src/links.js render Claude's link tags into those pages (owner request 2026-09-30).
 // --top=N best sellers per store (default 300), --dry-run prints the bytes each query would scan and exits.
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
@@ -29,17 +31,20 @@ const latest = (table, columns = '*') => `(SELECT ${columns} FROM \`solvent-stag
 // The promo price follows promo_product_line_calculator for per-unit discounts; a promo every n units only shows as a
 // note. Stock is a status, never the count (business data): weighed goods (upc 19xxxxx) count grams.
 const CATALOG_SQL = `
-WITH cat AS ${latest('production_append_public.catalogue_category', 'id, path, depth, name, is_public, ancestors_are_public, datastream_metadata')},
+WITH cat AS ${latest('production_append_public.catalogue_category', 'id, path, depth, name, slug, is_public, ancestors_are_public, datastream_metadata')},
 ppl AS ${latest('production_append_public.promo_promoproductline', 'id, promo_id, type, discount_type, discount_amount, discount_fraction, discount_price, discount_quantity_multiples, datastream_metadata')},
-promo AS ${latest('production_append_public.promo_promo', 'id, name, name_id, date_end, datastream_metadata')},
+promo AS ${latest('production_append_public.promo_promo', 'id, name, name_id, date_end, is_advertised, _enabler_id, datastream_metadata')},
 priced AS (
   SELECT p.id product_id, p.title, p.slug, TRIM(CONCAT(COALESCE(CONCAT(parent.name, ' > '), ''), c.name)) category, ps.facility_id, ps.price price_normal,
+    c.id category_id, c.name category_name, c.slug category_slug, parent.id parent_id, parent.name parent_name, parent.slug parent_slug,
     CASE WHEN ppl.type = 'discount' AND ppl.discount_quantity_multiples < 2 AND ppl.discount_type = 'fixed_price' THEN GREATEST(0, ppl.discount_price)
          WHEN ppl.type = 'discount' AND ppl.discount_quantity_multiples < 2 AND ppl.discount_type = 'calculated'
            THEN GREATEST(0, ps.price - (LEAST(ppl.discount_amount, ps.price) + (ps.price - LEAST(ppl.discount_amount, ps.price)) * ppl.discount_fraction))
          ELSE ps.price END price_now,
     IF(ppl.type = 'discount', COALESCE(NULLIF(pr.name_id, ''), pr.name), NULL) promo_name,
     IF(ppl.type = 'discount', pr.date_end, NULL) promo_ends,
+    -- A promo page only for an advertised promo (the promo list shows no other) that is enabled (the API serves no other).
+    IF(ppl.type = 'discount' AND pr.is_advertised AND pr._enabler_id IS NOT NULL, pr.id, NULL) promo_id,
     IF(ppl.type = 'discount' AND ppl.discount_quantity_multiples >= 2, ppl.discount_quantity_multiples, NULL) promo_every_n,
     (NOT p.is_offline_only AND p.price_sell_online_id = ps.id) sold_online,
     (LENGTH(p.upc) = 7 AND STARTS_WITH(p.upc, '19')) is_weighed
@@ -64,7 +69,8 @@ chosen AS (
     QUALIFY ROW_NUMBER() OVER (PARTITION BY pr.facility_id ORDER BY s.orders_30d DESC, pr.product_id) <= @top)
 )
 SELECT pr.product_id, pr.title, pr.slug, pr.category, pr.facility_id, CAST(pr.price_normal AS FLOAT64) price_normal, CAST(pr.price_now AS FLOAT64) price_now,
-  pr.promo_name, FORMAT_TIMESTAMP('%Y-%m-%d %H:%M', pr.promo_ends, 'Asia/Jakarta') promo_ends, pr.promo_every_n, pr.sold_online, pr.is_weighed,
+  pr.category_id, pr.category_name, pr.category_slug, pr.parent_id, pr.parent_name, pr.parent_slug,
+  pr.promo_name, FORMAT_TIMESTAMP('%Y-%m-%d %H:%M', pr.promo_ends, 'Asia/Jakarta') promo_ends, pr.promo_id, pr.promo_every_n, pr.sold_online, pr.is_weighed,
   COALESCE(s.orders_30d, 0) orders_30d,
   CASE WHEN inv.product_id IS NULL THEN 'unknown'
        WHEN inv.quantity_available <= 0 THEN 'habis'
@@ -125,6 +131,14 @@ const number = value => Math.round(Number(value) * 100) / 100
 // bq's JSON gives every value as a string: "false" is truthy.
 const yes = value => value === true || value === 'true'
 
+// A category's page needs its slug; one without a usable slug gets no page (and no id in the lookup).
+const SLUG = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/
+const categories = new Map()
+const addCategory = (id, name, slug) => {
+  if (id == null || !SLUG.test(String(slug ?? ''))) return null
+  categories.set(Number(id), { id: Number(id), name: String(name ?? '').trim(), slug })
+  return Number(id)
+}
 const products = new Map()
 for (const row of results.catalog) {
   const id = Number(row.product_id)
@@ -133,6 +147,8 @@ for (const row of results.catalog) {
       id,
       title: row.title,
       category: row.category ?? null,
+      // Parent first, as the category text reads ("MAKANAN KECIL > KERIPIK").
+      categoryIds: [addCategory(row.parent_id, row.parent_name, row.parent_slug), addCategory(row.category_id, row.category_name, row.category_slug)].filter(Boolean),
       size: yes(row.is_weighed) ? '1 KG' : sizeOf(row.title),
       // Weighed goods are priced per gram: shown per kg.
       unit: yes(row.is_weighed) ? 'kg' : null,
@@ -152,6 +168,7 @@ for (const row of results.catalog) {
     price: priceNow,
     ...(priceNow < priceNormal && { normalPrice: priceNormal, promo: row.promo_name ?? 'promo', promoEnds: row.promo_ends ?? null }),
     ...(row.promo_every_n && { promoEveryN: Number(row.promo_every_n), promo: row.promo_name ?? 'promo', promoEnds: row.promo_ends ?? null }),
+    ...((priceNow < priceNormal || row.promo_every_n) && row.promo_id && { promoId: Number(row.promo_id) }),
     stock: row.stock
   })
 }
@@ -160,7 +177,8 @@ const catalog = {
   stockAsOf,
   source: 'BigQuery solvent-staging (production_merge_public, production_statistics); read-only export',
   topPerStore: top,
-  products: [...products.values()].sort((a, b) => b.orders30d - a.orders30d)
+  products: [...products.values()].sort((a, b) => b.orders30d - a.orders30d),
+  categories: [...categories.values()].sort((a, b) => a.id - b.id)
 }
 
 mkdirSync(outDir, { recursive: true, mode: 0o700 })
@@ -172,7 +190,7 @@ const perStore = stores.map(store => {
   const count = kind => rows.filter(entry => entry.stock === kind).length
   return `${store.area}: ${rows.length} priced (tersedia ${count('tersedia')}, sedikit ${count('sedikit')}, habis ${count('habis')}, unknown ${count('unknown')}, promo ${rows.filter(entry => entry.normalPrice).length})`
 })
-console.log(`\nwrote ${path.relative(config.rootDir, outDir)}/catalog.json: ${catalog.products.length} products (top ${top} per store), ${catalog.products.filter(product => product.url).length} sold online, ${catalog.products.filter(product => product.unit === 'kg').length} weighed`)
+console.log(`\nwrote ${path.relative(config.rootDir, outDir)}/catalog.json: ${catalog.products.length} products (top ${top} per store), ${catalog.products.filter(product => product.url).length} sold online, ${catalog.products.filter(product => product.unit === 'kg').length} weighed, ${catalog.categories.length} categories`)
 for (const line of perStore) console.log(`  ${line}`)
 console.log(`wrote ${path.relative(config.rootDir, outDir)}/stores.json: ${stores.length} stores`)
 console.log(`exported ${exportedAt}, stock as of ${stockAsOf} WIB`)
