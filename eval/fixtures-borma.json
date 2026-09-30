@@ -131,5 +131,93 @@
   "expect": "escalate",
   "autoSend": "forbidden",
   "placeholder": "allowed"
+ },
+ {
+  "id": "hughie-oil-sugar",
+  "demo": true,
+  "note": "demo mode, a tester's real two-item search (live 2026-09-30, held too_long:1030>1000): answer under the length limit, at most 3 options per item, one search link each (q=minyak, q=gula), and a plain remark that there is no 5 liter pack",
+  "name": "Hughie",
+  "history": [
+   {
+    "fromMe": false,
+    "text": "Halo"
+   },
+   {
+    "fromMe": true,
+    "text": "Halo Kak Hughie, ada yang bisa dibantu?"
+   }
+  ],
+  "text": "Perlu minyak 5 liter dan gula, adanya apa saja?",
+  "expect": "answer",
+  "autoSend": "allowed",
+  "placeholder": "allowed"
+ },
+ {
+  "id": "luki-recompute-total",
+  "demo": true,
+  "note": "demo mode, a tester's real order (live 2026-09-30, escalated): after a summary, an added item and its choice, \"please recompute the total\" is part of the order: answer with a fresh summary and the total recomputed (Rp 39.000), not escalate",
+  "name": "Luki",
+  "history": [
+   {
+    "fromMe": false,
+    "text": "Mau pesan pringles 1"
+   },
+   {
+    "fromMe": true,
+    "text": "Halo Kak Luki, Pringles Original 42 gr Rp 12.100 di Borma Dago dan Borma Fashion (Kopo), stok tersedia (stok per 30-09-2026 15.51 WIB): https://www.bormadago.com/shop/product/5203/pringles-original-42gr. Mau diambil di toko mana atau dikirim (area mana)? Lalu untuk tanggal dan jam berapa, dan nama pemesannya siapa?"
+   },
+   {
+    "fromMe": false,
+    "text": "Sama tisu nice yg 15.100. Diambil dr dago, dikirim ke muara barat 55 untuk skrg a.n luki"
+   },
+   {
+    "fromMe": true,
+    "text": "Halo Kak Luki, ini ringkasan pesanannya:\n- 1 x Pringles Original 42 gr @ Rp 12.100 = Rp 12.100\n- 1 x Nice Facial Soft Pack 320's 2 Ply 2+1 @ Rp 15.100 = Rp 15.100\nTotal: Rp 27.200 (belum termasuk biaya kirim, akan dikonfirmasi tim Borma)\nToko: Borma Dago, dikirim ke Muara Barat 55\nWaktu: sekarang\nNama pemesan: Luki\nApakah pesanan ini sudah sesuai, Kak?"
+   },
+   {
+    "fromMe": false,
+    "text": "Mau tambah 1 susu milo"
+   },
+   {
+    "fromMe": true,
+    "text": "Halo Kak Luki, untuk Milo ada Nestle Milo Activ Cube 25@2.7 gr Rp 11.800, stok tersedia (stok per 30-09-2026 15.51 WIB): https://www.bormadago.com/shop/product/30775/nestle-milo-activ-cube-2527-gr. Mau yang ini, Kak?"
+   },
+   {
+    "fromMe": false,
+    "text": "Yg 11.800.."
+   }
+  ],
+  "text": "Tlg totalkn ulang ka",
+  "expect": "answer",
+  "autoSend": "allowed",
+  "placeholder": "allowed"
+ },
+ {
+  "id": "luki-add-item",
+  "demo": true,
+  "note": "demo mode, a tester's real order in progress (live 2026-09-30, held too_long:1289>1000): an added item is answered with at most 3 tissue options, compact, under the length limit",
+  "name": "Luki",
+  "history": [
+   {
+    "fromMe": false,
+    "text": "Hai ka"
+   },
+   {
+    "fromMe": true,
+    "text": "Hai juga Kak Luki, ada yang bisa dibantu?"
+   },
+   {
+    "fromMe": false,
+    "text": "Mau pesan pringles 1"
+   },
+   {
+    "fromMe": true,
+    "text": "Halo Kak Luki, Pringles Original 42 gr Rp 12.100 di Borma Dago dan Borma Fashion (Kopo), stok tersedia (stok per 30-09-2026 15.51 WIB): https://www.bormadago.com/shop/product/5203/pringles-original-42gr. Mau diambil di toko mana atau dikirim (area mana)? Lalu untuk tanggal dan jam berapa, dan nama pemesannya siapa?"
+   }
+  ],
+  "text": "Sama tisu 1",
+  "expect": "answer",
+  "autoSend": "allowed",
+  "placeholder": "allowed"
  }
 ]

@@ -816,11 +816,17 @@ export const privateIdentifiersFor = config => {
   return identifiersCache.get(config)
 }
 
+// Demo mode's replies suggest a few products with links per item, or summarise an order: 1000 characters held a
+// two-item search and a tissue list as drafts (live 2026-09-30).
+export const DEMO_MAX_REPLY_CHARS = 2500
+
 /** Guards for a triage result: only an "answer" can be auto-sent, so only it is checked. */
 export function guardTriage (triage, { knowledge, config, incomingText }) {
   if (triage?.decision !== 'answer') return undefined
+  const demo = config.demo?.enabled === true
+  const maxReplyChars = demo ? config.demo.maxReplyChars ?? DEMO_MAX_REPLY_CHARS : config.guards?.maxReplyChars
   return checkReply({ reply: triage.reply, factsUsed: triage.facts_used, incomingText },
-    { knowledge, ...config.guards, privateIdentifiers: privateIdentifiersFor(config), demo: config.demo?.enabled === true, demoPrices: config.borma?.enabled === true })
+    { knowledge, ...config.guards, maxReplyChars, privateIdentifiers: privateIdentifiersFor(config), demo, demoPrices: config.borma?.enabled === true })
 }
 
 /** The holding reply's check for the placeholder (checkHoldingReply), whatever Claude decided; undefined without a triage. */

@@ -444,6 +444,16 @@ test('language detection and the mirror-language guard', () => {
   assert.equal(checkReply({ reply: 'Hi Kak! We are at Jl. Contoh Raya No. 12, Coblong, Bandung.', factsUsed: ['F2'], incomingText: 'Where is the shop?' }, { knowledge }).ok, true)
 })
 
+// Live 2026-09-30: a two-item search (1030 characters) and a tissue list (1289) were held as too long in demo mode.
+test('guardTriage: demo mode allows demo.maxReplyChars (2500), strict mode keeps guards.maxReplyChars (1000)', () => {
+  const reply = length => `Halo Kak, ${'ada ya Kak. '.repeat(400)}`.slice(0, length)
+  const demo = makeConfig({ demo: { enabled: true } })
+  assert.deepEqual(guardTriage({ decision: 'answer', reply: reply(2400), facts_used: [] }, { knowledge, config: demo }), { ok: true, reasons: [] })
+  assert.deepEqual(guardTriage({ decision: 'answer', reply: reply(2600), facts_used: [] }, { knowledge, config: demo }).reasons, ['too_long:2600>2500'])
+  assert.deepEqual(guardTriage({ decision: 'answer', reply: reply(1500), facts_used: [] }, { knowledge, config: makeConfig({ demo: { enabled: true, maxReplyChars: 1200 } }) }).reasons, ['too_long:1500>1200'])
+  assert.ok(guardTriage({ decision: 'answer', reply: reply(1100), facts_used: ['F1'] }, { knowledge, config: makeConfig() }).reasons.includes('too_long:1100>1000'))
+})
+
 test('guardTriage only checks answers', () => {
   const config = makeConfig()
   assert.equal(guardTriage({ decision: 'escalate', reply: 'Rp 1' }, { knowledge, config }), undefined)
