@@ -22,14 +22,16 @@
     "sessionGapHours": 12
   },
   "placeholder": {
-    "enabled": true
+    "enabled": true,
+    "repeatMinutes": 2
   },
   "greetingReply": {
     "enabled": true
   },
   "demo": {
     "enabled": false,
-    "maxPerChatPerHour": 30
+    "maxPerChatPerHour": 30,
+    "maxReplyChars": 2500
   },
   "borma": {
     "enabled": false,
@@ -37,7 +39,8 @@
     "maxProducts": 10,
     "orders": true,
     "orderTimeoutMs": 8000,
-    "orderCacheMs": 60000
+    "orderCacheMs": 60000,
+    "refreshHours": 6
   },
   "notifyOwnerOnAutoSend": true,
   "draftTtlHours": 24,

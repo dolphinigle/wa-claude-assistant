@@ -95,7 +95,10 @@ test('a JID entry must be in a form a chat has, or it would silently match nothi
 
 test('placeholder and greetingReply: switches only, on by default; a malformed one stops the start instead of reaching customers', t => {
   const config = loadConfig({ rootDir: rootWith(t) })
-  assert.deepEqual([config.placeholder, config.greetingReply], [{ enabled: true }, { enabled: true }])
+  assert.deepEqual([config.placeholder, config.greetingReply], [{ enabled: true, repeatMinutes: 2 }, { enabled: true }])
+  for (const repeatMinutes of ['2', -1, null, Infinity]) {
+    assert.throws(() => loadConfig({ rootDir: rootWith(t, { placeholder: { enabled: true, repeatMinutes } }) }), /config\.placeholder\.repeatMinutes must be a number >= 0/, JSON.stringify(repeatMinutes))
+  }
   assert.equal(loadConfig({ rootDir: rootWith(t, { placeholder: { enabled: false } }) }).placeholder.enabled, false)
   assert.equal(loadConfig({ rootDir: rootWith(t, { greetingReply: { enabled: false } }) }).greetingReply.enabled, false)
   for (const key of ['placeholder', 'greetingReply']) {
@@ -114,7 +117,14 @@ test('a leftover placeholder.text or greetingReply.text stops the start with a c
 })
 
 test('demo mode: off by default, an exact boolean, and it refuses to start without testers in allowChats', t => {
-  assert.deepEqual(loadConfig({ rootDir: rootWith(t) }).demo, { enabled: false, maxPerChatPerHour: 30 })
+  assert.deepEqual(loadConfig({ rootDir: rootWith(t) }).demo, { enabled: false, maxPerChatPerHour: 30, maxReplyChars: 2500 })
+  for (const maxReplyChars of ['2500', 0, 1.5]) {
+    assert.throws(() => loadConfig({ rootDir: rootWith(t, { demo: { enabled: true, maxReplyChars }, allowChats: ['081293850000'] }) }), /config\.demo\.maxReplyChars must be a whole number > 0/, JSON.stringify(maxReplyChars))
+  }
+  assert.equal(loadConfig({ rootDir: rootWith(t) }).borma.refreshHours, 6)
+  for (const refreshHours of ['6', -1]) {
+    assert.throws(() => loadConfig({ rootDir: rootWith(t, { borma: { enabled: true, refreshHours } }) }), /config\.borma\.refreshHours must be a number >= 0/, JSON.stringify(refreshHours))
+  }
   assert.throws(() => loadConfig({ rootDir: rootWith(t, { demo: { enabled: true } }) }), /demo mode invents answers: list the testers in allowChats/)
   assert.equal(loadConfig({ rootDir: rootWith(t, { demo: { enabled: true }, allowChats: ['081293850000'] }) }).demo.enabled, true)
   for (const demo of [true, 'on', { enabled: 'true' }, { enabled: 1 }]) {

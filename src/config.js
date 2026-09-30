@@ -78,6 +78,9 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
     const section = config[key]
     if (!isPlainObject(section) || typeof section.enabled !== 'boolean') throw new Error(`config.${key} must be {"enabled": true or false}, got ${JSON.stringify(section)}`)
   }
+  // How often one chat may get a holding reply (owner request 2026-09-30): a quoted or negative value would lift the limit.
+  const repeat = config.placeholder.repeatMinutes
+  if (repeat !== undefined && !(typeof repeat === 'number' && Number.isFinite(repeat) && repeat >= 0)) throw new Error(`config.placeholder.repeatMinutes must be a number >= 0 (minutes between two holding replies to one chat), got ${JSON.stringify(repeat)}`)
   // The switches for what reaches customers on its own are read as truthy: a quoted "false" would leave them on, and
   // `autoSend.enabled` false is the owner's "drafts only" switch (correctness-r1-4).
   for (const key of ['autoSend.enabled', 'backlog.autoSend']) {
@@ -90,11 +93,13 @@ export function loadConfig ({ rootDir = ROOT_DIR, overrides = {} } = {}) {
   if (!isPlainObject(demo) || typeof demo.enabled !== 'boolean') throw new Error(`config.demo.enabled must be true or false (no quotes), got ${JSON.stringify(demo?.enabled ?? demo)}`)
   if (demo.enabled && config.allowChats.length === 0) throw new Error('demo mode invents answers: list the testers in allowChats (config.demo.enabled is true, allowChats is empty)')
   if (demo.enabled && !(Number.isInteger(demo.maxPerChatPerHour) && demo.maxPerChatPerHour >= 0)) throw new Error(`config.demo.maxPerChatPerHour must be a whole number >= 0, got ${JSON.stringify(demo.maxPerChatPerHour)}`)
+  if (demo.enabled && demo.maxReplyChars !== undefined && !(Number.isInteger(demo.maxReplyChars) && demo.maxReplyChars > 0)) throw new Error(`config.demo.maxReplyChars must be a whole number > 0, got ${JSON.stringify(demo.maxReplyChars)}`)
   // The Borma demo reads real shop data and looks up the sender's orders: on only when the owner says so, exactly.
   const borma = config.borma
   if (borma !== undefined && (!isPlainObject(borma) || typeof borma.enabled !== 'boolean')) throw new Error(`config.borma.enabled must be true or false (no quotes), got ${JSON.stringify(borma?.enabled ?? borma)}`)
   // The order lookup is on unless it is exactly false (lookup.js), so a quoted "false" would leave it on.
   if (borma?.orders !== undefined && typeof borma.orders !== 'boolean') throw new Error(`config.borma.orders must be true or false (no quotes), got ${JSON.stringify(borma.orders)}`)
+  if (borma?.refreshHours !== undefined && !(typeof borma.refreshHours === 'number' && Number.isFinite(borma.refreshHours) && borma.refreshHours >= 0)) throw new Error(`config.borma.refreshHours must be a number >= 0 (0 = never refresh the export), got ${JSON.stringify(borma.refreshHours)}`)
   // The conversation window Claude sees (owner request 2026-09-29): a quoted or negative value would silently show all.
   for (const key of ['contextMessages', 'contextMaxAgeMinutes']) {
     if (!(Number.isInteger(config[key]) && config[key] >= 0)) throw new Error(`config.${key} must be a whole number >= 0 (0 = ${key === 'contextMessages' ? 'no earlier messages' : 'no age limit'}), got ${JSON.stringify(config[key])}`)
