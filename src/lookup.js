@@ -15,9 +15,14 @@ const PRODUCT_BASE = 100
 const STORE_BASE = 400
 const ORDER_BASE = 900
 const MAX_ORDERS = 5
-// Links to the shop's own pages (solui routes shop/product/list?q= and shop/promo, checked 2026-09-29).
-const SEARCH_FACT = 398
+// Links to the shop's own pages (solui routes shop/product/list?q= and shop/promo, checked 2026-09-29): one search per
+// item the message asks for, F396-F398.
+const SEARCH_BASE = 396
+const MAX_SEARCHES = 3
 const PROMO_FACT = 399
+// A message that asks for several items ("minyak 5 liter dan gula"): each its own best few, at least this many.
+const PER_ITEM = 3
+const MAX_ITEMS = 5
 const SHOP_URL = 'https://www.bormadago.com/shop'
 // The recent conversation's products: its last 6 messages, the best 5 of each, 10 at most (ids stay below F400).
 const RECENT_TEXTS = 6
@@ -37,7 +42,11 @@ const STOPWORDS = new Set(('ada adakah apa apakah atau aja ya yaa yah kak kaka k
   'kami kita halo hai hi hello pagi siang sore malam selamat terima kasih makasih thanks thank please the a an is are do does you have any ' +
   'how much price of for and or with in at toko cabang borma dago kopo fashion online jual dijual punya ' +
   'gr g gram kg ml l lt ltr pcs pc s x isi pack pak dus box btl botol sachet ' +
-  'per wib normal total link rekomendasi rekomen saran suggest recommend lagi dong nama ambil sendiri kirim antar').split(' '))
+  'per wib normal total link rekomendasi rekomen saran suggest recommend lagi dong nama ambil sendiri kirim antar ' +
+  // Needs and fillers ("perlu minyak" searched for "perlu minyak", live 2026-09-30), and sizes and packs: "5 liter"
+  // names no product, and "liter" alone matched a dish soap and a water bottle.
+  'perlu butuh pengen pingin pengin kepengen saja tambah tambahin nambah sekalian juga ' +
+  'liter litre kilo kilogram grm mg cc bks bungkus buah biji kaleng karton lusin lembar lbr sheet sheets renceng').split(' '))
 // Promo words ask for what is on promo: removed from the query, and alone they list the promos in stock.
 const PROMO_WORDS = new Set('promo promonya diskon diskonnya discount sale potongan cashback'.split(' '))
 // A link in a message (ours quote the product pages) names no product: its words (shop, product, slug) would.
@@ -50,11 +59,11 @@ const SYNONYMS = {
   stroberi: ['strawberry'], strawberry: ['stroberi'], air: ['water'], tisu: ['tissue'], tissue: ['tisu']
 }
 
-/** The words of each product title, and of its category ("MAKANAN KECIL > KERIPIK") that the title lacks. */
+/** The words of each product title and of its category ("MAKANAN KECIL > KERIPIK"). */
 export function buildIndex (products) {
   const docs = products.map(product => {
     const title = [...new Set(words(product.title))]
-    const category = [...new Set(words(product.category))].filter(word => !title.includes(word) && !STOPWORDS.has(word))
+    const category = [...new Set(words(product.category))].filter(word => !STOPWORDS.has(word))
     return { product, words: title, categoryWords: category }
   })
   return { docs }
@@ -64,13 +73,27 @@ export function buildIndex (products) {
 export const queryWords = text => [...new Set(words(withoutLinks(text)).map(stem).filter(word => !STOPWORDS.has(word) && !PROMO_WORDS.has(word)))]
 export const asksForPromo = text => words(text).some(word => PROMO_WORDS.has(word))
 
+// Where one item ends and the next begins: "minyak 5 liter dan gula", "indomie 5 sama aqua 2", "susu, roti". A comma
+// between digits is a decimal ("1,8 liter").
+const ITEM_BREAK = /(?<!\d),|,(?!\d)|[;\n&+]|\b(?:dan|sama|serta|plus|and)\b/
+/**
+ * The items a message asks for, each as its query words (owner request 2026-09-30: one search per item): "Perlu minyak
+ * 5 liter dan gula, adanya apa saja?" is [["minyak", "5"], ["gula"]]. A part without a word that may name a product
+ * ("adanya apa saja?", "2 bungkus") is none.
+ */
+export const itemPhrases = text => fold(withoutLinks(text)).split(ITEM_BREAK).map(queryWords).filter(query => query.some(word => /\p{L}/u.test(word)))
+
 /**
  * The products a message names, best first: each query word (or a synonym, or a word it starts, from 4 letters)
- * found in a title adds that word's weight, log(n / titles it is in); found only in the category ("snack", "keripik"),
- * half of it. Ties go to the better seller. A number counts only with a word ("indomie 85"), never alone.
+ * found in a title adds that word's weight, log(n / titles it is in), and half of it more when the category says it
+ * too ("MINYAK GORENG …" in "MINYAK > MINYAK GORENG", not the "ZERO SUGAR" milk for "gula"); found only in the
+ * category ("snack", "keripik"), half of it. Ties go to the better seller. A number counts only with a word
+ * ("indomie 85"), never alone.
  */
-export function matchProducts (index, text, limit = 10) {
-  const query = queryWords(text)
+export const matchProducts = (index, text, limit = 10) => scoreProducts(index, queryWords(text), limit).map(item => item.product)
+
+/** matchProducts for query words, with each product's score. */
+export function scoreProducts (index, query, limit = 10) {
   if (query.length === 0) return []
   const n = index.docs.length
   const found = (list, variants) => list.some(title => variants.some(variant => title === variant || (variant.length >= 4 && /[a-z]/.test(variant) && title.startsWith(variant))))
@@ -80,18 +103,19 @@ export function matchProducts (index, text, limit = 10) {
     const inCategory = new Set()
     index.docs.forEach((doc, position) => {
       if (found(doc.words, variants)) inTitle.add(position)
-      else if (found(doc.categoryWords, variants)) inCategory.add(position)
+      if (found(doc.categoryWords, variants)) inCategory.add(position)
     })
-    const df = inTitle.size + inCategory.size
+    const df = new Set([...inTitle, ...inCategory]).size
     return { inTitle, inCategory, weight: df ? Math.log(1 + n / df) : 0, isNumber: /^\d/.test(word) }
   })
   const scored = []
   index.docs.forEach((doc, position) => {
     const matched = hits.filter(hit => hit.inTitle.has(position) || hit.inCategory.has(position))
     if (!matched.some(hit => !hit.isNumber)) return
-    scored.push({ product: doc.product, score: matched.reduce((sum, hit) => sum + (hit.inTitle.has(position) ? hit.weight : hit.weight / 2), 0) })
+    const score = matched.reduce((sum, hit) => sum + (hit.inTitle.has(position) ? hit.weight : 0) + (hit.inCategory.has(position) ? hit.weight / 2 : 0), 0)
+    scored.push({ product: doc.product, score })
   })
-  return scored.sort((a, b) => b.score - a.score || (b.product.orders30d ?? 0) - (a.product.orders30d ?? 0)).slice(0, limit).map(item => item.product)
+  return scored.sort((a, b) => b.score - a.score || (b.product.orders30d ?? 0) - (a.product.orders30d ?? 0)).slice(0, limit)
 }
 
 const IN_STOCK = new Set(['tersedia', 'sedikit'])
@@ -106,6 +130,14 @@ export function suggestionRank (product) {
 /** Best suggestions first, relevance order kept within each rank. */
 export const forSuggestion = products => products.map((product, position) => ({ product, position }))
   .sort((a, b) => suggestionRank(a.product) - suggestionRank(b.product) || a.position - b.position).map(item => item.product)
+/**
+ * The same for scored matches, but only among equally close ones: the closest matches for an item come first, and among
+ * them the best suggestions ("gula": the sugars, not a "LESS SUGAR" tea on promo). A promo question ranks by promo alone.
+ */
+const bestFirst = (scored, promoFirst) => (promoFirst
+  ? forSuggestion(scored.map(item => item.product))
+  : scored.map((item, position) => ({ ...item, position }))
+    .sort((a, b) => b.score - a.score || suggestionRank(a.product) - suggestionRank(b.product) || a.position - b.position).map(item => item.product))
 
 // When a message is about a store, a place or stock, the stores go with it; a product question gets them too.
 const STORE_WORDS = /\b(?:toko|cabang|alamat|alamatnya|lokasi|lokasinya|dimana|mana|where|address|store|branch|buka|tutup|jam|open|close|dago|kopo|stok|stock|ready|tersedia|habis|kosong|ambil|pickup)\b/i
@@ -113,7 +145,7 @@ const STORE_WORDS = /\b(?:toko|cabang|alamat|alamatnya|lokasi|lokasinya|dimana|m
 const ORDER_WORDS = /\b(?:pesanan\w*|pesenan\w*|orderan\w*|order|orderku|status|kirim|dikirim|terkirim|pengiriman|sampai|sampe|nyampe|nyampai|resi|paket\w*|datang|dateng|kurir|diantar|antar|diambil|batal|dibatalkan|cancel|checkout|belanjaan\w*)\b/i
 export const isOrderQuestion = text => ORDER_WORDS.test(fold(text))
 // Asks about a product: then a message that names none of the catalog's gets a note saying so.
-const PRODUCT_QUESTION = /\b(?:harga\w*|berapa|brp|ada|stok|stock|ready|jual|dijual|beli|price|promo|diskon)\b/
+const PRODUCT_QUESTION = /\b(?:harga\w*|berapa|brp|ada(?:nya|kah)?|stok|stock|ready|jual|dijual|beli|price|promo|diskon)\b/
 
 /**
  * The sender's phone number in the database's format (+628…), from the chat's own addressing forms only: a PN JID
@@ -246,14 +278,20 @@ export function loadBormaData (dataDir) {
  * @param {{products: object[], stockAsOf?: string}} deps.catalog
  * @param {{id: number, name: string, area?: string, address?: string}[]} deps.stores
  * @param {Function} [deps.queryOrders]  (phone) → Promise<{ok, rows?, error?}>; the live bq query by default
- * @returns {{forBurst: (input: {text: string, recentTexts?: string[], phone?: string}) => Promise<{facts: Map, lines: string[], notes: string[], summary: object}>}}
+ * @returns {{forBurst: (input: {text: string, recentTexts?: string[], phone?: string}) => Promise<{facts: Map, lines: string[], notes: string[], summary: object}>, reload: Function}}
  *   `recentTexts`: the recent conversation Claude sees, oldest first, ours included (our suggestions and summaries
- *   name the products exactly)
+ *   name the products exactly); `reload({catalog, stores})` swaps in a fresh export (src/borma-refresh.js)
  */
 export function createLookup ({ config, catalog, stores, queryOrders, now = () => Date.now() }) {
   const settings = config.borma ?? {}
-  const index = buildIndex(catalog.products)
-  const storesById = new Map(stores.map(store => [store.id, store]))
+  let index, storesById
+  function reload (data) {
+    index = buildIndex(data.catalog.products)
+    storesById = new Map(data.stores.map(store => [store.id, store]))
+    catalog = data.catalog
+    stores = data.stores
+  }
+  reload({ catalog, stores })
   const timeoutMs = settings.orderTimeoutMs ?? 8000
   const cacheMs = settings.orderCacheMs ?? 60_000
   // Product ids run from F100 and must stay below the stores' F400, the recent conversation's products included.
@@ -285,10 +323,17 @@ export function createLookup ({ config, catalog, stores, queryOrders, now = () =
     const summary = {}
     // "snack yang lagi promo?": the promos among many more matches, since the closest few may have none.
     const promo = asksForPromo(text)
-    let products = matchProducts(index, text, promo ? maxProducts * 5 : maxProducts)
+    const pool = promo ? maxProducts * 5 : maxProducts
+    // One item, or several ("minyak 5 liter dan gula"): then each item gets its own best few, where one ranking over
+    // all the words let one item crowd out the other (owner request 2026-09-30).
+    const items = itemPhrases(text).slice(0, MAX_ITEMS)
+    const perItem = Math.max(PER_ITEM, Math.floor(maxProducts / Math.max(items.length, 1)))
+    const matched = items.length > 1
+      ? items.map(query => bestFirst(scoreProducts(index, query, pool), promo).slice(0, perItem))
+      : [bestFirst(scoreProducts(index, queryWords(text), pool), promo).slice(0, maxProducts)]
+    let products = [...new Map(matched.flat().map(product => [product.id, product])).values()]
     // "promo apa aja?" names no product: the best sellers on promo in stock.
-    if (products.length === 0 && queryWords(text).length === 0 && promo) products = catalog.products.filter(product => suggestionRank(product) === 0)
-    products = forSuggestion(products).slice(0, maxProducts)
+    if (products.length === 0 && queryWords(text).length === 0 && promo) products = catalog.products.filter(product => suggestionRank(product) === 0).slice(0, maxProducts)
     summary.products = products.length
     // A follow-up ("yang 1 liter berapa?", "ambil di Dago ya") or an order summary names no product, or not all of
     // them: the recent messages do, each its best few.
@@ -298,14 +343,20 @@ export function createLookup ({ config, catalog, stores, queryOrders, now = () =
     products = [...products, ...earlier]
     summary.recentProducts = earlier.length
     products.forEach((product, position) => facts.push([`F${PRODUCT_BASE + position}`, productFact(product, storesById, catalog.stockAsOf)]))
-    // "ada beras?": beyond the few matches, every result for the customer's own words on the online shop.
-    const searched = queryWords(text).filter(word => /\p{L}/u.test(word)).slice(0, 4).join(' ')
-    if (searched && (summary.products > 0 || PRODUCT_QUESTION.test(fold(text)))) {
-      facts.push([`F${SEARCH_FACT}`, `Semua hasil pencarian "${searched}" di toko online: ${SHOP_URL}/product/list?q=${encodeURIComponent(searched)}`])
-    }
+    // "ada beras?": beyond the few matches, every result on the online shop, one search per item in the customer's own
+    // words ("minyak", "gula"), never the whole message ("perlu minyak liter gula").
+    const productQuestion = PRODUCT_QUESTION.test(fold(text))
+    const searches = (items.length > 0 ? items : [queryWords(text)])
+      .map((query, position) => ({ searched: query.filter(word => /\p{L}/u.test(word)).slice(0, 4).join(' '), found: (matched[position] ?? []).length }))
+      .filter(({ searched, found }) => searched && (found > 0 || productQuestion)).slice(0, MAX_SEARCHES)
+    searches.forEach(({ searched }, position) => facts.push([`F${SEARCH_BASE + position}`, `Semua hasil pencarian "${searched}" di toko online: ${SHOP_URL}/product/list?q=${encodeURIComponent(searched)}`]))
     if (promo) facts.push([`F${PROMO_FACT}`, `Semua promo yang sedang berlaku di toko online: ${SHOP_URL}/promo`])
-    if (summary.products === 0 && PRODUCT_QUESTION.test(fold(text))) {
+    if (summary.products === 0 && productQuestion) {
       notes.push(`No product in the shop's catalog snapshot matches this message: its prices and stock are unknown${earlier.length ? ' (the products above come from the earlier messages)' : ''}.`)
+    } else if (items.length > 1 && productQuestion) {
+      // "minyak dan kulkas": the one item the catalog lacks is said, not left out without a word.
+      const missing = items.filter((query, position) => matched[position].length === 0).map(query => `"${query.join(' ')}"`)
+      if (missing.length > 0) notes.push(`No product in the shop's catalog snapshot matches ${missing.join(', ')}: its prices and stock are unknown.`)
     }
     if (products.length > 0 || STORE_WORDS.test(fold(text))) {
       for (const store of stores) facts.push([`F${STORE_BASE + store.id}`, storeFact(store)])
@@ -335,7 +386,7 @@ export function createLookup ({ config, catalog, stores, queryOrders, now = () =
     }
   }
 
-  return { forBurst }
+  return { forBurst, reload }
 }
 
 /** The knowledge the guards check one burst's answer against: knowledge.md's facts plus that burst's lookup facts. */
