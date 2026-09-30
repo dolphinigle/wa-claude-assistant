@@ -93,17 +93,10 @@ export function createAssistant ({ config, store, brain, transport, knowledge, l
     const chatIds = store.linkedChatIds(chatId)
     return store.pendingDrafts().filter(draft => chatIds.includes(draft.chatId))
   }
-  // One placeholder per open-draft period: from the placeholder until the contact has no open draft. Every draft open
-  // in the period names the draft whose customer got it (`placeholderCovered`), those already open when it went out
-  // included, so any of them still open carries the period on after that draft is dealt with (send-path-r1-1).
-  // Returns that draft's id, or 0 outside a period (`true` on drafts saved before the id was kept).
-  const placeholderPeriod = chatId => {
-    for (const draft of openDrafts(chatId)) {
-      if (draft.placeholder) return draft.id
-      if (draft.placeholderCovered) return draft.placeholderCovered
-    }
-    return 0
-  }
+  // When the contact last got a placeholder, on either addressing form: at most one every `placeholder.repeatMinutes`
+  // (owner request 2026-09-30: each escalated burst gets its own holding reply, where one per open-draft period left a
+  // customer's payment question and recount request without any).
+  const lastPlaceholderAt = chatId => Math.max(0, ...linkedChats(chatId).map(chat => chat.lastPlaceholderAt ?? 0))
 
   // --- the send gate: every outgoing message passes through one of these two functions ------------------------
 
@@ -493,7 +486,7 @@ export function createAssistant ({ config, store, brain, transport, knowledge, l
         lastOursAt: lastOursAt(chatId),
         lastUntriagedAt: lastUntriagedAt(chatId),
         lastOpenedAt: lastOpenedAt(chatId),
-        placeholderSent: Boolean(placeholderPeriod(chatId)),
+        lastPlaceholderAt: lastPlaceholderAt(chatId),
         draftOpen: openDrafts(chatId).length > 0,
         lastGreetingReplyAt: lastGreetingReplyAt(chatId)
       },
@@ -579,7 +572,6 @@ export function createAssistant ({ config, store, brain, transport, knowledge, l
   /** Every escalation, whether Claude chose it or a gate stopped its answer, is a draft for /ok, /edit or /no. */
   async function postDraft (chatId, batch, result, decision, closing) {
     const triage = result.triage
-    const period = placeholderPeriod(chatId)
     const draft = store.createDraft({
       chatId,
       contactName: contactLabel(chatId),
@@ -593,7 +585,6 @@ export function createAssistant ({ config, store, brain, transport, knowledge, l
       closing,
       // Whatever held it: the owner may /ok it, and the send gate cannot match this chat against a phone number.
       ...(blocklistUnchecked(chatId) && { blocklistUnchecked: true }),
-      ...(period && { placeholderCovered: period }),
       privateDetails: findPrivateDetails(triage?.reply ?? '', withoutPublic(privateIdentifiersFor(config), knowledge))
     })
     if (decision.placeholder) {
@@ -615,23 +606,22 @@ export function createAssistant ({ config, store, brain, transport, knowledge, l
    * "🤖 " + Claude's holding reply for this sender, which passed guardHolding (owner decision 2026-09-28: never one
    * fixed text for everyone, which looks like bulk messaging). It quotes nothing and marks nothing read, since the owner
    * has not seen the message yet. It counts toward the auto-send caps and, when it starts with the disclosure text (🤖),
-   * as the session's AI disclosure. It is recorded on the draft, and the contact's other open drafts join its period,
-   * before the first await, so an escalation of the same contact triaged meanwhile sees it and gets none. A send that
-   * certainly failed (`notSent`) is undone but for lastSentAt, so the next escalation may try again; one that failed in
-   * flight may have been delivered, so its period and cap slot stand (status `unknown`), since a missed retry is the
-   * safe way round.
+   * as the session's AI disclosure. It is recorded on the draft, and its time on the chat, before the first await, so
+   * an escalation of the same contact triaged meanwhile sees it and gets none. A send that certainly failed (`notSent`)
+   * is undone but for lastSentAt, so the next escalation may try again; one that failed in flight may have been
+   * delivered, so its time and cap slot stand (status `unknown`), since a missed retry is the safe way round.
    */
   async function sendPlaceholder (chatId, draft, holdingReply) {
     const text = `${BOT_PREFIX} ${holdingReply.trim()}`
     store.updateDraft(draft.id, { placeholder: { text, status: 'sending' } })
-    for (const open of openDrafts(chatId)) if (open.id !== draft.id) store.updateDraft(open.id, { placeholderCovered: draft.id })
+    const before = store.chat(chatId).lastPlaceholderAt
+    store.updateChat(chatId, { lastPlaceholderAt: now() })
     const slot = store.recordAutoSend(chatId)
     const outcome = await sendToCustomer(chatId, text, { source: 'placeholder', draftId: draft.id })
     if (outcome.notSent) {
       store.releaseAutoSend(chatId, slot)
       store.updateDraft(draft.id, { placeholder: undefined })
-      // Drafts that joined this attempt's period, before it or during the send, leave it with it (send-path-r1-4).
-      for (const open of store.pendingDrafts()) if (open.placeholderCovered === draft.id) store.updateDraft(open.id, { placeholderCovered: undefined })
+      store.updateChat(chatId, { lastPlaceholderAt: before ?? 0 })
       return
     }
     if (!outcome.sent && !outcome.shadow) {

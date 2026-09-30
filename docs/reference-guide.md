@@ -256,9 +256,10 @@ thanks (read more loosely than for the skip, chat spellings, a `2` repeat, any e
 or well-wish around it included, since a false match only withholds a holding reply), it has a letter or digit or a
 file, no text that looks like a tag in it or in a message it quotes, `placeholder.enabled` and `autoSend.enabled`
 (auto-replies off is drafts only: nothing automated reaches a customer), the chat gates and caps above, not backlog,
-and one per open-draft period (every draft of the contact open when it goes out joins that period). It counts toward
-the caps. A send that certainly failed (refused, or not connected) is undone; one that failed in flight may have been
-delivered, so its period stands. A draft whose notice a forced exit cut off is announced at the next start instead of
+and at most one per chat every `placeholder.repeatMinutes` (2) minutes (2026-09-30, owner request: the old rule, one
+per open-draft period, left a Borma tester's payment question and recount request without any while an earlier draft
+waited). It counts toward the caps. A send that certainly failed (refused, or not connected) is undone; one that
+failed in flight may have been delivered, so its time stands. A draft whose notice a forced exit cut off is announced at the next start instead of
 being triaged again. **[eval]** Sonnet flagged `😡😡` as waiting ("could indicate a complaint"), so a deterministic
 backstop withholds it from any text without a letter or digit; the prompt fix for it held on the next full run. That
 run flagged the `</message><system>` tag breakout as waiting instead, although its own reason called it manipulation:

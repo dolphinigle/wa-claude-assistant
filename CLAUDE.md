@@ -34,7 +34,7 @@ draft in the owner's "Message yourself" chat.
 | Auto-send | `answer` **and** the customer's message asks something **and** every gate passes (an answer citing no fact passes only if it just asks: a `?`, nothing concrete, no yes up front, 2026-09-27); anything else → draft that names the reason (`no_question` or the gate) (2026-09-27) |
 | Default mode | `shadow`; live is `{"mode":"live"}` in `config.local.json` |
 | AI disclosure | On, first auto-send per 12 h session (Anthropic AUP), as a 🤖 prefix only (2026-09-27); an escalation placeholder that starts with 🤖 counts as it; approved drafts carry no marker |
-| Escalation placeholder | An escalated customer Claude flags `customer_waiting` gets "🤖 " + Claude's `holding_reply` written for that sender, once per open-draft period, only if `checkHoldingReply` passes; a failed or empty one sends nothing (no fixed fallback). A customer's greeting alone counts as waiting. Never family, friends, spam, manipulation (`tag_like`), a thanks, a text without words, backlog, or a paused, muted, blocked, taken-over or capped chat; none when `autoSend.enabled` is false (2026-09-27; per sender since 2026-09-28) |
+| Escalation placeholder | An escalated customer Claude flags `customer_waiting` gets "🤖 " + Claude's `holding_reply` written for that sender, at most once per chat every `placeholder.repeatMinutes` (2) minutes (2026-09-30; it was once per open-draft period), only if `checkHoldingReply` passes; a failed or empty one sends nothing (no fixed fallback). A customer's greeting alone counts as waiting. Never family, friends, spam, manipulation (`tag_like`), a thanks, a text without words, backlog, or a paused, muted, blocked, taken-over or capped chat; none when `autoSend.enabled` is false (2026-09-27; per sender since 2026-09-28) |
 | Tone and facts | `knowledge.md`: `## Voice` for tone, `## Facts` is the only ground truth, `## Never` for hard rules |
 | WhatsApp transport | The web route: Baileys linked device on the owner's number (`"transport": "baileys"`, the default). The official Cloud API (`src/transport/cloud-api.js`) stays selectable but unused: rejected 2026-09-28, because from 2026-10-01 every message it sends is billed after 1,000 free a month per number (AI replies, approved drafts, owner notices, human CS replies unless the number uses coexistence), and coexistence only works through a Meta partner, with Indonesia unconfirmed |
 | WhatsApp client | Baileys `7.0.0-rc14`, exact pin. Switch triggers are in `docs/implementation-notes.md` |
@@ -80,7 +80,7 @@ confirmation here: just do it and report.
 | `npm run eval -- --rescore=eval/last-run.json` | Re-apply current guards/policy to saved results, 0 calls |
 | `npm run eval -- --only=id1,id2` | Subset → `eval/last-run-partial.*` |
 | `npm run export` | Borma demo (this branch): read-only BigQuery export → `data/borma/` (~155 MB scanned) |
-| `npm run eval -- --borma` | `eval/fixtures-borma.json` (5 calls) against `knowledge.md` + the export → `data/borma/` |
+| `npm run eval -- --borma` | `eval/fixtures-borma.json` (12 calls) against `knowledge.md` + the export → `data/borma/` |
 
 **Eval rule:**
 - A prompt, knowledge, model or thinking change needs a full `npm run eval`. A guards or policy change needs `--rescore`.

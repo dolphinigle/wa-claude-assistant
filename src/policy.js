@@ -95,9 +95,9 @@ const isDemo = config => config.demo?.enabled === true
  *   quotes): their ids where known, and their texts ('' for a photo, a voice note or a pin)
  * @param {object[]} [ctx.history]  earlier messages of the chat, oldest first (see closedThisSession)
  * @param {boolean} ctx.paused
- * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, lastClosingAt?: number, lastOursAt?: number, lastUntriagedAt?: number, lastOpenedAt?: number, placeholderSent?: boolean, draftOpen?: boolean, lastGreetingReplyAt?: number}} ctx.chat
+ * @param {{muted?: boolean, blocked?: boolean, blocklistUnchecked?: boolean, takeoverUntil?: number, lastClosingAt?: number, lastOursAt?: number, lastUntriagedAt?: number, lastOpenedAt?: number, lastPlaceholderAt?: number, draftOpen?: boolean, lastGreetingReplyAt?: number}} ctx.chat
  *   `lastClosingAt`: when the last thanks the owner dealt with arrived; `lastOursAt`, `lastUntriagedAt`, `lastOpenedAt`:
- *   see closedThisSession; `placeholderSent`: the contact got a placeholder and has had an open draft ever since;
+ *   see closedThisSession; `lastPlaceholderAt`: when the contact last got a placeholder (epoch ms);
  *   `draftOpen`: the contact has a draft waiting for the owner; `lastGreetingReplyAt`: when it last got the greeting-back
  * @param {number} ctx.now  epoch ms
  * @param {number} ctx.chatAutoSendsLastHour
@@ -186,8 +186,9 @@ function greetingHeld (result, ctx) {
  * does a text without a letter or digit (😡😡, 🙏, ?) that comes without a file: it does not say what the sender wants.
  * Nor does text that looks like a tag (TAG_LIKE), file or not, in the message or in a message it quotes: a manipulator
  * must not learn that a bot read it, and a quote reaches Claude as the sender supplies it (send-path-r2-3).
- * Backlog never does: it comes late, and the owner may have answered it on the phone meanwhile. One placeholder covers
- * every escalation while a draft whose customer got one is open (`chat.placeholderSent`); it counts toward the caps.
+ * Backlog never does: it comes late, and the owner may have answered it on the phone meanwhile. A chat gets at most one
+ * every `placeholder.repeatMinutes` (2), so each escalated burst gets its own but a quick run of messages gets one
+ * (owner request 2026-09-30; it was one per open-draft period); it counts toward the caps.
  */
 function placeholderWithheld (result, ctx) {
   if (!result?.ok || !result.triage) return ['triage_failed']
@@ -203,7 +204,7 @@ function placeholderWithheld (result, ctx) {
   if ([ctx.incomingText, ...quotedTexts].some(text => TAG_LIKE.test(normalizeText(text)))) withheld.push('tag_like')
   withheld.push(...chatBlockers(ctx))
   if (ctx.isBacklog) withheld.push('backlog')
-  if (chat.placeholderSent) withheld.push('placeholder_already_sent')
+  if (chat.lastPlaceholderAt > ctx.now - (config.placeholder?.repeatMinutes ?? 2) * 60_000) withheld.push('placeholder_recent')
   if (withheld.length === 0) {
     if (!ctx.holdingGuard) withheld.push('holding_reply:unchecked')
     else if (!ctx.holdingGuard.ok) withheld.push(...ctx.holdingGuard.reasons.map(reason => `holding_reply:${reason}`))

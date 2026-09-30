@@ -1397,9 +1397,9 @@ test('placeholder: a customer\'s greeting gets exactly one; a greeting Claude fl
   await say(ALICE, 'Hai')
   await say(ALICE, 'Halo kak')
   await say(MAMA, 'Pagi kak', { senderName: 'Mama' })
-  assert.deepEqual(placeholders().map(item => [item.chatId, item.text]), [[ALICE, '🤖 Halo Kak Alice, pesannya saya teruskan ke pemilik ya 🙏']], 'one per open-draft period, none for Mama')
+  assert.deepEqual(placeholders().map(item => [item.chatId, item.text]), [[ALICE, '🤖 Halo Kak Alice, pesannya saya teruskan ke pemilik ya 🙏']], 'one within 2 minutes, none for Mama')
   assert.deepEqual(transport.toCustomer().map(item => item.chatId), [ALICE], 'nothing else reached anyone')
-  assert.deepEqual(withheld(), [[], ['placeholder_already_sent'], ['customer_not_waiting']])
+  assert.deepEqual(withheld(), [[], ['placeholder_recent'], ['customer_not_waiting']])
   assert.match(transport.toSelf()[0], /^🤖 📝 DRAFT #1 .*\nThey wrote: "Hai"\n↩️ They got: 🤖 Halo Kak Alice, pesannya saya teruskan ke pemilik ya 🙏\n/)
   assert.doesNotMatch(transport.toSelf()[2], /↩️/, 'the notice for Mama says nothing went out')
 })
@@ -1410,7 +1410,7 @@ test('placeholder: a holding reply that fails its guard sends nothing, with no f
   const { transport, store, owner, say, withheld } = placeholderSetup(t, { respond })
   for (const [index, text] of Object.keys(holdings).entries()) {
     await say(ALICE, text)
-    await owner(`/no ${index + 1}`) // ends the open-draft period, so the next escalation may get one
+    await owner(`/no ${index + 1}`)
   }
   assert.deepEqual(transport.toCustomer(), [], 'nothing reached the customer')
   assert.deepEqual(withheld(), [['holding_reply:empty'], ['holding_reply:concrete:day', 'holding_reply:yes_opening'], ['holding_reply:language_mismatch:id->en']])
@@ -1433,22 +1433,34 @@ test('placeholder: drafts only (autoSend.enabled false) sends a customer nothing
   assert.deepEqual(transport.toCustomer().map(item => [item.chatId, item.text]), [[ALICE, 'Baik Kak, saya cek dulu ya.']], 'the owner\'s approved draft, no marker')
 })
 
-test('placeholder: one per open draft; after /ok or /no a new escalation gets one again', async t => {
-  const { owner, say, placeholders, withheld } = placeholderSetup(t)
+// Owner request (2026-09-30): each escalated burst gets its own holding reply, not one per open-draft period (a
+// customer's payment question and recount request got none while an earlier draft waited); a quick run gets one.
+test('placeholder: at most one per chat every placeholder.repeatMinutes, open drafts or not, on either addressing form', async t => {
+  const { owner, say, advance, store, placeholders, withheld } = placeholderSetup(t, { config: { autoSend: { maxPerChatPerHour: 10 } } })
   await say(ALICE, 'bisa kue custom unicorn?')
   await say(ALICE, 'kue ulang tahun 3 tingkat juga bisa?')
-  assert.equal(placeholders().length, 1, 'the second escalation meets the first draft still open')
-  await owner('/no 1')
+  assert.equal(placeholders().length, 1, 'a minute later: none')
+  advance(60_000)
   await say(ALICE, 'kue tart 2 tingkat bisa?')
-  assert.equal(placeholders().length, 1, 'draft #2, from while the placeholder stood, is still open: the customer is still told to wait')
-  await owner('/ok 2')
-  await owner('/no 3')
+  assert.equal(placeholders().length, 2, 'two minutes after the first: another, with drafts #1 and #2 still open')
+  assert.deepEqual(store.pendingDrafts().map(draft => draft.id), [1, 2, 3])
+  await owner('/no 1')
   await say(ALICE, 'kue ulang tahun lagi bisa kak?')
-  assert.equal(placeholders().length, 2, 'nothing open: a new one')
-  assert.deepEqual(withheld(), [[], ['placeholder_already_sent'], ['placeholder_already_sent'], []])
-  await owner('/no 4')
-  await say(ALICE, 'kue ulang tahun 2 tingkat bisa kak?')
-  assert.equal(placeholders().length, 3, 'after /no too')
+  assert.equal(placeholders().length, 2, 'dealing with a draft does not reset it')
+  assert.deepEqual(withheld(), [[], ['placeholder_recent'], [], ['placeholder_recent']])
+  // The contact's other form (a LID linked to the PN) shares the limit.
+  const LID_OF_ALICE = '111111111111111@lid'
+  store.updateChat(LID_OF_ALICE, { chatIdAlt: ALICE })
+  advance(90_000)
+  await say(LID_OF_ALICE, 'kue ulang tahun 2 tingkat bisa kak?', { chatIdAlt: ALICE })
+  assert.deepEqual([placeholders().length, withheld().at(-1)], [3, []], 'over 2 minutes since the last one')
+  await say(ALICE, 'kue ulang tahun 4 tingkat bisa kak?')
+  assert.deepEqual([placeholders().length, withheld().at(-1)], [3, ['placeholder_recent']], 'the LID\'s placeholder counts for the PN')
+
+  const often = placeholderSetup(t, { config: { placeholder: { enabled: true, repeatMinutes: 0 } } })
+  await often.say(ALICE, 'bisa kue custom unicorn?')
+  await often.say(ALICE, 'kue ulang tahun 3 tingkat juga bisa?')
+  assert.equal(often.placeholders().length, 2, 'repeatMinutes 0: every escalation')
 })
 
 test('placeholder: none for customer_waiting false or missing, a thanks, a triage failure, while paused, or with placeholder.enabled false', async t => {
@@ -1548,23 +1560,7 @@ test('placeholder: it is the session\'s AI disclosure, its echo starts no takeov
   assert.deepEqual(store.pendingDrafts().map(draft => draft.excerpt), ['bisa kue custom?', 'makasih kak 🙏'])
 })
 
-test('placeholder: a draft already open when it went out carries its period on after /no or /ok of that draft (send-path-r1-1)', async t => {
-  for (const command of ['/no 2', '/ok 2']) {
-    const { owner, say, store, placeholders, withheld } = placeholderSetup(t)
-    await say(ALICE, 'ok kak, nanti saya kabari lagi') // escalated, waits for nothing: a draft with no placeholder
-    await say(ALICE, 'bisa kue custom unicorn?')
-    await owner(command)
-    await say(ALICE, 'kue tart 2 tingkat juga bisa?')
-    assert.deepEqual([placeholders().length, store.pendingDrafts().map(draft => draft.id)], [1, [1, 3]], `${command}: draft #1 was open all along`)
-    assert.deepEqual(withheld(), [['customer_not_waiting'], [], ['placeholder_already_sent']], command)
-    await owner('/no 1')
-    await owner('/no 3')
-    await say(ALICE, 'kue ulang tahun lagi bisa kak?')
-    assert.equal(placeholders().length, 2, `${command}: nothing open, a new period`)
-  }
-})
-
-test('placeholder: a send that certainly failed takes the drafts that joined its period out of it (send-path-r1-4)', async t => {
+test('placeholder: a send that certainly failed gives its time back, so the next escalation may try again (send-path-r1-4)', async t => {
   const { transport, store, assistant, say, stamp, advance, placeholders, withheld } = placeholderSetup(t)
   const send = transport.send.bind(transport)
   let release
@@ -1584,16 +1580,16 @@ test('placeholder: a send that certainly failed takes the drafts that joined its
   advance(60_000)
   await assistant.handleMessage(incoming(ALICE, 'kue tart 2 tingkat juga bisa?', stamp()))
   await waitFor(() => store.getDraft(2))
-  assert.equal(store.getDraft(2).placeholderCovered, 1, 'triaged while the placeholder was in flight')
+  assert.deepEqual(withheld(), [[], ['placeholder_recent']], 'triaged while the placeholder was in flight')
   release()
   await assistant.idle()
-  assert.deepEqual([store.getDraft(1).placeholder, store.getDraft(2).placeholderCovered, store.countChatAutoSends(ALICE, 3_600_000)], [undefined, undefined, 0])
+  assert.deepEqual([store.getDraft(1).placeholder, store.chat(ALICE).lastPlaceholderAt, store.countChatAutoSends(ALICE, 3_600_000)], [undefined, 0, 0])
   await say(ALICE, 'kue ulang tahun juga bisa kak?')
-  assert.deepEqual(withheld(), [[], ['placeholder_already_sent'], []])
+  assert.deepEqual(withheld(), [[], ['placeholder_recent'], []])
   assert.equal(placeholders().length, 1, 'the customer got none, so the next escalation sends one')
 })
 
-test('placeholder: a send that failed in flight may have been delivered, so its period and cap slot stand (correctness-r1-1)', async t => {
+test('placeholder: a send that failed in flight may have been delivered, so its time and cap slot stand (correctness-r1-1)', async t => {
   const { transport, store, say, placeholders, withheld } = placeholderSetup(t)
   const send = transport.send.bind(transport)
   transport.send = async (chatId, text, options) => {
@@ -1603,8 +1599,8 @@ test('placeholder: a send that failed in flight may have been delivered, so its 
   }
   await say(ALICE, 'bisa kue custom unicorn?')
   await say(ALICE, 'kue ulang tahun 3 tingkat juga bisa?')
-  assert.equal(placeholders().length, 1, 'delivered once, and not again while draft #1 is open')
-  assert.deepEqual(withheld(), [[], ['placeholder_already_sent']])
+  assert.equal(placeholders().length, 1, 'delivered once, and not again within 2 minutes')
+  assert.deepEqual(withheld(), [[], ['placeholder_recent']])
   assert.deepEqual([store.getDraft(1).placeholder.status, store.countChatAutoSends(ALICE, 3_600_000), store.chat(ALICE).lastDisclosureAt ?? 0], ['unknown', 1, 0],
     'the cap slot stands; it is no disclosure, since it may not have arrived')
   assert.match(transport.toSelf()[0], /\n↩️ They may have got \(the send failed\): 🤖 Baik Kak Alice, pertanyaan soal kuenya saya teruskan ke pemilik ya 🙏\n/)
@@ -1640,11 +1636,11 @@ test('placeholder: a send cut off by a forced exit is announced after the restar
   const notices = transport.toSelf()
   assert.equal(notices.length, 1)
   assert.match(notices[0], /^🤖 📝 DRAFT #1 .*\nThey wrote: "bisa kue custom unicorn\?"\n↩️ They may have got \(the send failed\): 🤖 Baik Kak Alice, pertanyaan soal kuenya saya teruskan ke pemilik ya 🙏\n[\s\S]*\nReply: \/ok 1 /)
-  // Its period stands, as for any send that failed in flight: the next escalation gets none.
+  // Its time stands, as for any send that failed in flight: the next escalation within 2 minutes gets none.
   clock += 60_000
   await second.assistant.handleMessage(incoming(ALICE, 'kue ulang tahun 3 tingkat juga bisa?', { timestamp: Math.floor(clock / 1000) }))
   await second.assistant.idle()
-  assert.deepEqual([transport.toCustomer(), second.store.getDraft(2).placeholderCovered], [[], 1])
+  assert.deepEqual([transport.toCustomer(), second.store.getDraft(2).placeholder], [[], undefined])
 })
 
 test('placeholder: a draft notice cut off by a forced exit after the placeholder went out is announced after the restart, and not drafted again (correctness-r2-4)', async t => {
