@@ -200,11 +200,11 @@ reach real customers by accident. What changes:
 
 On this branch the assistant answers Borma customers from real data (docs/building-on-this.md, "Real data"):
 `knowledge.md` holds Borma's voice, rules and the facts the shop's own pages confirm; per message, `src/lookup.js`
-adds the matching products (selling price per store, current promo, a stock status with its time, and the product's
-page `https://www.bormadago.com/shop/product/{id}/{slug}` when it is sold online), the stores, and, for an order
-question, the sender's own online orders. A message that asks for several items (`minyak 5 liter dan gula`, split on
-`dan`, `sama`, `serta`, `plus`, `and`, `&`, `+`, commas and new lines; needs, fillers, numbers and units dropped) gets
-each item's own matches and its own search link. Matches come closest first (a word in the title and the category
+adds the matching products (selling price per store, current promo, a stock status with its time, the product's id
+and whether it is sold online, and the ids of its categories and promo, for the link tags below), the stores, and,
+for an order question, the sender's own online orders. A message that asks for several items (`minyak 5 liter dan
+gula`, split on `dan`, `sama`, `serta`, `plus`, `and`, `atau`, `or`, `&`, `+`, commas and new lines; needs, fillers,
+numbers and units dropped) gets each item's own matches. Matches come closest first (a word in the title and the category
 before one in either alone: the sugars for `gula`, not a "less sugar" tea), and among equally close ones best
 suggestion first: on promo and in stock, then in stock, habis everywhere last (still there, so a question about that
 exact product is answered); a message that asks for a promo ranks by promo alone and looks at five times as many
@@ -216,8 +216,8 @@ orders), so every price and number of an answer is checked against them. The mad
 
 1. **Export** (read-only, `bq` CLI logged in to `solvent-staging`; about 155 MB scanned, 10 s):
    `npm run export` writes `data/borma/catalog.json` (the 300 best sellers of the last 30 days per store, about 460
-   products) and `data/borma/stores.json`. `data/` is gitignored: no company data is committed. Re-run it before a
-   demo session: prices and stock are a snapshot, and the answers say its time. The running bot re-runs it itself
+   products, with their categories' ids and slugs and an advertised promo's id) and `data/borma/stores.json`.
+   `data/` is gitignored: no company data is committed. Re-run it before a demo session: prices and stock are a snapshot, and the answers say its time. The running bot re-runs it itself
    (owner request 2026-09-30): at start when `catalog.json` is older than `borma.refreshHours` (6), then every 6 hours,
    as a child process (`node scripts/export-borma.js`, no shell, only `HOME`, `PATH` and `CLOUDSDK_*` in its env), and
    swaps the new data in when it succeeds (`[borma] data refreshed: …` in the log). A failure keeps the data it has
@@ -234,9 +234,22 @@ orders), so every price and number of an answer is checked against them. The mad
   delivery or pickup, last shipping event. About 16 MB and 2–3 s per query, cached per number for a minute; a failure
   or more than 8 s (`borma.orderTimeoutMs`) means no order facts and a note to Claude, which then escalates. In-store
   purchases (98% of sales) are not linked to any phone.
+- **Links** (owner request 2026-09-30): Claude never types a URL. It writes link tags, and `src/links.js` renders
+  them, before the guards, the auto-send and your draft (so `/ok` sends real links), into the shop's pages built from
+  the export: `[[cari: minyak goreng]]` → `…/shop/product/list?q=minyak%20goreng` (1–5 plain words: letters, digits,
+  spaces), `[[produk: 2601]]` → the product's page (only one in the export and sold online), `[[kategori: 624]]` →
+  `…/shop/category/detail/624/{slug}`, `[[promo]]` → `…/shop/promo/list`, `[[promo: 8017]]` → `…/shop/promo/detail/8017`
+  (only an advertised promo in the export). A tag that cannot become one of these (an unknown id, a search with other
+  characters) is dropped without a trace, never guessed; a line left pointing at nothing ("Semua gula:") goes with it.
+  Why: only URLs we built can reach a customer. The guards accept exactly the rendered ones (`allowedUrls`); a URL
+  Claude writes itself stays `unsupported_url` / `demo_unsupported_url`, even the shop's own. It replaces the lookup's
+  pre-built search links, which a word splitter made (it merged `minyak 5 liter dan gula` into one query), and the
+  old promo link (`/shop/promo`, a path the shop's router does not define: its promo pages are `list` and `detail/:id`). Claude now picks the search words per item
+  (`minyak goreng`, `gula`) and still helps when the export has nothing: "not in the list we have", with a search. A
+  tag left in a holding reply fails its guard (`placeholder`): holding replies stay link-free.
 - **Guards**: in demo mode the facts checks stay off as before, but with Borma data every price or percentage must
-  still come from the cited facts (`demo_unsupported_amount`), and every link from the burst's facts
-  (`demo_unsupported_url`: no made-up product page). An order summary's line totals and total pass only when computed
+  still come from the cited facts (`demo_unsupported_amount`), and every link must be a rendered tag or come from the
+  burst's facts (an order's detail link; `demo_unsupported_url`). An order summary's line totals and total pass only when computed
   from cited prices and the quantities the reply states, one item per line (`5 x Indomie … @ Rp 3.200 = Rp 16.000`,
   then `Total: Rp …`); a wrong sum or items run together on one line is held, which only means a draft. A digit run
   the facts state (an order number, the CS number) and a real date (`30-09-2026`) are not held as an account number,
@@ -245,10 +258,18 @@ orders), so every price and number of an answer is checked against them. The mad
 - **Not in any system**: store opening hours. `## Never` forbids stating them; add them as a fact once confirmed.
 - **Risk**: this runs on your personal WhatsApp number (Baileys linked device, against WhatsApp's terms: the ban risk
   is that number), and the sender's own order details go to Claude on your subscription. Keep it to testers who know.
-- `npm run eval -- --borma` runs `eval/fixtures-borma.json` (12 fixtures) against `knowledge.md` and the export, without
-  orders, and writes to `data/borma/` (the reports hold shop data). The 7 `demo: true` fixtures run as the testers see
-  it (demo prompt, guards and policy): a search, an order in progress, its summary and its confirmation, and three
-  testers' real messages of 2026-09-30 (`hughie-oil-sugar`, `luki-recompute-total`, `luki-add-item`).
+- `npm run eval -- --borma` runs `eval/fixtures-borma.json` (13 fixtures) against `knowledge.md` and the export, without
+  orders, and writes to `data/borma/` (the reports hold shop data). The 8 `demo: true` fixtures run as the testers see
+  it (demo prompt, guards and policy): a search, an order in progress, its summary and its confirmation, three
+  testers' real messages of 2026-09-30 (`hughie-oil-sugar`, `luki-recompute-total`, `luki-add-item`) and products the
+  export lacks (`borma-demo-not-in-export`). Link tags are rendered as live, a rescore too.
+  2026-09-30, link tags (one `--only` run, 5 calls, `claude-sonnet-5`): 5/5 decisions, 5/5 auto-sent, 0 forbidden
+  auto-sends, skipped escalations or forbidden placeholders; 24 tags written, 24 rendered, none dropped, every link
+  well-formed and every product link the product named on its line. Hughie's "minyak 5 liter dan gula" got 3 oils and
+  3 sugars with their pages, then `?q=minyak%20goreng` and `?q=gula`; the snack search 3 promo snacks, `?q=snack` and
+  the promo list; Luki's "Sama tisu 1" 3 tissues and `?q=tisu`; "ada beras organik atau beras merah kak?" (not in the
+  export) "belum ada di daftar yang kami lihat saat ini. Bisa dicek langsung di toko online:" with
+  `?q=beras%20organik` and `?q=beras%20merah`; the strict-mode Indomie price 4 Indomies with their pages.
   2026-09-30, after the fixes below (`--only` runs, 6 calls): 5/5 decisions, 0 forbidden auto-sends, skipped
   escalations or forbidden placeholders. Auto-sent: Hughie's "minyak 5 liter dan gula" (1015 characters: "Minyak goreng 5
   liter belum ada, Kak; yang ada kemasan 2 LT dan 1 LT", 3 oils and 3 sugars, one line each, `?q=minyak` and
@@ -268,13 +289,14 @@ orders), so every price and number of an answer is checked against them. The mad
 `humanTakeoverMinutes` before. With `demo` on (owner request 2026-09-29) the bot acts as helpful customer service:
 
 - **Products** (`harga indomie goreng berapa?`, `ada susu ultra di dago?`) are answered from the export, with the
-  product's link on www.bormadago.com; a product not sold online is "available in the store", with no link.
+  product's link on www.bormadago.com; a product not sold online is "available in the store", with no link. One the
+  export lacks (`ada beras organik?`) is "not in the list we have", with a search link to check the shop.
 - **Searches** (`ada susu?`, `cari snack dong`, `promo apa aja?`) get at most 3 suggestions per item, promo and in
   stock first, one compact line each: name, one price when both stores have the same one (else `Dago Rp …, Kopo Rp
   …`), promo, link; the stock time once for the list. A habis product is named only when asked for by name, with an
-  in-stock alternative. After each item's suggestions comes the link to all its results, one per item
-  (`Perlu minyak 5 liter dan gula` → `…/shop/product/list?q=minyak` and `…?q=gula`, never the whole message), and for
-  a promo question the promo page (`https://www.bormadago.com/shop/promo`). A size nobody stocks is said plainly,
+  in-stock alternative. After each item's suggestions comes a search link for it, in the words a customer would search
+  (`Perlu minyak 5 liter dan gula` → `…/shop/product/list?q=minyak%20goreng` and `…?q=gula`), and for a promo question
+  the promo list (`https://www.bormadago.com/shop/promo/list`). A size nobody stocks is said plainly,
   with the closest ones (`Minyak goreng 5 liter belum ada, Kak; yang ada kemasan 2 LT dan 1 LT`); a combination only
   when asked. Replies may be up to 2500 characters (`demo.maxReplyChars`; 1000 held two real searches as drafts).
 - **Orders** (`mau pesan indomie goreng 5 sama aqua 2`): Claude asks, over a few messages, for what is missing (the

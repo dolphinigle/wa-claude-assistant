@@ -107,9 +107,14 @@ personal WhatsApp account with two testers. Not reviewed by a human.
   without "susu = milk" a biscuit outranked Ultra Milk), adds stores, and looks up the sender's own orders live by the
   chat's own number (16 MB, 2–3 s per BigQuery query). Claude cited the lookup ids correctly on the first run. What
   held the answers were the guards: the owner's email domain was the shop's (`private_detail` on every "Borma Dago";
-  identifiers the facts state are public now), and a bare `bormadago.com` was not in the product fact (it is now).
+  identifiers the facts state are public now), and a bare `bormadago.com` was in no fact (knowledge.md's facts state it).
   Demo mode on real data keeps the price check (`demo_unsupported_amount`). The `bq` CLI's JSON gives every value as
   a string, `"false"` included.
+- **Links: let the model write tags, render them in code** (2026-09-30, `src/links.js`). Pre-built links in the facts
+  needed a word splitter to guess the search words, and it merged items; Claude picks better words per item. Claude
+  writes `[[cari: words]]`, `[[produk: id]]`, `[[kategori: id]]`, `[[promo]]`; code turns each into an exact URL from
+  the export or drops it, and the guards allow exactly the rendered URLs. Render before the guards and before the
+  draft is stored, so the owner's approval sends the same links.
 
 ## What the live test taught (short version; details in reference-guide §13)
 

@@ -42,7 +42,7 @@ draft in the owner's "Message yourself" chat.
 | Greeting reply | A waiting customer's greeting alone that opens the conversation gets Claude's own reply for that sender as an auto-send, once per session, only if `guardGreeting` passes (it only asks: a `?`, nothing concrete, no yes up front); otherwise it is drafted with the holding reply. `greetingReply.enabled: false` turns it off (2026-09-27; per sender since 2026-09-28) |
 | Customer-facing texts | None fixed: every automated message a customer gets is written by Claude for that sender and guarded, since identical automated texts look like bulk messaging (Baileys #2800); `placeholder.text` and `greetingReply.text` are removed keys (2026-09-28) |
 | Demo mode | Opt-in `"demo": {"enabled": true}` in `config.local.json`, only with a non-empty `allowChats`: Claude answers like CS and may invent what the facts don't give (`prompts/triage-demo.md`); guards skip the facts checks but `demo_payment_detail` holds bank, account and transfer details; no `no_question` hold; per-chat cap `demo.maxPerChatPerHour`. The eval forces it off (2026-09-27) |
-| Borma demo | Branch `borma-demo`: `knowledge.md` is Borma's (the bakery is `eval/knowledge.md`, used by the eval and tests); `"borma": {"enabled": true}` adds per-message catalog, store and own-order facts (README "Borma demo"). In demo mode prices must still come from the cited facts (2026-09-28) |
+| Borma demo | Branch `borma-demo`: `knowledge.md` is Borma's (the bakery is `eval/knowledge.md`, used by the eval and tests); `"borma": {"enabled": true}` adds per-message catalog, store and own-order facts (README "Borma demo"). In demo mode prices must still come from the cited facts (2026-09-28). Links reach a customer only as Claude's tags rendered from the export (`src/links.js`), never a URL Claude typed (2026-09-30) |
 | Trying it live | `allowChats` in `config.local.json`: only the listed chats are handled, every other chat is untouched (2026-09-27) |
 
 Ask the owner before changing **what gets auto-sent, drafted, or silently skipped**. Mechanical work needs no plan
@@ -80,7 +80,7 @@ confirmation here: just do it and report.
 | `npm run eval -- --rescore=eval/last-run.json` | Re-apply current guards/policy to saved results, 0 calls |
 | `npm run eval -- --only=id1,id2` | Subset → `eval/last-run-partial.*` |
 | `npm run export` | Borma demo (this branch): read-only BigQuery export → `data/borma/` (~155 MB scanned) |
-| `npm run eval -- --borma` | `eval/fixtures-borma.json` (12 calls) against `knowledge.md` + the export → `data/borma/` |
+| `npm run eval -- --borma` | `eval/fixtures-borma.json` (13 calls) against `knowledge.md` + the export → `data/borma/` |
 
 **Eval rule:**
 - A prompt, knowledge, model or thinking change needs a full `npm run eval`. A guards or policy change needs `--rescore`.
