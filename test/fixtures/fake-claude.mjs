@@ -37,7 +37,7 @@ switch (scenario) {
   }
   case 'echo':
     out(init); out(rateLimit)
-    out(result({ structured_output: { ...triage, reply: input, reason: JSON.stringify({ argv: process.argv.slice(2), env: process.env, cwd: process.cwd() }) } }))
+    out(result({ structured_output: { ...triage, reply: input, summary: input, reason: JSON.stringify({ argv: process.argv.slice(2), env: process.env, cwd: process.cwd() }) } }))
     break
   case 'slow': {
     const startedAt = Date.now()

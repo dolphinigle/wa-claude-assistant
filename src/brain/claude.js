@@ -65,10 +65,15 @@ export function checkInit (init) {
  * false and a missing or non-string holding reply is "": no placeholder, and the triage still counts. Everything else
  * is checked by validateTriage.
  */
+// The user turn escapes & and < (prompt.js), and Claude sometimes copies an entity into its text ("Hot &amp; Spicy",
+// live 2026-09-30). A WhatsApp reply is plain text: decode the three entities the prompt uses, & last.
+const plainText = text => (typeof text === 'string' ? text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&') : text)
+
 export const normalizeTriage = value => ({
   ...value,
+  reply: plainText(value.reply),
   customer_waiting: value.customer_waiting === true,
-  holding_reply: typeof value.holding_reply === 'string' ? value.holding_reply : ''
+  holding_reply: typeof value.holding_reply === 'string' ? plainText(value.holding_reply) : ''
 })
 
 /** Our own check of the structured output, so a schema drift in the CLI can never reach the policy. */
