@@ -6,6 +6,7 @@ import { createClaudeBrain } from './brain/claude.js'
 import { createFakeBrain } from './brain/fake.js'
 import { loadConfig } from './config.js'
 import { loadKnowledge } from './knowledge.js'
+import { createBormaRefresher } from './borma-refresh.js'
 import { createLookup, loadBormaData } from './lookup.js'
 import { allowChatsSummary, BOT_PREFIX } from './owner.js'
 import { Store } from './store.js'
@@ -27,7 +28,10 @@ const store = new Store(config.paths.data)
 const brain = useFakeBrain ? createFakeBrain() : createClaudeBrain({ config, knowledge })
 // Borma demo: per-message facts from the export in data/borma/ (the console keeps its own data dir, so it reads the
 // real one) and the sender's own orders, live from BigQuery.
-const lookup = config.borma?.enabled ? createLookup({ config, ...loadBormaData(useConsole ? path.resolve(config.rootDir, 'data') : config.paths.data) }) : undefined
+const bormaDir = useConsole ? path.resolve(config.rootDir, 'data') : config.paths.data
+const lookup = config.borma?.enabled ? createLookup({ config, ...loadBormaData(bormaDir) }) : undefined
+// The bot refreshes that export itself every `borma.refreshHours` (BigQuery, read-only); the console REPL stays offline.
+const refresher = lookup && !useConsole ? createBormaRefresher({ config, lookup, dataDir: bormaDir }) : undefined
 
 let assistant
 const onMessage = message => assistant.handleMessage(message)
@@ -85,6 +89,7 @@ if (useConsole) {
 }
 assistant = createAssistant({ config, store, brain, transport, knowledge, lookup })
 assistant.recoverInbox()
+refresher?.start()
 
 console.log(`wa-claude-assistant · transport: ${transport.name} · brain: ${brain.name} · mode: ${config.mode.toUpperCase()}${demo}${onlyListed ? ` · ${onlyListed}` : ''} · data: ${config.paths.data}`)
 if (config.mode === 'live') console.log('LIVE MODE: auto-replies WILL be sent to customers. Set "mode": "shadow" to stop.')
@@ -96,6 +101,7 @@ async function shutdown (code = 0) {
   shuttingDown = true
   console.log('\nshutting down…')
   brain.close?.()
+  refresher?.stop()
   await assistant.stop()
   await transport.stop()
   store.save()
